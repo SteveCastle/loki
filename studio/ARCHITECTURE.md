@@ -709,18 +709,23 @@ scheduled ramps.
 
 | What | Where |
 | --- | --- |
-| Comp JSON, project name, playhead, serialized masks | `localStorage['lowkey-studio.project.v2']` |
+| Comp JSON, project name, playhead, serialized masks (autosave) | IndexedDB `lowkey-studio` / `media`, key `autosave` (legacy `localStorage['lowkey-studio.project.v2']` is read once, then cleared) |
 | Media blobs | IndexedDB `lowkey-studio` / `media`, keyed `asset:<id>` |
 | Saved custom shaders | `localStorage['lowkey-studio.saved-shaders']` |
 | Inspector section collapse state | `localStorage['lowkey-studio.insp-sections']` |
 
-Saves are debounced 700 ms (`scheduleSave`). Painted mask canvases
-serialize as PNG data URLs, skipped past 2 MB. Shape-layer assets are
-regenerated from the model rather than stored.
+Saves are debounced 700 ms (`scheduleSave`), flushed on `pagehide` /
+hidden, and queued so they land in order; a failed save shows ⚠ on the
+project button until one succeeds. Painted mask canvases serialize as PNG
+data URLs. Shape-layer assets are regenerated from the model rather than
+stored. Media that fails to restore stays in the project as an offline
+entry (never silently dropped), and removing media keeps its blob so undo
+can bring it back (`rehydrateMissingAssets`).
 
 Two guards worth knowing about, because both fix real data-loss bugs:
 `masksLoaded` stays false until `loadClipMasks` has hydrated the project,
-so a save racing the restore can't blank out masks it hasn't read yet; and
+so a save racing the restore can't blank out masks it hasn't read yet
+(`restoring` likewise holds every autosave until `applyProjectData` ends); and
 when a host app launches studio with media to import, `stashAutosavedProject`
 preserves the previous session before the fresh comp clobbers it.
 

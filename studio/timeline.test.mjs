@@ -241,6 +241,77 @@ test('a video matte source never seeks a media element (syncMedia owns them)', (
   assert.equal(composited, 1);
 });
 
+test('split and duplicate hand each new clip its source clip for state the model lacks', () => {
+  const { comp, host, timeline } = setup();
+  const clip = { id: 'a', kind: 'media', start: 20, dur: 10, in: 0, props: {}, effects: [] };
+  comp.tracks.push({ clips: [clip] });
+  const pairs = [];
+  host.cloneClipState = (from, to) => pairs.push([from, to]);
+  timeline.selClips = new Set(['a']);
+  timeline.splitAtPlayhead();   // playhead at 25
+  const right = comp.tracks.flatMap((tr) => tr.clips).find((c) => c.id !== 'a');
+  assert.deepEqual(pairs, [['a', right.id]]);
+  pairs.length = 0;
+  timeline.selClips = new Set(['a']);
+  timeline.duplicateSelection();
+  assert.equal(pairs.length, 1);
+  assert.equal(pairs[0][0], 'a');
+  assert.ok(comp.tracks.some((tr) => tr.clips.some((c) => c.id === pairs[0][1])));
+});
+
+test('autosave: held while restoring, written in order, failures reported', async () => {
+  const writes = [];
+  const errors = [];
+  let payload = 0;
+  const context = {
+    Promise, JSON, setTimeout, clearTimeout,
+    restoring: false, saveAfterRestore: false, saveTimer: null, saveError: null,
+    legacyAutosaveCleared: true, saveChain: Promise.resolve(), AUTOSAVE_KEY: 'autosave',
+    projectPayload: () => ({ n: ++payload }),
+    idbSet: (key, val) => new Promise((r) => setTimeout(() => { writes.push(JSON.parse(val).n); r(); }, 5 - writes.length)),
+    reportSaveError: (e) => errors.push(e), updateProjectButton: noop, setStatus: noop,
+    localStorage: { removeItem: noop }, UNLOAD_JOURNAL_KEY: 'j', Date,
+  };
+  const save = appFunction('saveProject', context);
+  context.restoring = true;
+  await save();
+  assert.deepEqual(writes, []);            // nothing stored mid-restore…
+  assert.equal(context.saveAfterRestore, true);   // …but remembered
+  context.restoring = false;
+  save(); save();
+  await save();
+  assert.deepEqual(writes, [1, 2, 3]);     // in the order taken
+  context.idbSet = () => Promise.reject(new Error('QuotaExceededError'));
+  await save();
+  assert.equal(errors.length, 1);
+});
+
+test('boot restores the newer of the IndexedDB autosave and the unload journal', async () => {
+  const store = {};
+  const make = (idb) => appFunction('readAutosave', {
+    JSON, console, AUTOSAVE_KEY: 'autosave', UNLOAD_JOURNAL_KEY: 'j', PROJECT_KEY: 'legacy',
+    idbGet: async () => idb, localStorage: { getItem: (k) => store[k] ?? null },
+  });
+  const idb = JSON.stringify({ comp: { v: 'idb' }, savedAt: 100 });
+  store.j = JSON.stringify({ comp: { v: 'journal' }, savedAt: 200 });
+  assert.equal((await make(idb)()).comp.v, 'journal');     // unload flush is newer
+  store.j = JSON.stringify({ comp: { v: 'journal' }, savedAt: 50 });
+  assert.equal((await make(idb)()).comp.v, 'idb');         // stale journal loses
+  delete store.j;
+  store.legacy = JSON.stringify({ comp: { v: 'legacy' } });
+  assert.equal((await make(null)()).comp.v, 'legacy');     // pre-IndexedDB projects
+});
+
+test('the payload keeps media that failed to restore', () => {
+  const offlineAssets = new Map([['gone', { id: 'gone', name: 'gone.mp4', kind: 'video', offline: true }]]);
+  const payload = appFunction('projectPayload', {
+    comp: { tracks: [] }, clipMasks: new Map(), masksLoaded: true, tCur: 0, projectName: 'p',
+    assets: new Map([['ok', { id: 'ok', name: 'ok.mp4', kind: 'video' }]]), offlineAssets,
+    serializeMaskState: noop,
+  })();
+  assert.equal(JSON.stringify(payload.assets.map((a) => a.id)), '["ok","gone"]');
+});
+
 test('duplicating a multi-selection keeps the gaps between clips and selects the copies', () => {
   const { comp, timeline } = setup();
   const a = model.newTrack('A'), b = model.newTrack('B');

@@ -350,7 +350,7 @@ async function boot() {
   };
   window.studio = {
     timeline, assets, onModelChange,
-    importFiles, addAssetAt, setBinOpen,
+    importFiles, addAssetAt, setBinOpen, removeAsset,
     renderCompAudio, mixCompAudio, audioEntries, audioChains,
     // Roto is network + model driven — the console handle is how tests
     // drive it without clicking through the picker.
@@ -1923,6 +1923,7 @@ function appRedo() {
 }
 
 function afterModelReplace(what) {
+  rehydrateMissingAssets();   // undoing "remove media" brings its clips back
   stopMaskEdit();
   stopRotoEdit();
   syncCustomSources();
@@ -1975,6 +1976,7 @@ const timelineHost = {
   setTime,
   playing: () => playing,
   togglePlay,
+  cloneClipState: cloneClipMask,
   looping: () => looping,
   toggleLoop: () => { looping = !looping; },
   history,
@@ -2452,8 +2454,9 @@ function removeAsset(asset) {
   history.commit(comp);
   disposeAsset(asset);
   assets.delete(asset.id);
-  idbDelete(`asset:${asset.id}`).catch(() => {});
-  idbDelete(proxyKey(asset)).catch(() => {});
+  // The blob stays: the removal is undoable (undo rehydrates the media from
+  // it — rehydrateMissingAssets), and blobs are shared by id with saved
+  // projects that may still use this file.
   onModelChange({ structural: true });
   setStatus(`removed ${asset.name}`);
 }
@@ -3552,16 +3555,33 @@ async function openLoopFinder(clip, mode = null) {
 }
 
 /* =====================================================================
- * Project persistence — comp JSON in localStorage, media blobs in idb.
+ * Project persistence — the autosave, named projects and media blobs all
+ * live in IndexedDB. (The autosave used to be localStorage, whose ~5 MB
+ * quota a couple of painted masks could exhaust — after which every save
+ * failed silently.) The legacy localStorage slot is still read on boot.
  * =================================================================== */
 
+/* One shared connection (opening one per call piled up connections and
+ * made every write wait on an async open — fatal for the unload flush,
+ * which must start its transaction synchronously). */
+let idbPromise = null;
+let idbHandle = null;   // the open connection, once it is
+
 function idbOpen() {
-  return new Promise((resolve, reject) => {
+  idbPromise ??= new Promise((resolve, reject) => {
     const r = indexedDB.open('lowkey-studio', 1);
     r.onupgradeneeded = () => r.result.createObjectStore('media');
-    r.onsuccess = () => resolve(r.result);
-    r.onerror = () => reject(r.error);
+    r.onsuccess = () => {
+      const db = r.result;
+      // Another tab deleting or upgrading the database: let it, and
+      // reconnect on the next call.
+      db.onversionchange = () => { db.close(); idbPromise = idbHandle = null; };
+      idbHandle = db;
+      resolve(db);
+    };
+    r.onerror = () => { idbPromise = null; reject(r.error); };
   });
+  return idbPromise;
 }
 
 async function idbSet(key, val) {
@@ -3593,10 +3613,77 @@ async function idbDelete(key) {
   });
 }
 
+const AUTOSAVE_KEY = 'autosave';   // idb key of the current session
 let saveTimer = null;
+let saveChain = Promise.resolve();  // saves land in the order they were taken
+let saveError = null;               // last autosave failure, shown until one succeeds
+let restoring = false;              // applyProjectData in flight: the comp is half-built
+let saveAfterRestore = false;
+let legacyAutosaveCleared = false;
+
 function scheduleSave() {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(saveProject, 700);
+}
+
+// Closing or reloading inside the debounce window must not drop the edit.
+// Chrome aborts IndexedDB writes issued while the page is being torn down
+// (verified: even an explicitly committed put from pagehide is lost on
+// reload), so the final save goes to a localStorage journal — synchronous,
+// it survives teardown. Boot restores whichever of journal and autosave is
+// newer; the next IndexedDB save clears the journal. A payload too big for
+// localStorage (several large painted masks) falls back to a best-effort
+// IndexedDB write — at worst the last 700 ms of edits.
+const UNLOAD_JOURNAL_KEY = 'lowkey-studio.unload-journal';
+function flushSaveNow() {
+  if (!saveTimer || restoring) return;
+  clearTimeout(saveTimer);
+  saveTimer = null;
+  let json;
+  try {
+    json = JSON.stringify({ ...projectPayload(), savedAt: Date.now() });
+  } catch (e) {
+    console.error('slangfx: final autosave failed:', e);
+    return;
+  }
+  try {
+    localStorage.setItem(UNLOAD_JOURNAL_KEY, json);
+    return;
+  } catch {
+    // Over quota: fall through to IndexedDB.
+  }
+  try {
+    idbHandle?.transaction('media', 'readwrite').objectStore('media').put(json, AUTOSAVE_KEY);
+  } catch (e) {
+    console.error('slangfx: final autosave failed:', e);
+  }
+}
+addEventListener('pagehide', flushSaveNow);
+document.addEventListener('visibilitychange', () => { if (document.hidden) flushSaveNow(); });
+
+function reportSaveError(e) {
+  saveError = e;
+  console.error('slangfx: autosave failed:', e);
+  setStatus(`⚠ autosave failed — ${e?.message ?? e}. Your latest changes are not stored yet.`);
+  updateProjectButton();
+}
+
+/** The current session's saved payload: the newer of the IndexedDB
+ * autosave and the unload journal, else the legacy localStorage slot
+ * (projects saved before the move). */
+async function readAutosave() {
+  let saved = null;
+  try {
+    const raw = await idbGet(AUTOSAVE_KEY);
+    if (raw) saved = typeof raw === 'string' ? JSON.parse(raw) : raw;
+  } catch (e) {
+    console.warn('slangfx: could not read autosave:', e);
+  }
+  let journal = null;
+  try { journal = JSON.parse(localStorage.getItem(UNLOAD_JOURNAL_KEY)); } catch {}
+  if (journal?.comp && (journal.savedAt ?? 0) > (saved?.savedAt ?? 0)) return journal;
+  if (saved) return saved;
+  try { return JSON.parse(localStorage.getItem(PROJECT_KEY)); } catch { return null; }
 }
 
 function serializeMaskState(m) {
@@ -3612,8 +3699,7 @@ function serializeMaskState(m) {
         blend: n.blend, invert: !!n.invert, strength: n.strength ?? 1,
       };
       if (n.kind === 'paint') {
-        const dataURL = n.source.toDataURL('image/png');
-        if (dataURL.length <= 2_000_000) out.dataURL = dataURL;
+        out.dataURL = n.source.toDataURL('image/png');
       } else if (n.kind === 'key') {
         out.keyColor = n.keyColor;
         out.similarity = n.similarity;
@@ -3703,15 +3789,107 @@ function projectPayload() {
       else if (masksLoaded) clip.mask = null;
     }
   const assetMeta = [...assets.values()].map((a) => ({ id: a.id, name: a.name, kind: a.kind }));
+  // Media that failed to restore stays in the project: its blob may load
+  // next time, and dropping it would orphan its clips for good.
+  for (const meta of offlineAssets.values())
+    if (!assets.has(meta.id)) assetMeta.push(meta);
   return { comp, assets: assetMeta, t: tCur, name: projectName };
 }
 
+/** Write the autosave. The payload is taken NOW (synchronously); the
+ * IndexedDB write queues behind any earlier one, so saves can't land out
+ * of order. Returns the queued write. */
 function saveProject() {
+  clearTimeout(saveTimer);
+  saveTimer = null;
+  if (restoring) { saveAfterRestore = true; return saveChain; }
+  let json;
   try {
-    localStorage.setItem(PROJECT_KEY, JSON.stringify(projectPayload()));
+    json = JSON.stringify({ ...projectPayload(), savedAt: Date.now() });
   } catch (e) {
-    console.warn('slangfx: project save failed (quota?):', e);
+    reportSaveError(e);
+    return saveChain;
   }
+  saveChain = saveChain.then(() => idbSet(AUTOSAVE_KEY, json)).then(() => {
+    // Newer than any unload journal now.
+    try { localStorage.removeItem(UNLOAD_JOURNAL_KEY); } catch {}
+    if (saveError) {
+      saveError = null;
+      updateProjectButton();
+      setStatus('autosave is working again');
+    }
+    if (!legacyAutosaveCleared) {
+      legacyAutosaveCleared = true;
+      try { localStorage.removeItem(PROJECT_KEY); } catch {}
+    }
+  }, reportSaveError);
+  return saveChain;
+}
+
+/** Media the project references whose blob didn't load (id -> meta). */
+const offlineAssets = new Map();
+const rehydrateTried = new Set();   // asset ids already retried this project
+
+/** Clips can come back pointing at an asset that is no longer loaded —
+ * undo of "remove media", or an offline asset. Reload each from its blob
+ * (once per project; a blob that fails stays offline). */
+function rehydrateMissingAssets() {
+  for (const track of comp.tracks)
+    for (const clip of track.clips) {
+      const id = clip.assetId;
+      if (!id || assets.has(id) || rehydrateTried.has(id) || String(id).startsWith('shape:')) continue;
+      rehydrateTried.add(id);
+      idbGet(`asset:${id}`)
+        .then((file) => (file ? createAsset(file, id) : null))
+        .then((asset) => {
+          if (!asset) return;
+          offlineAssets.delete(id);
+          timeline.render();
+          renderInspector();
+          renderMediaBin();
+          scheduleSave();
+        })
+        .catch((e) => console.warn('slangfx: could not reload media', id, e));
+    }
+}
+
+/** Give a split half or a duplicate its own copy of the source clip's mask
+ * stack. Masks live in clipMasks keyed by clip id, so a new id started
+ * unmasked — and the next save wrote its mask away. Nodes get fresh ids
+ * (they key GPU state and roto storage); a node sourced from the clip
+ * itself (a key or roto on its own pixels) follows to the new clip. */
+function cloneClipMask(fromId, toId) {
+  const m = clipMasks.get(fromId);
+  if (!m?.nodes?.length || clipMasks.has(toId)) return;
+  const nodes = m.nodes.map((n) => {
+    const node = {};
+    for (const [k, v] of Object.entries(n)) {
+      if (k.startsWith('_') || k === 'source' || k === 'view' || k === 'active') continue;
+      node[k] = (v && typeof v === 'object') ? structuredClone(v) : v;
+    }
+    node.id = uid();
+    if (node.sourceClipId === fromId) node.sourceClipId = toId;
+    if (n.kind === 'paint') {
+      node.source = makeMaskCanvas();
+      node.source.getContext('2d').drawImage(n.source, 0, 0);
+    }
+    if (n.kind === 'roto' && n.seq) {
+      // The analyzed frames are keyed by source time, so both halves can
+      // use the same matte sequence — copy the stored record.
+      node._rotoLoad = idbGet(rotoStoreKey(n))
+        .then((rec) => (rec ? idbSet(rotoStoreKey(node), rec).then(() => rec) : null))
+        .then((rec) => (node._rotoBlobs = rec?.blobs ?? null))
+        .catch(() => null);
+    }
+    prepareMaskNode(node);
+    return node;
+  });
+  clipMasks.set(toId, {
+    opacity: m.opacity ?? 1, invert: !!m.invert,
+    expand: m.expand ?? 0, feather: m.feather ?? 0, nodes,
+  });
+  if (findClip(comp, toId)?.clip.kind === 'media') buildMediaMaskGpu(toId);
+  else markChainDirty();
 }
 
 /** Release one asset's runtime handles (element, proxy, bitmaps, texture). */
@@ -3742,6 +3920,20 @@ function unloadAssets() {
 
 /** Make `data` ({comp, assets, t, name}) the current project. */
 async function applyProjectData(data) {
+  // No autosave while the comp is half-built: a pending save firing mid-
+  // restore would store the new comp with only the assets loaded so far.
+  clearTimeout(saveTimer);
+  saveTimer = null;
+  restoring = true;
+  try {
+    await applyProjectDataInner(data);
+  } finally {
+    restoring = false;
+    if (saveAfterRestore) { saveAfterRestore = false; scheduleSave(); }
+  }
+}
+
+async function applyProjectDataInner(data) {
   stopSplatNav();
   for (const r of splatRenderers.values()) r.destroy();
   splatRenderers.clear();
@@ -3750,6 +3942,8 @@ async function applyProjectData(data) {
   if (rotoJob) rotoJob.cancel = true;   // the clips it reads are going away
   document.getElementById('demo-card')?.remove();
   unloadAssets();
+  offlineAssets.clear();
+  rehydrateTried.clear();
   for (const clipId of [...mediaChains.keys()]) destroyMediaChain(clipId);
   for (const clipId of [...audioChains.keys()]) destroyAudioChain(clipId);
   fxSpecs.clear();
@@ -3778,9 +3972,14 @@ async function applyProjectData(data) {
   await Promise.allSettled((data.assets ?? [])
     .filter((meta) => meta.kind !== 'shape')
     .map(async (meta) => {
-      const file = await idbGet(`asset:${meta.id}`);
-      if (!file) throw new Error(`missing media blob for ${meta.name}`);
-      await createAsset(file, meta.id);
+      try {
+        const file = await idbGet(`asset:${meta.id}`);
+        if (!file) throw new Error(`missing media blob for ${meta.name}`);
+        await createAsset(file, meta.id);
+      } catch (e) {
+        offlineAssets.set(meta.id, { id: meta.id, name: meta.name, kind: meta.kind, offline: true });
+        throw e;
+      }
     })).then((results) => {
       const failed = results.filter((r) => r.status === 'rejected');
       for (const f of failed) console.warn('slangfx: asset restore failed:', f.reason);
@@ -3799,8 +3998,7 @@ async function applyProjectData(data) {
 }
 
 async function restoreProject() {
-  let data = null;
-  try { data = JSON.parse(localStorage.getItem(PROJECT_KEY)); } catch {}
+  const data = await readAutosave();
   if (data?.comp) {
     setStatus('restoring project…');
     await applyProjectData(data);
@@ -3866,8 +4064,7 @@ async function collectLaunchImports(given = null) {
  * the named-project store. Media blobs already live in IndexedDB keyed by
  * asset id, shared across projects — only the JSON needs copying. */
 async function stashAutosavedProject() {
-  let data = null;
-  try { data = JSON.parse(localStorage.getItem(PROJECT_KEY)); } catch {}
+  const data = await readAutosave();
   if (!data?.comp || data.comp._demo) return;
   if (!data.comp.tracks?.some((t) => t.clips?.length)) return;
   const name = data.name ?? `Untitled ${new Date().toLocaleString()}`;
@@ -3968,7 +4165,9 @@ function projectIndex() {
 }
 
 function updateProjectButton() {
-  $('btn-project').textContent = `☰ ${projectName ?? 'untitled'}`;
+  const btn = $('btn-project');
+  btn.textContent = `☰ ${projectName ?? 'untitled'}${saveError ? ' ⚠' : ''}`;
+  btn.title = saveError ? `Autosave failed: ${saveError?.message ?? saveError}` : '';
   document.title = `${projectName ?? 'untitled'} — Lowkey Studio`;
   updateSaveBackButton();
 }
@@ -4016,7 +4215,20 @@ async function stashCurrent() {
   await saveNamedProject(name, { silent: true });
 }
 
+/** Project switches run one at a time: two interleaved restores would mix
+ * both projects' assets and could stash a half-loaded comp. */
+let projectBusy = false;
+async function projectSwitch(fn) {
+  if (projectBusy) { setStatus('still switching projects — one moment'); return; }
+  projectBusy = true;
+  try { await fn(); } finally { projectBusy = false; }
+}
+
 async function openProject(name) {
+  return projectSwitch(() => openProjectNow(name));
+}
+
+async function openProjectNow(name) {
   const raw = await idbGet(`project:${name}`);
   if (!raw) { setStatus(`project '${name}' not found`); return; }
   await stashCurrent();
@@ -4029,6 +4241,10 @@ async function openProject(name) {
 }
 
 async function newProject() {
+  return projectSwitch(newProjectNow);
+}
+
+async function newProjectNow() {
   await stashCurrent();
   const fresh = newComp({ width: 1280, height: 720, fps: 30, dur: 12 });
   fresh._autoSize = true;
@@ -4102,6 +4318,7 @@ function confirmDialog({ title = 'Are you sure?', message = '', confirmLabel = '
 }
 
 async function deleteProject(name) {
+  if (projectBusy) { setStatus('still switching projects — one moment'); return; }
   const isOpen = name === projectName;
   const ok = await confirmDialog({
     title: `Delete project '${name}'?`,
@@ -4118,7 +4335,7 @@ async function deleteProject(name) {
     // project we just deleted.
     const fresh = newComp({ width: 1280, height: 720, fps: 30, dur: 12 });
     fresh._autoSize = true;
-    await applyProjectData({ comp: fresh, assets: [], t: 0, name: null });
+    await projectSwitch(() => applyProjectData({ comp: fresh, assets: [], t: 0, name: null }));
     scheduleSave();
     setStatus(`deleted project '${name}' — new empty project`);
   } else {

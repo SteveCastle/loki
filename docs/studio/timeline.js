@@ -1841,12 +1841,15 @@ export class Timeline {
       : comp.tracks.flatMap((track) =>
           track.clips.filter((c) => t > c.start && t < clipEnd(c)).map((clip) => ({ track, clip })));
     let n = 0;
+    const pairs = [];
     this.host.history.record(comp, () => {
       for (const { track, clip } of targets) {
         const right = splitClip(clip, t);
-        if (right) { track.clips.push(right); n++; }
+        if (right) { track.clips.push(right); pairs.push([clip.id, right.id]); n++; }
       }
     });
+    // State the model doesn't hold (mask stacks) follows the new half.
+    for (const [from, to] of pairs) this.host.cloneClipState?.(from, to);
     if (n) {
       this.host.onModelChange({ structural: true });
       this.host.status(`split ${n} clip${n > 1 ? 's' : ''} at ${fmtTimecode(t, comp.fps)}`);
@@ -1860,6 +1863,7 @@ export class Timeline {
     const sel = this._selectionInOrder();
     if (!sel.length) return;
     const copies = [];
+    const pairs = [];
     this.host.history.record(comp, () => {
       // Copies ALWAYS get their own track(s): one new track directly above
       // each source track, holding that track's copies.
@@ -1869,6 +1873,7 @@ export class Timeline {
         // so the copy must not share them with the original.
         const copy = reidEffects(structuredClone(clip));
         copy.id = uid('clip');
+        pairs.push([clip.id, copy.id]);
         const src = trackOf(comp, clip);
         if (!lanes.has(src)) lanes.set(src, newTrack(src.name));
         lanes.get(src).clips.push(copy);
@@ -1880,6 +1885,7 @@ export class Timeline {
         .forEach(([i, lane]) => comp.tracks.splice(i, 0, lane));
       ensureDur(comp);
     });
+    for (const [from, to] of pairs) this.host.cloneClipState?.(from, to);
     this.selClips = new Set(copies);
     this.host.onModelChange({ structural: true });
     this.host.onSelect?.();

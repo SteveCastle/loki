@@ -166,6 +166,123 @@ async (page) => {
   const size = (await (await dl.createReadStream()).toArray()).reduce((n, b) => n + b.length, 0);
   check('offline render', size > 10000, { size });
 
+  // ---- persistence ------------------------------------------------------
+  const readIdb = (key) => page.evaluate((k) => new Promise((res) => {
+    const r = indexedDB.open('lowkey-studio', 1);
+    r.onsuccess = () => {
+      const q = r.result.transaction('media', 'readonly').objectStore('media').get(k);
+      q.onsuccess = () => { r.result.close(); res(q.result ?? null); };
+      q.onerror = () => { r.result.close(); res(null); };
+    };
+    r.onerror = () => res(null);
+  }), key);
+  const autosave = async () => { const raw = await readIdb('autosave'); return raw ? JSON.parse(raw) : null; };
+  const reloadStudio = async () => {
+    await page.reload();
+    await page.waitForFunction(() => window.studio && window.fx?.inputTexture
+      && [...window.studio.assets.values()].some((a) => a.name === 'tone.mp4' && a.ready), null, { timeout: 30000 });
+  };
+  const origId = await page.evaluate(() => window.comp().tracks[0].clips[0].id);
+
+  // 6a. An edit inside the 700 ms debounce survives an immediate reload
+  // (the unload journal), and the autosave lives in IndexedDB.
+  await page.evaluate(() => { window.comp().tracks[0].name = 'flushed-on-pagehide'; window.studio.onModelChange({}); });
+  await reloadStudio();
+  const flushed = await page.evaluate(() => ({ name: window.comp().tracks[0].name,
+    legacy: localStorage.getItem('lowkey-studio.project.v2') !== null }));
+  check('debounced edit flushed on reload', flushed.name === 'flushed-on-pagehide', flushed);
+  check('autosave moved off localStorage', !flushed.legacy && !!(await autosave())?.comp, flushed);
+
+  // 6. A painted mask far past the old 2 MB cap (incompressible noise).
+  await page.evaluate((id) => window.studio.timeline.selectClip(id), origId);
+  await page.getByRole('button', { name: '＋Paint' }).click();
+  await page.keyboard.press('Escape');   // leave paint mode
+  const paintBytes = await page.evaluate((id) => {
+    const node = window.studio.clipMasks.get(id).nodes.find((n) => n.kind === 'paint');
+    const c = node.source.getContext('2d');
+    const img = c.createImageData(node.source.width, node.source.height);
+    // Opaque random RGB: incompressible, and lossless through PNG (partial
+    // alpha would be premultiplied and come back altered).
+    for (let i = 0; i < img.data.length; i++) img.data[i] = (i & 3) === 3 ? 255 : (Math.random() * 256) | 0;
+    c.putImageData(img, 0, 0);
+    let sum = 0;
+    const d = c.getImageData(0, 0, 64, 64).data;
+    for (let i = 0; i < d.length; i++) sum = (sum * 31 + d[i]) >>> 0;
+    return { bytes: node.source.toDataURL('image/png').length, sum };
+  }, origId);
+  check('paint mask is past the old cap', paintBytes.bytes > 2_000_000, paintBytes);
+
+  // 7. Split and duplicate keep the mask stack on the new clip.
+  await page.evaluate((id) => { window.studio.timeline.selectClip(id); window.studio.timeline.host.setTime(1.5); document.activeElement?.blur(); }, origId);
+  await page.keyboard.press('s');
+  const splitMask = await page.evaluate((id) => {
+    const right = window.comp().tracks[0].clips.find((c) => c.id !== id);
+    const m = right && window.studio.clipMasks.get(right.id);
+    return { right: right?.id, kinds: m?.nodes.map((n) => n.kind) ?? [] };
+  }, origId);
+  check('split keeps the mask', splitMask.kinds.includes('paint') && splitMask.kinds.includes('layer'), splitMask);
+  await page.evaluate((id) => { window.studio.timeline.selectClip(id); document.activeElement?.blur(); }, origId);
+  await page.keyboard.press('Control+d');
+  const dupMask = await page.evaluate((id) => {
+    const sel = [...window.studio.timeline.selClips][0];
+    return { copy: sel, kinds: (sel !== id && window.studio.clipMasks.get(sel)?.nodes.map((n) => n.kind)) || [] };
+  }, origId);
+  check('duplicate keeps the mask', dupMask.kinds.includes('paint'), dupMask);
+
+  // 8. The big masks (far past localStorage's quota) persist via the
+  // IndexedDB autosave.
+  await page.waitForTimeout(2000);   // past the debounce: a normal save lands
+  await reloadStudio();
+  const after = await page.evaluate((id) => {
+    const c = window.comp();
+    const clip = c.tracks.flatMap((t) => t.clips).find((k) => k.id === id);
+    const node = window.studio.clipMasks.get(id)?.nodes.find((n) => n.kind === 'paint');
+    let sum = null;
+    if (node) {
+      sum = 0;
+      const d = node.source.getContext('2d').getImageData(0, 0, 64, 64).data;
+      for (let i = 0; i < d.length; i++) sum = (sum * 31 + d[i]) >>> 0;
+    }
+    const right = c.tracks.flatMap((t) => t.clips).find((k) => k.id !== id && window.studio.clipMasks.get(k.id));
+    return { hasClip: !!clip, sum, splitMaskKept: !!right };
+  }, origId);
+  check('big paint mask survives reload (exact pixels)', after.sum === paintBytes.sum && after.splitMaskKept,
+    { ...after, expected: paintBytes.sum });
+
+  // 9. Removing media is undoable: the clips AND the media come back.
+  const assetId = await page.evaluate(() => [...window.studio.assets.values()].find((a) => a.name === 'tone.mp4').id);
+  const clipsOf = () => page.evaluate((a) => window.comp().tracks.flatMap((t) => t.clips).filter((c) => c.assetId === a).length, assetId);
+  const before9 = await clipsOf();
+  if (!await page.evaluate(() => typeof window.studio.removeAsset === 'function'))
+    throw new Error('this build does not expose window.studio.removeAsset');
+  await page.evaluate((a) => window.studio.removeAsset(window.studio.assets.get(a)), assetId);
+  const removed = await clipsOf();
+  await page.evaluate(() => document.activeElement?.blur());
+  await page.keyboard.press('Control+z');
+  const back = await page.waitForFunction((a) => window.studio.assets.get(a)?.ready, assetId, { timeout: 10000 })
+    .then(() => true, () => false);
+  check('undo remove-media restores clips and media', removed === 0 && (await clipsOf()) === before9 && back,
+    { before9, removed, after: await clipsOf(), back });
+
+  // 10. Media whose blob is gone stays in the project as offline.
+  await page.evaluate((a) => new Promise((res) => {
+    const r = indexedDB.open('lowkey-studio', 1);
+    r.onsuccess = () => {
+      const tx = r.result.transaction('media', 'readwrite');
+      tx.objectStore('media').delete(`asset:${a}`);
+      tx.oncomplete = () => { r.result.close(); res(); };
+    };
+  }), assetId);
+  await page.reload();
+  await page.waitForFunction(() => window.studio && window.fx?.inputTexture, null, { timeout: 30000 });
+  await page.waitForTimeout(1500);
+  await page.evaluate(() => window.studio.onModelChange({}));
+  await page.waitForTimeout(1500);
+  const saved = await autosave();
+  const kept = saved?.assets?.find((m) => m.id === assetId);
+  const clipsKept = saved?.comp?.tracks.flatMap((t) => t.clips).filter((c) => c.assetId === assetId).length;
+  check('offline media kept in the project', !!kept?.offline && clipsKept === before9, { kept, clipsKept });
+
   check('no page errors', errors.length === 0, errors.slice(0, 5));
   return { results, errors };
 }
