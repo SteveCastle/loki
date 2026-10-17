@@ -357,6 +357,7 @@ async function boot() {
     renderCompAudio, mixCompAudio, audioEntries, audioChains,
     audioDrive, audioSignal, syncAudioDrive: () => syncAudioDrive(),
     mediaChains, parkedMasks, sweepStorage, projectJSON,
+    saveEffectDefaults, clearEffectDefaults, resetEffectToDefaults, addEffectToClip,
     // Roto is network + model driven — the console handle is how tests
     // drive it without clicking through the picker.
     clipMasks, analyzeRotoNode, startRotoEdit, stopRotoEdit,
@@ -1945,9 +1946,10 @@ function resetClipProps(clips) {
         clip.splat.orbitDist = cam.dist;
       }
       if (clip.kind === 'media') clip.blend = 'normal';
-      // Dropping a param's PropTrack IS its default: params are created on
-      // touch from the shader's (or audio effect's) own default value.
-      for (const eff of effectsOf(clip)) eff.params = {};
+      // Back to each effect's defaults: the user's saved ones where set;
+      // otherwise dropping a param's PropTrack IS its default (params are
+      // created on touch from the shader's or audio effect's own value).
+      for (const eff of effectsOf(clip)) eff.params = defaultParams(eff);
     }
   });
   for (const clip of list) markChainDirty(clip.id);
@@ -9693,6 +9695,109 @@ function openEffectPicker(clip, anchor, { visual = null, audio = null } = {}) {
   search.focus();
 }
 
+/* ---- per-effect user defaults ----------------------------------------
+ * "Save as default" (an effect's ⋯ menu) stores its parameter values at
+ * the playhead, keyed by what the effect IS — preset path, audio effect id,
+ * or a saved custom shader's name — so the next copy of that effect starts
+ * from them. Only new effects, "reset to defaults" and the clip reset read
+ * them: effects already in a project keep their own values. Values only —
+ * keyframes and drivers belong to the clip they were made on. Stored per
+ * origin, so the browser and the desktop app keep their own sets. */
+const EFFECT_DEFAULTS_KEY = 'lowkey-studio.effect-defaults';
+
+function loadEffectDefaults() {
+  try { return JSON.parse(localStorage.getItem(EFFECT_DEFAULTS_KEY)) ?? {}; }
+  catch { return {}; }
+}
+
+/** What an effect is, for defaults; null when it has no stable identity (an
+ * unsaved custom shader). */
+function effectDefaultsKey(effect) {
+  if (isAudioEffect(effect)) return effect.audioId ? `audio:${effect.audioId}` : null;
+  if (effect.fxKind === 'custom') return effect.savedName ? `custom:${effect.savedName}` : null;
+  return effect.path ? `preset:${effect.path}` : null;
+}
+
+function userDefaultsFor(effect) {
+  const key = effectDefaultsKey(effect);
+  return key ? loadEffectDefaults()[key] ?? null : null;
+}
+
+/** Fresh params for an effect: its saved defaults as static values ({}
+ * when none — params are then created on touch from the shader's own). */
+function defaultParams(effect) {
+  const out = {};
+  for (const [name, v] of Object.entries(userDefaultsFor(effect) ?? {}))
+    if (Number.isFinite(v)) out[name] = newProp(v);
+  return out;
+}
+
+function saveEffectDefaults(clip, effect) {
+  const key = effectDefaultsKey(effect);
+  if (!key) return;
+  const defs = effectPropDefs(clip, effect);
+  if (!defs.length) { setStatus('parameters are still loading — try again in a moment'); return; }
+  const values = {};
+  for (const def of defs) values[parsePropKey(def.key).name] = valueAt(clip, def.key);
+  try {
+    const all = loadEffectDefaults();
+    all[key] = values;
+    localStorage.setItem(EFFECT_DEFAULTS_KEY, JSON.stringify(all));
+  } catch (e) {
+    setStatus(`could not save defaults — ${e?.message ?? e}`);
+    return;
+  }
+  renderInspector();
+  setStatus(`saved as default — new ${effect.name} effects start with these values`);
+}
+
+function clearEffectDefaults(effect) {
+  const key = effectDefaultsKey(effect);
+  const all = loadEffectDefaults();
+  if (!key || !all[key]) return;
+  delete all[key];
+  try { localStorage.setItem(EFFECT_DEFAULTS_KEY, JSON.stringify(all)); } catch {}
+  renderInspector();
+  setStatus(`cleared saved defaults — new ${effect.name} effects start from the built-in values`);
+}
+
+/** Every parameter back to the saved defaults (or the built-in ones). */
+function resetEffectToDefaults(clip, effect) {
+  history.record(comp, () => { effect.params = defaultParams(effect); });
+  onModelChange({ structural: false });
+  setStatus(`reset ${effect.name} to its ${userDefaultsFor(effect) ? 'saved' : 'built-in'} defaults`);
+}
+
+function effectDefaultsMenu(clip, effect, anchor) {
+  const key = effectDefaultsKey(effect);
+  const saved = userDefaultsFor(effect);
+  const r = anchor.getBoundingClientRect();
+  showMenu(r.left, r.bottom + 4, [
+    {
+      label: 'Save current values as default',
+      detail: key
+        ? `New ${effect.name} effects will start with the values at the playhead. Keyframes and drivers stay with this clip.`
+        : 'Save this custom shader first — defaults are stored under its saved name.',
+      disabled: !key,
+      action: () => saveEffectDefaults(clip, effect),
+    },
+    {
+      label: 'Reset to defaults',
+      detail: saved
+        ? 'Set every parameter back to your saved defaults.'
+        : 'Set every parameter back to the effect’s built-in defaults.',
+      action: () => resetEffectToDefaults(clip, effect),
+    },
+    {
+      label: 'Clear saved defaults',
+      detail: 'New copies start from the built-in defaults again. Effects already in your projects keep their values.',
+      disabled: !saved,
+      danger: true,
+      action: () => clearEffectDefaults(effect),
+    },
+  ]);
+}
+
 /** Resolve a menu choice to an effect spec (null for non-effect choices). */
 function effectSpecForChoice(choice) {
   if (choice.startsWith('__audio__:')) {
@@ -9717,6 +9822,7 @@ async function addEffectToClip(clip, choice) {
   const resolved = choice && fx && effectSpecForChoice(choice);
   if (!resolved) return;
   const effect = newEffect(resolved.spec);
+  effect.params = defaultParams(effect);   // the user's saved starting point, if any
   if (resolved.title) effect.overlay = { Stamp: { kind: 'text', state: { ...DEFAULT_TITLE } } };
   history.record(comp, () => { (clip.effects ??= []).push(effect); });
   openEffects.add(effect.id);
@@ -9751,6 +9857,7 @@ async function addFxLayer(choice) {
   // New adjustment layers cover the whole timeline; trim them when needed.
   const clip = newFxClip(resolved?.spec ?? null, 0, Math.max(1 / comp.fps, comp.dur));
   const effect = clip.effects[0] ?? null;
+  if (effect) effect.params = defaultParams(effect);
   if (resolved?.title) effect.overlay = { Stamp: { kind: 'text', state: { ...DEFAULT_TITLE } } };
 
   history.record(comp, () => {
@@ -10626,7 +10733,16 @@ function effectRow(clip, effect) {
   del.title = 'remove this effect';
   del.onclick = () => removeEffect(clip, effect);
 
-  row.append(twirl, on, badge, name, move(-1), move(1), del);
+  const more = document.createElement('button');
+  const hasDefaults = !!userDefaultsFor(effect);
+  more.className = 'tl-mini fx-defaults' + (hasDefaults ? ' has-defaults' : '');
+  more.textContent = '⋯';
+  more.title = hasDefaults
+    ? `defaults — new ${effect.name} effects start from your saved values`
+    : 'defaults — save these values as the starting point for new copies of this effect';
+  more.onclick = () => effectDefaultsMenu(clip, effect, more);
+
+  row.append(twirl, on, badge, name, move(-1), move(1), more, del);
   wrap.appendChild(row);
 
   if (!open) return wrap;

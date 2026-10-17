@@ -531,6 +531,42 @@ test('the inspector fallback focus is not a selection to delete or split', () =>
   assert.ok(!comp.tracks.flatMap((tr) => tr.clips).some((c) => c.id === 'b'));
 });
 
+test('effect defaults: keyed by what the effect is, applied to fresh params', () => {
+  const store = {};
+  const ctx = {
+    ...model, JSON, Object, Number, EFFECT_DEFAULTS_KEY: 'k',
+    localStorage: { getItem: (k) => store[k] ?? null, setItem: (k, v) => { store[k] = v; } },
+    isAudioEffect: (e) => e.fxKind === 'audio',
+    setStatus: noop, renderInspector: noop,
+  };
+  for (const name of ['loadEffectDefaults', 'effectDefaultsKey', 'userDefaultsFor', 'defaultParams', 'saveEffectDefaults', 'clearEffectDefaults'])
+    ctx[name] = appFunction(name, ctx);
+  const preset = { id: 'e1', name: 'camera-shake', fxKind: 'preset', path: 'shaders/motion/camera-shake/camera-shake.slangp', params: {} };
+  assert.equal(ctx.effectDefaultsKey(preset), 'preset:shaders/motion/camera-shake/camera-shake.slangp');
+  assert.equal(ctx.effectDefaultsKey({ fxKind: 'audio', audioId: 'reverb' }), 'audio:reverb');
+  assert.equal(ctx.effectDefaultsKey({ fxKind: 'custom' }), null);              // unsaved shader: no identity
+  assert.equal(ctx.effectDefaultsKey({ fxKind: 'custom', savedName: 'glow' }), 'custom:glow');
+  assert.equal(JSON.stringify(ctx.defaultParams(preset)), '{}');                // nothing saved yet
+
+  // Save: the values at the playhead of every parameter.
+  const clip = { id: 'c', start: 0, effects: [preset] };
+  ctx.effectPropDefs = () => [{ key: 'fx:e1:hit' }, { key: 'fx:e1:rate' }];
+  ctx.parsePropKey = (k) => ({ name: k.split(':')[2] });
+  ctx.valueAt = (c, k) => (k.endsWith('hit') ? 0.7 : 9);
+  ctx.saveEffectDefaults(clip, preset);
+  const fresh = ctx.defaultParams({ ...preset, id: 'e2' });
+  assert.equal(fresh.hit.v, 0.7);
+  assert.equal(fresh.rate.v, 9);
+  assert.equal(fresh.hit.anim, false);
+  assert.notEqual(fresh.hit, ctx.defaultParams(preset).hit);                    // each effect gets its own props
+
+  // Garbage in storage is ignored; clearing restores the built-in start.
+  store.k = JSON.stringify({ [ctx.effectDefaultsKey(preset)]: { hit: 'x', rate: 3 } });
+  assert.equal(JSON.stringify(Object.keys(ctx.defaultParams(preset))), '["rate"]');
+  ctx.clearEffectDefaults(preset);
+  assert.equal(JSON.stringify(ctx.defaultParams(preset)), '{}');
+});
+
 test('duplicating a multi-selection keeps the gaps between clips and selects the copies', () => {
   const { comp, timeline } = setup();
   const a = model.newTrack('A'), b = model.newTrack('B');

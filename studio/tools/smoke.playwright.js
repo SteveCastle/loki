@@ -723,6 +723,32 @@ async (page) => {
   const texAfter = await page.evaluate(() => window.__texLive);
   check('adding and removing an effect frees its GPU textures', texAfter - texBefore <= 2, { texBefore, texAfter });
 
+  // 24. "Save current values as default": the next copy of the effect
+  // starts there; clearing goes back to the built-in values.
+  const SHAKE = 'shaders/motion/camera-shake/camera-shake.slangp';
+  const addShake = () => page.evaluate(async ([vid, path]) => {
+    const clip = window.comp().tracks.flatMap((tr) => tr.clips).find((k) => k.id === vid);
+    await window.studio.addEffectToClip(clip, path);
+    const e = clip.effects[clip.effects.length - 1];
+    return { id: e.id, rate: e.params.rate?.v ?? null };
+  }, [videoId, SHAKE]);
+  const first = await addShake();
+  await page.evaluate(([vid, eid]) => {
+    const clip = window.comp().tracks.flatMap((tr) => tr.clips).find((k) => k.id === vid);
+    clip.effects.find((e) => e.id === eid).params.rate = { v: 13, anim: false, keys: [] };
+    window.studio.timeline.selectClip(vid);
+    window.studio.onModelChange({});
+  }, [videoId, first.id]);
+  await page.waitForTimeout(300);
+  await page.locator('.fx-defaults').first().click();
+  await page.getByText('Save current values as default').click();
+  const second = await addShake();
+  await page.locator('.fx-defaults').first().click();
+  await page.getByText('Clear saved defaults').click();
+  const third = await addShake();
+  check('effect defaults: saved values seed new copies; clearing restores built-ins',
+    first.rate === null && second.rate === 13 && third.rate === null, { first, second, third });
+
   check('no page errors', errors.length === 0, errors.slice(0, 5));
   return { results, errors };
 }

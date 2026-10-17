@@ -2358,3 +2358,6 @@ body.roto-analyzing #gizmo { display: none; }
 body.offline-rendering #timeline,
 body.offline-rendering #inspector,
 body.offline-rendering #media-bin { opacity: 0.55; }
+
+/* Effect defaults: the ⋯ button marks an effect type with saved defaults. */
+.fx-defaults.has-defaults { color: var(--accent); }
