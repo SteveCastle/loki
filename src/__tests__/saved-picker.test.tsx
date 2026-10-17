@@ -110,3 +110,42 @@ describe('the list', () => {
     expect(container.firstChild).toBeNull();
   });
 });
+
+describe('most recently used order', () => {
+  // eslint-disable-next-line global-require
+  const recent = () => require('../renderer/saved-recent');
+
+  test('the toggle switches A–Z and Recent, remembers the choice, and picks are recorded', () => {
+    saveTemplate('edit', 'Night', 'make it night');
+    const t = loadTemplates('edit')[0];
+    recent().markUsed('w:w1', 1000); // Nightly tagging, long ago
+    recent().markUsed(`t:edit:${t.id}`, 2000); // Night, more recently
+    const { onRunWorkflow } = setup();
+    expect(names()).toEqual(['Archive to S3', 'Night', 'Nightly tagging']);
+
+    fireEvent.click(screen.getByRole('button', { name: /sort by most recently used/ }));
+    expect(names()).toEqual(['Night', 'Nightly tagging', 'Archive to S3']); // never used: last, by name
+    expect(recent().loadSavedSort()).toBe('recent');
+
+    fireEvent.click(screen.getByText('Archive to S3'));
+    expect(onRunWorkflow).toHaveBeenCalledWith(WORKFLOWS[1]);
+    expect(recent().loadRecent()['w:w2']).toBeGreaterThan(2000);
+  });
+
+  test('the next open starts in the remembered order, newest pick first', () => {
+    recent().saveSavedSort('recent');
+    recent().markUsed('w:w2', 5000);
+    recent().markUsed('w:w1', 9000);
+    setup([IMG]);
+    expect(names()).toEqual(['Nightly tagging', 'Archive to S3']);
+    expect(screen.getByRole('button', { name: /Sorted by most recently used/ }).textContent).toBe('Recent');
+  });
+
+  test('history is capped, oldest dropped', () => {
+    for (let i = 0; i < 505; i += 1) recent().markUsed(`w:${i}`, i);
+    const all = recent().loadRecent();
+    expect(Object.keys(all)).toHaveLength(500);
+    expect(all['w:0']).toBeUndefined();
+    expect(all['w:504']).toBe(504);
+  });
+});

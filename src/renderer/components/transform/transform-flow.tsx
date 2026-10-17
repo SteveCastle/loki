@@ -29,6 +29,7 @@ import {
   type PromptTemplate,
 } from './store';
 import { EngineSetupDeferred } from './engine-setup';
+import { markUsed, savedTransformKey } from '../../saved-recent';
 import { TransformFlowView, validateForRun, validateShape, type PromptPreviewState } from './flow-view';
 
 // ---------------------------------------------------------------------------
@@ -105,6 +106,7 @@ function FlowSession({ req }: { req: NonNullable<ReturnType<typeof useFlowReques
 
   // A saved prompt picked in the Choose step: its intent, its text and the configuration saved with it.
   const chooseTemplate = useCallback((id: IntentId, t: PromptTemplate) => {
+    markUsed(savedTransformKey(id, t.id));
     setIntent(id);
     setSettings(templateSettings(id, t));
     setPhase('shape');

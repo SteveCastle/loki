@@ -33,6 +33,7 @@ import {
 } from './intents';
 import { deleteTemplate, saveTemplate, templateSettings, templateSummary, useAllTemplates, useLastRun, useTemplates, type FlowPhase, type LastRun, type PromptTemplate } from './store';
 import { GlyphCheck, GlyphDie, GlyphMusic, GlyphPin, IntentIcon } from './icons';
+import { markUsed, savedTransformKey } from '../../saved-recent';
 import CameraRig from './camera-rig';
 import './transform-flow.css';
 
@@ -226,7 +227,10 @@ function SavedPrompts({ intent, prompt, onUse }: { intent: IntentId; prompt: str
     <ChipRow label="Saved" hint="Your saved tasks: click one to start from it">
       {list.map((t) => (
         <span key={t.id} className={`ts-template${trimmed && t.prompt === trimmed ? ' active' : ''}`}>
-          <button type="button" className="ts-template-use" title={`Start from your saved task:\n${templateSummary(intent, t)}`} onClick={() => onUse(t)}>
+          <button type="button" className="ts-template-use" title={`Start from your saved task:\n${templateSummary(intent, t)}`} onClick={() => {
+              markUsed(savedTransformKey(intent, t.id));
+              onUse(t);
+            }}>
             ☆ {t.name}
           </button>
           <button type="button" className="ts-template-x" onClick={() => deleteTemplate(intent, t.id)} aria-label={`Delete saved task ${t.name}`} title="Delete">

@@ -466,6 +466,29 @@
 }
 
 /* Saved: transforms and workflows in one searchable list (saved-picker.tsx). */
+.saved-header-right {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.saved-sort {
+  background: none;
+  border: 1px solid var(--ctx-hairline);
+  border-radius: 4px;
+  color: rgba(255, 255, 255, 0.55);
+  font: inherit;
+  font-size: 10px;
+  line-height: 1;
+  padding: 2px 6px;
+  cursor: pointer;
+}
+
+.saved-sort:hover {
+  color: rgba(255, 255, 255, 0.9);
+  border-color: var(--ctx-accent);
+}
+
 .saved-list {
   max-height: 220px;
 }

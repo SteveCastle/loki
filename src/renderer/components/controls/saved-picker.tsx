@@ -8,6 +8,15 @@ import {
   type PromptTemplate,
 } from '../transform/store';
 import { IntentIcon } from '../transform/icons';
+import {
+  loadRecent,
+  loadSavedSort,
+  markUsed,
+  saveSavedSort,
+  savedTransformKey,
+  savedWorkflowKey,
+  type SavedSort,
+} from '../../saved-recent';
 
 // The palette's "Saved" list: one searchable place for everything the user
 // saved to run again — saved Transform tasks (prompts and preset settings,
@@ -25,25 +34,30 @@ export type SavedEntry =
   | { kind: 'transform'; key: string; name: string; detail: string; intent: IntentId; t: PromptTemplate };
 
 /**
- * Every saved item that can run on this selection, by name: the saved
- * transforms whose intent fits `transformPaths` (none when Transform can't
- * run here), and every workflow.
+ * Every saved item that can run on this selection: the saved transforms whose
+ * intent fits `transformPaths` (none when Transform can't run here), and every
+ * workflow. By name, or with `sort` 'recent' most recently picked first (`recent`:
+ * key -> time, see saved-recent.ts), never-picked ones after them by name.
  */
 export function savedEntries(
   workflows: SavedWorkflow[],
   templates: Array<{ intent: IntentId; t: PromptTemplate }>,
-  transformPaths: string[]
+  transformPaths: string[],
+  sort: SavedSort = 'name',
+  recent: Record<string, number> = {}
 ): SavedEntry[] {
   const inputs = classify(transformPaths);
   const out: SavedEntry[] = [];
   if (transformPaths.length) {
     templates.forEach(({ intent, t }) => {
       if (!availability(intent, inputs).ok) return;
-      out.push({ kind: 'transform', key: `t:${intent}:${t.id}`, name: t.name, detail: `${intentById(intent).title} · ${templateSummary(intent, t)}`, intent, t });
+      out.push({ kind: 'transform', key: savedTransformKey(intent, t.id), name: t.name, detail: `${intentById(intent).title} · ${templateSummary(intent, t)}`, intent, t });
     });
   }
-  workflows.forEach((wf) => out.push({ kind: 'workflow', key: `w:${wf.id}`, name: wf.name, detail: 'Workflow', wf }));
-  return out.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+  workflows.forEach((wf) => out.push({ kind: 'workflow', key: savedWorkflowKey(wf.id), name: wf.name, detail: 'Workflow', wf }));
+  const byName = (a: SavedEntry, b: SavedEntry) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+  if (sort !== 'recent') return out.sort(byName);
+  return out.sort((a, b) => (recent[b.key] || 0) - (recent[a.key] || 0) || byName(a, b));
 }
 
 /** Every word of the query appears in the name, the summary or the kind ("workflow", "transform", "edit"…). */
@@ -71,9 +85,15 @@ export default function SavedPicker({
   const [search, setSearch] = useState('');
   const [selectedIdx, setSelectedIdx] = useState(0);
   const [undo, setUndo] = useState<{ intent: IntentId; template: PromptTemplate; index: number } | null>(null);
+  const [sort, setSort] = useState<SavedSort>(loadSavedSort);
   const listRef = useRef<HTMLDivElement>(null);
 
-  const entries = useMemo(() => savedEntries(workflows, templates, transformPaths), [workflows, templates, transformPaths]);
+  // Read once per open: picking an item closes the palette, so the order never shifts under the pointer.
+  const recent = useMemo(() => loadRecent(), []);
+  const entries = useMemo(
+    () => savedEntries(workflows, templates, transformPaths, sort, recent),
+    [workflows, templates, transformPaths, sort, recent]
+  );
   const filtered = useMemo(() => entries.filter((e) => matchesSearch(e, search)), [entries, search]);
   const transforms = entries.filter((e) => e.kind === 'transform').length;
 
@@ -89,7 +109,15 @@ export default function SavedPicker({
     item?.scrollIntoView?.({ block: 'nearest' });
   }, [selectedIdx]);
 
+  const toggleSort = () => {
+    const next: SavedSort = sort === 'recent' ? 'name' : 'recent';
+    setSort(next);
+    saveSavedSort(next);
+    setSelectedIdx(0);
+  };
+
   const run = (e: SavedEntry) => {
+    markUsed(e.key);
     if (e.kind === 'workflow') onRunWorkflow(e.wf);
     else onOpenTransform(e.intent, e.t);
   };
@@ -126,8 +154,21 @@ export default function SavedPicker({
     <div className="context-palette-workflows saved-picker" onKeyDown={handleKeyDown}>
       <div className="workflow-picker-header">
         <span className="action-group-title">Saved</span>
-        <span className="workflow-count">
-          {search ? `${filtered.length} of ${entries.length}` : entries.length}
+        <span className="saved-header-right">
+          {entries.length > 1 && (
+            <button
+              type="button"
+              className="saved-sort"
+              onClick={toggleSort}
+              aria-label={sort === 'recent' ? 'Sorted by most recently used; sort by name' : 'Sorted by name; sort by most recently used'}
+              title={sort === 'recent' ? 'Most recently used first · click for A–Z' : 'A–Z · click for most recently used first'}
+            >
+              {sort === 'recent' ? 'Recent' : 'A–Z'}
+            </button>
+          )}
+          <span className="workflow-count">
+            {search ? `${filtered.length} of ${entries.length}` : entries.length}
+          </span>
         </span>
       </div>
       {entries.length > 0 && (
