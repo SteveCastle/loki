@@ -38,7 +38,7 @@ import {
   fitStart, trackWalls, newTrack,
 } from './comp.js';
 import { clipIcon } from './icons.js';
-import { nearestGridLine, gridLines, gridStep, gridGeometry, gridSummary } from './beat-grid.js';
+import { nearestGridLine, nextGridLine, gridLines, gridStep, gridGeometry, gridMode, gridSummary } from './beat-grid.js';
 
 const TRACK_H = 36;
 const PROP_H = 24;
@@ -460,6 +460,26 @@ export class Timeline {
     return clip && gridStep(grid, clip) > 0 ? { grid, clip } : null;
   }
 
+  /** The nearest grid line within snapping reach of t, or null. */
+  _gridTarget(t) {
+    const g = this.snap ? this._activeGrid() : null;
+    if (!g) return null;
+    const line = nearestGridLine(g.grid, g.clip, t);
+    return line != null && Math.abs(line - t) < SNAP_PX / this.pps ? line : null;
+  }
+
+  /** A clip edge's snap target: the nearer of its magnet (another clip's
+   * edge, the playhead) and the beat grid, a grid line taking ties — so a
+   * dragged clip lands on a drum hit as readily as on a neighbour. Null
+   * when neither is in reach. */
+  _edgeTarget(t, opts = {}) {
+    const m = this._magnetTarget(t, opts);
+    const line = this._gridTarget(t);
+    if (line == null) return m;
+    if (m == null || Math.abs(line - t) <= Math.abs(m - t) + 1e-9) return line;
+    return m;
+  }
+
   /** Magnet targets (clip edges, playhead) and the beat grid compete: the
    * nearest within reach wins, a grid line taking ties. Failing both, the
    * frame grid is the fallback. */
@@ -773,16 +793,30 @@ export class Timeline {
 
     const step = gridStep(g.grid, g.clip);
     // Thin by on-screen density: past ~6px apart, subdivisions give way to
-    // beats, and beats to bars, so the grid never turns into a wash.
+    // beats, and beats to bars, so the grid never turns into a wash. Drum
+    // hits thin by strength instead — zoomed out, only the hard ones show.
     let minKind = 0;                                   // 0 sub · 1 beat · 2 bar
     const beatPx = (60 / g.grid.bpm / clipRate(g.clip)) * this.pps;
-    if (step * this.pps < 6) minKind = beatPx < 6 ? 2 : 1;
-    const rank = { sub: 0, beat: 1, bar: 2 };
+    const dense = step * this.pps < 6;
+    if (dense) minKind = beatPx < 6 ? 2 : 1;
+    const rank = { sub: 0, beat: 1, bar: 2, hit: 2 };
+    const hits = gridMode(g.grid) === 'hits';
     const comp = this.host.comp();
     const lines = gridLines(g.grid, g.clip, x0 / this.pps, (x0 + w) / this.pps, 6000);
-    for (const { t, kind } of lines) {
+    for (const { t, kind, s, band } of lines) {
       if (rank[kind] < minKind || t < -1e-9 || t > comp.dur + 1e-9) continue;
+      if (hits && dense && s < (beatPx < 6 ? 0.7 : 0.4)) continue;
       const x = Math.round(t * this.pps - x0) + 0.5;
+      if (kind === 'hit') {
+        // Kick teal, snare amber, hat pale; taller and brighter the harder it lands.
+        const rgb = band === 0 ? '63,208,192' : band === 1 ? '255,176,80' : '200,205,225';
+        rulerCtx.fillStyle = `rgba(${rgb},${(0.45 + 0.55 * s).toFixed(2)})`;
+        rulerCtx.fillRect(x - 0.5, 0, 1, Math.round(3 + 6 * s));
+        if (!showLines) continue;
+        ctx.fillStyle = `rgba(${rgb},${(0.07 + 0.28 * s).toFixed(2)})`;
+        ctx.fillRect(x - 0.5, 0, 1, h);
+        continue;
+      }
       rulerCtx.fillStyle = kind === 'bar' ? 'rgba(63,208,192,0.95)'
         : kind === 'beat' ? 'rgba(63,208,192,0.6)' : 'rgba(63,208,192,0.35)';
       rulerCtx.fillRect(x - 0.5, 0, 1, kind === 'bar' ? 9 : kind === 'beat' ? 6 : 3);
@@ -1360,12 +1394,12 @@ export class Timeline {
     const earliest = Math.min(...sel.map(({ clip }) => clip.start));
     const ag = this.snap ? this._activeGrid() : null;
     // Snapshot the grid before anything moves: the snap track may itself be
-    // in the selection, and moving it would shift the grid mid-loop.
-    const geo = ag && { bar: gridGeometry(ag.grid, ag.clip).bar, step: gridStep(ag.grid, ag.clip) };
-    const onGrid = (t, ceil) => {
-      const n = (t - geo.bar) / geo.step;
-      return Math.max(0, geo.bar + (ceil ? Math.ceil(n - 1e-6) : Math.round(n)) * geo.step);
-    };
+    // in the selection, and moving it would shift the grid mid-loop. Lines
+    // come from the grid functions so drum hits and tracked beats (which
+    // are not evenly spaced) stagger onto the real music, not a formula.
+    const geo = ag && { grid: ag.grid, clip: { start: ag.clip.start, in: ag.clip.in, rate: ag.clip.rate } };
+    const onGrid = (t, ceil) => Math.max(0,
+      (ceil ? nextGridLine(geo.grid, geo.clip, t) : nearestGridLine(geo.grid, geo.clip, t)) ?? t);
     const base = geo ? onGrid(earliest, false) : quantize(earliest, comp.fps);
     this.host.history.record(comp, () => {
       let t = base;
@@ -1455,8 +1489,8 @@ export class Timeline {
 
       if (group) {
         const raw = orig.start + dxT;
-        const mStart = this._magnetTarget(raw, { excludeIds: groupIds });
-        const mEnd = this._magnetTarget(raw + orig.dur, { excludeIds: groupIds });
+        const mStart = this._edgeTarget(raw, { excludeIds: groupIds });
+        const mEnd = this._edgeTarget(raw + orig.dur, { excludeIds: groupIds });
         let cand;
         if (mStart != null || mEnd != null) {
           const dS = mStart != null ? Math.abs(mStart - raw) : Infinity;
@@ -1482,8 +1516,8 @@ export class Timeline {
         // Either edge of the dragged clip can catch a magnet; a real magnet
         // hit on one edge must beat the other edge's frame-grid fallback.
         const raw = orig.start + dxT;
-        const mStart = this._magnetTarget(raw, { excludeClip: clip });
-        const mEnd = this._magnetTarget(raw + orig.dur, { excludeClip: clip });
+        const mStart = this._edgeTarget(raw, { excludeClip: clip });
+        const mEnd = this._edgeTarget(raw + orig.dur, { excludeClip: clip });
         let cand;
         if (mStart != null || mEnd != null) {
           const dS = mStart != null ? Math.abs(mStart - raw) : Infinity;

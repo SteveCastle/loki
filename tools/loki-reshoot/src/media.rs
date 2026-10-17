@@ -121,6 +121,18 @@ impl Ffmpeg {
         Ok(info)
     }
 
+    /// One container-level tag (`comment`, `title`, ...) of a media file, if present.
+    pub fn format_tag(&self, path: &Path, key: &str) -> Result<Option<String>> {
+        let out = Command::new(&self.ffprobe)
+            .args(["-v", "error", "-show_entries", &format!("format_tags={key}"), "-of", "json"])
+            .arg(path)
+            .output()
+            .context("running ffprobe")?;
+        ensure!(out.status.success(), "ffprobe failed on {}: {}", path.display(), String::from_utf8_lossy(&out.stderr).trim());
+        let v: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+        Ok(v["format"]["tags"][key].as_str().map(|s| s.to_string()))
+    }
+
     /// Decode a video segment to RGB24 frames at `FPS`, scaled (Lanczos, plain stretch) to `w`x`h`.
     /// Returns (frames, count). `max_frames` caps the output.
     pub fn decode_video(&self, path: &Path, start: f64, dur: Option<f64>, w: usize, h: usize, max_frames: usize) -> Result<(Vec<u8>, usize)> {
@@ -194,7 +206,9 @@ pub struct VideoWriter {
 }
 
 impl VideoWriter {
-    pub fn new(ff: &Ffmpeg, out: &Path, w: usize, h: usize, wav: Option<&Path>, crf: u32) -> Result<VideoWriter> {
+    /// `comment` is stored as the container's `comment` tag (the generation record, see `genmeta`); it is written into
+    /// the `moov` atom, so it is present in the fragmented stream on stdout too.
+    pub fn new(ff: &Ffmpeg, out: &Path, w: usize, h: usize, wav: Option<&Path>, crf: u32, comment: Option<&str>) -> Result<VideoWriter> {
         let mut cmd = Command::new(&ff.ffmpeg);
         cmd.args(["-v", "error", "-nostdin", "-y", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", &format!("{w}x{h}"), "-r", &FPS.to_string(), "-i", "-"]);
         if let Some(a) = wav {
@@ -203,6 +217,9 @@ impl VideoWriter {
         cmd.args(["-c:v", "libx264", "-preset", "medium", "-crf", &crf.to_string(), "-pix_fmt", "yuv420p"]);
         if wav.is_some() {
             cmd.args(["-c:a", "aac", "-b:a", "192k"]);
+        }
+        if let Some(c) = comment {
+            cmd.arg("-metadata").arg(format!("comment={c}"));
         }
         let to_stdout = out == Path::new("-");
         if to_stdout {

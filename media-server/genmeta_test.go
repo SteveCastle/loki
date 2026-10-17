@@ -199,6 +199,12 @@ func TestGenerationTextPNG(t *testing.T) {
 		"workflow":   `{"nodes":[]}`,
 		"parameters": "über — Steps: 1",
 	})
+	// Lowkey's own tools (loki-retouch) stamp one JSON record in an iTXt
+	// chunk keyed `loki`; it comes back verbatim for the SPA to interpret.
+	loki := `{"loki":1,"tool":"loki-retouch","version":"0.1.0","model":"Qwen Image 2.1","prompt":"über — make it night","seed":3,"steps":25,"inputs":[{"tag":"<image1>","path":"photo.jpg","width":1024,"height":768}]}`
+	expectChunks(t, readGenerationText(writeGenFile(t, "retouch.png", testPng(
+		pngChunk("iTXt", []byte("loki\x00\x00\x00\x00\x00"+loki)),
+	))), map[string]string{"loki": loki})
 	if got := readGenerationText(writeGenFile(t, "plain.png", testPng())); got != nil {
 		t.Errorf("plain png: got %v, want nil", got)
 	}

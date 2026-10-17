@@ -242,6 +242,35 @@ timeline motion (transform keys/drivers, a splat's camera): `prepareMotionBlur`
 runs after `renderSplats`, and `motionDraw` swaps the averaged picture in for
 the composite draw and the isolate (own-effects) input.
 
+### Snap track and the beat grid
+
+One audio-bearing clip can be the **snap track** (right-click → *Use as snap
+track*, or the inspector's *Snap grid* section). `analyzeTrack` in
+`beat-grid.js` runs one analysis and the grid keeps all of its outputs in
+`comp.grid` (SOURCE time, so the grid follows the clip through moves, trims
+and retimes): `hits` (every drum onset as `[time, strength, band]`, band 0
+kick / 1 snare / 2 hat), `beats` (the tracked beat pulse) and the steady
+`bpm` + `offset`. `grid.mode` picks what the timeline snaps to:
+
+* **hits** — the detected onsets, placed on the attack to the millisecond.
+  A port of librosa's recipe: 128-band mel power spectrogram → dB → positive
+  spectral flux (`onset_strength`), `peak_pick` with onset_detect's
+  defaults, backtrack to the envelope minimum, then a 1 ms RMS envelope finds
+  where the level first climbs a quarter of the way to the hit's peak. The
+  kick / snare / hat call reads the power that *arrived* with the hit: share
+  under 120 Hz, else spectral centroid above or below 4 kHz. The inspector
+  filters by band and a strength floor.
+* **beats** — a port of librosa's dynamic-programming beat tracker on the
+  flux plus a kick term (low-band dB flux gated by linear low-band power
+  arriving, so hats can't claim the phase), each beat pulled onto the hit it
+  lands on. Follows tempo drift; divisions interpolate between consecutive
+  beats; bars come from `beatPhase` (a kick vote).
+* **grid** — the steady model from one bpm and a bar line, which is also
+  what older projects have.
+
+`gridLines` / `nearestGridLine` / `nextGridLine` dispatch on the mode so the
+timeline, the magnet snap and *Stagger* never care which one is live.
+
 ### Undo
 
 `History` (in `comp.js`) keeps **deep JSON snapshots of the whole comp**.

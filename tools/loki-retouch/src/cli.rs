@@ -5,6 +5,7 @@
 //! diagnostics go to stderr only and `--quiet` silences them; a non-zero exit status signals failure.
 use crate::cuda::Device;
 use crate::dit::Dit;
+use crate::genmeta;
 use crate::image::Rgb8;
 use crate::models;
 use crate::pipeline::{Encoded, Pipeline, Settings};
@@ -418,11 +419,12 @@ fn run(prog: &'static str, default_preset: Option<&'static str>) -> Result<()> {
     // ---- phase 1: load the VAE and text encoder; encode every input
     let vae = Vae::load(dev.clone(), &vae_path)?;
     let te = TextEncoder::load(dev.clone(), &te_path)?;
-    let mut encoded: Vec<(usize, Settings, Encoded)> = Vec::new();
+    // (job index, settings, encoded inputs, the inputs as described in the generation record)
+    let mut encoded: Vec<(usize, Settings, Encoded, Vec<serde_json::Value>)> = Vec::new();
     let mut failed = 0usize;
     for (i, src) in sources.iter().enumerate() {
         crate::info!("encoding {}", src.name());
-        let res = (|| -> Result<(Settings, Encoded)> {
+        let res = (|| -> Result<(Settings, Encoded, Vec<serde_json::Value>)> {
             let img = src.load()?;
             let ((w, h), (ow, oh)) = target_size(&cli, preset.as_ref(), (img.w, img.h))?;
             let mut s = base.clone();
@@ -435,11 +437,19 @@ fn run(prog: &'static str, default_preset: Option<&'static str>) -> Result<()> {
             let p = Pipeline { dev: dev.clone(), settings: s.clone() };
             let mut imgs = vec![img];
             imgs.extend(ref_imgs.iter().cloned());
+            let inputs: Vec<serde_json::Value> = imgs
+                .iter()
+                .enumerate()
+                .map(|(k, im)| {
+                    let path = if k == 0 { match src { Source::Path(p) => p.display().to_string(), Source::Stdin(_) => "-".to_string() } } else { cli.refs[k - 1].display().to_string() };
+                    serde_json::json!({ "tag": format!("<image{}>", k + 1), "path": path, "width": im.w, "height": im.h })
+                })
+                .collect();
             let enc = p.encode(&te, &vae, &imgs)?;
-            Ok((s, enc))
+            Ok((s, enc, inputs))
         })();
         match res {
-            Ok((s, e)) => encoded.push((i, s, e)),
+            Ok((s, e, inputs)) => encoded.push((i, s, e, inputs)),
             Err(e) => {
                 eprintln!("{prog}: skipping {}: {e:#}", src.name());
                 failed += 1;
@@ -456,7 +466,7 @@ fn run(prog: &'static str, default_preset: Option<&'static str>) -> Result<()> {
     let model = Dit::load(dev.clone(), &dit_path)?;
     let show_bar = !cli.quiet && std::io::stderr().is_terminal();
     let stdout_is_image = dests.iter().any(|d| matches!(d, Dest::Stdout));
-    for (i, settings, enc) in &encoded {
+    for (i, settings, enc, inputs) in &encoded {
         let src = &sources[*i];
         let pipe_i = Pipeline { dev: dev.clone(), settings: settings.clone() };
         crate::info!("sampling {} -> {}x{} (seed {})", src.name(), settings.out_w, settings.out_h, settings.seed);
@@ -478,10 +488,24 @@ fn run(prog: &'static str, default_preset: Option<&'static str>) -> Result<()> {
             crate::info!("  resampling {}x{} -> exactly {}x{}", out_img.w, out_img.h, settings.out_w, settings.out_h);
             out_img = out_img.resize_lanczos(settings.out_w, settings.out_h);
         }
+        // the generation record stamped into the PNG (iTXt chunk `loki`), see genmeta.rs
+        let mut rec = genmeta::Record::new(prog, env!("CARGO_PKG_VERSION"), "Qwen Image 2.1");
+        rec.set("prompt", settings.prompt.clone())
+            .set("preset", preset_name.clone())
+            .set("seed", settings.seed)
+            .set("steps", settings.steps)
+            .set("shift", settings.shift.to_string().parse::<f64>().unwrap_or(settings.shift as f64))
+            .set("width", settings.out_w)
+            .set("height", settings.out_h)
+            .set("generated_width", if (settings.target_w, settings.target_h) != (settings.out_w, settings.out_h) { Some(settings.target_w) } else { None })
+            .set("generated_height", if (settings.target_w, settings.target_h) != (settings.out_w, settings.out_h) { Some(settings.target_h) } else { None })
+            .set("ref_resolution", settings.ref_resolution)
+            .set("inputs", inputs.clone());
+        let text = [(genmeta::PNG_KEYWORD.to_string(), rec.to_json())];
         match &dests[*i] {
             Dest::Stdout => {
                 let mut so = std::io::stdout().lock();
-                so.write_all(&out_img.png_bytes()?)?;
+                so.write_all(&out_img.png_bytes(&text)?)?;
                 so.flush()?;
                 crate::info!("wrote PNG to stdout ({:.1}s decode+encode)", t0.elapsed().as_secs_f64());
             }
@@ -491,12 +515,12 @@ fn run(prog: &'static str, default_preset: Option<&'static str>) -> Result<()> {
                         std::fs::create_dir_all(d)?;
                     }
                 }
-                out_img.save_png(path)?;
+                out_img.save_png(path, &text)?;
                 crate::info!("wrote {} ({:.1}s decode+save)", path.display(), t0.elapsed().as_secs_f64());
                 if cli.json {
                     let j = serde_json::json!({
                         "input": src.name(), "output": path.display().to_string(), "width": settings.out_w, "height": settings.out_h,
-                        "seed": settings.seed, "steps": settings.steps, "preset": preset_name,
+                        "seed": settings.seed, "steps": settings.steps, "preset": preset_name, "generation": rec.to_value(),
                     });
                     println!("{j}");
                 } else if !stdout_is_image {

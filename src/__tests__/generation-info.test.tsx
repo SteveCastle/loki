@@ -39,6 +39,20 @@ test('renders the generator, prompts and settings, and copies the whole workflow
   expect(queryByText('Copy parameters')).toBeNull();
 });
 
+test('Lowkey files name the tool, show the command and copy it', async () => {
+  const rec = { loki: 1, tool: 'loki-retouch', version: '0.1.0', model: 'Qwen Image 2.1', args: ['-p', 'add snow', 'a.jpg'], prompt: 'add snow', seed: 5, steps: 25, width: 640, height: 480 };
+  const { getByText, queryByText } = render(<GenerationInfo chunks={{ loki: JSON.stringify(rec) }} />);
+  expect(getByText('Generation · Lowkey · loki-retouch 0.1.0')).toBeTruthy();
+  expect(getByText('add snow')).toBeTruthy();
+  expect(getByText('loki-retouch -p "add snow" a.jpg')).toBeTruthy();
+  expect(getByText('Qwen Image 2.1')).toBeTruthy();
+  await act(async () => { fireEvent.click(getByText('Copy command')); });
+  expect(written).toEqual(['loki-retouch -p "add snow" a.jpg']);
+  await act(async () => { fireEvent.click(getByText('Copy generation JSON')); });
+  expect(JSON.parse(written[1])).toEqual(rec);
+  expect(queryByText('Copy workflow JSON')).toBeNull();
+});
+
 test('WebUI files get the parameters block copy, and files without records render nothing', () => {
   const parameters = 'a cat\nNegative prompt: dog\nSteps: 20, Sampler: Euler a, CFG scale: 7, Seed: 1, Model: v1-5';
   const { getByText, queryByText } = render(<GenerationInfo chunks={{ parameters }} />);

@@ -521,6 +521,7 @@ dependencies = [
  "image",
  "indicatif",
  "memmap2",
+ "png",
  "rand",
  "rand_distr",
  "serde",

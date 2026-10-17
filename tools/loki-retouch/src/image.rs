@@ -26,16 +26,24 @@ impl Rgb8 {
         let rgb = img.to_rgb8();
         Ok(Rgb8 { w: rgb.width() as usize, h: rgb.height() as usize, data: rgb.into_raw() })
     }
-    /// PNG-encoded bytes (for writing to stdout).
-    pub fn png_bytes(&self) -> Result<Vec<u8>> {
-        let img = image::RgbImage::from_raw(self.w as u32, self.h as u32, self.data.clone()).context("image buffer")?;
-        let mut out = std::io::Cursor::new(Vec::new());
-        img.write_to(&mut out, image::ImageFormat::Png).context("encoding png")?;
-        Ok(out.into_inner())
+    /// PNG-encoded bytes (for writing to stdout). `text` entries become `iTXt` chunks (keyword, UTF-8 text) placed
+    /// before the image data, where metadata readers look without decoding the picture.
+    pub fn png_bytes(&self, text: &[(String, String)]) -> Result<Vec<u8>> {
+        let mut out = Vec::with_capacity(self.data.len() / 2);
+        let mut enc = png::Encoder::new(&mut out, self.w as u32, self.h as u32);
+        enc.set_color(png::ColorType::Rgb);
+        enc.set_depth(png::BitDepth::Eight);
+        for (k, v) in text {
+            enc.add_itxt_chunk(k.clone(), v.clone()).with_context(|| format!("png text chunk {k}"))?;
+        }
+        let mut w = enc.write_header().context("encoding png")?;
+        w.write_image_data(&self.data).context("encoding png")?;
+        w.finish().context("encoding png")?;
+        Ok(out)
     }
-    pub fn save_png(&self, path: &Path) -> Result<()> {
-        let img = image::RgbImage::from_raw(self.w as u32, self.h as u32, self.data.clone()).context("image buffer")?;
-        img.save_with_format(path, image::ImageFormat::Png).with_context(|| format!("saving {}", path.display()))?;
+    pub fn save_png(&self, path: &Path, text: &[(String, String)]) -> Result<()> {
+        let bytes = self.png_bytes(text)?;
+        std::fs::write(path, bytes).with_context(|| format!("saving {}", path.display()))?;
         Ok(())
     }
     /// Pixels as f32 in [0, 1], HWC.
@@ -161,4 +169,30 @@ pub fn reference_size(w: usize, h: usize, resolution: usize) -> (usize, usize) {
     nw = nw.max(32);
     nh = nh.max(32);
     (nw, nh)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn png_round_trips_pixels_and_text() {
+        let img = Rgb8 { w: 3, h: 2, data: (0..18u8).collect() };
+        let text = vec![("loki".to_string(), r#"{"loki":1,"tool":"loki-retouch","prompt":"über — ☃"}"#.to_string())];
+        let bytes = img.png_bytes(&text).unwrap();
+        let back = Rgb8::from_bytes(&bytes).unwrap();
+        assert_eq!((back.w, back.h), (3, 2));
+        assert_eq!(back.data, img.data);
+        // the text chunk is an iTXt before IDAT, readable without decoding the image
+        let idat = bytes.windows(4).position(|w| w == b"IDAT").unwrap();
+        let itxt = bytes.windows(4).position(|w| w == b"iTXt").unwrap();
+        assert!(itxt < idat);
+        let dec = png::Decoder::new(std::io::Cursor::new(&bytes)).read_info().unwrap();
+        let chunks = &dec.info().utf8_text;
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0].keyword, "loki");
+        assert_eq!(chunks[0].get_text().unwrap(), text[0].1);
+        // no text: plain PNG
+        assert!(!img.png_bytes(&[]).unwrap().windows(4).any(|w| w == b"iTXt"));
+    }
 }

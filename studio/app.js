@@ -60,7 +60,10 @@ import {
 } from './driver.js';
 import { analyzeMixAsync, detectBeats, sampleLevel, samplePulse } from './audio-analysis.js';
 import { AUDIO_EFFECTS, audioEffectDef, controlTargets } from './audio-fx.js';
-import { analyzeBeats, DIVISIONS, DEFAULT_DIVISION, gridSummary } from './beat-grid.js';
+import {
+  analyzeTrack, DIVISIONS, DEFAULT_DIVISION, GRID_MODES, DEFAULT_MODE, HIT_BANDS, DEFAULT_HIT_MIN,
+  gridMode, activeHits, gridSummary,
+} from './beat-grid.js';
 import { responseWidget } from './audio-widgets.js';
 import { LAYER_ICONS, clipIcon, shapeIconCanvas } from './icons.js';
 import { Muxer as WebMMuxer, ArrayBufferTarget } from './vendor/webm-muxer.mjs';
@@ -9567,11 +9570,14 @@ async function setSnapTrack(clip) {
       for (let i = 0; i < n; i++) mono[i] += d[i] / buf.numberOfChannels;
     }
     const prev = comp.grid?.clipId === clip.id ? comp.grid : null;
-    const found = analyzeBeats(mono, buf.sampleRate, { beatsPerBar: prev?.beatsPerBar ?? 4 });
-    if (!found) { setStatus(`no steady beat found in ${clip.name}`); return; }
+    // Drum hits, tracked beats and a steady tempo all come out of the one
+    // analysis; the grid keeps all three and `mode` picks which one snaps.
+    const found = analyzeTrack(mono, buf.sampleRate, { beatsPerBar: prev?.beatsPerBar ?? 4 });
+    if (!found) { setStatus(`no beats or drum hits found in ${clip.name}`); return; }
     history.record(comp, () => {
       comp.grid = {
         clipId: clip.id,
+        mode: prev?.mode ?? DEFAULT_MODE,
         bpm: +found.bpm.toFixed(3),
         offset: +found.offset.toFixed(4),
         beatsPerBar: prev?.beatsPerBar ?? 4,
@@ -9579,11 +9585,16 @@ async function setSnapTrack(clip) {
         show: prev?.show ?? true,
         enabled: true,
         confidence: +found.confidence.toFixed(2),
+        beats: found.beats.map((t) => +t.toFixed(4)),
+        beatPhase: found.beatPhase,
+        hits: found.hits,
+        hitBand: prev?.hitBand ?? 'all',
+        hitMin: prev?.hitMin ?? DEFAULT_HIT_MIN,
       };
     });
     onModelChange({ structural: false });
-    setStatus(`snap track: ${clip.name} — ${gridSummary(comp.grid)}` +
-      (found.confidence < 0.25 ? ' (low confidence — check the BPM in the inspector)' : ''));
+    setStatus(`snap track: ${clip.name} — ${gridSummary(comp.grid)} · ${found.hits.length} drum hits, ${found.beats.length} beats` +
+      (found.confidence < 0.25 ? ' (steady tempo is low confidence — drum hits are still exact)' : ''));
   } finally {
     snapJob = false;
   }
@@ -9625,13 +9636,26 @@ function snapGridSection(clip) {
     history.record(comp, () => fn(comp.grid));
     onModelChange({ structural: false });
   };
-  const row = document.createElement('div');
-  row.className = 'snapgrid-row';
+  const mode = gridMode(g);
   const field = (label, input, title = '') => {
     const l = document.createElement('label');
     l.title = title;
     l.append(label, input);
     return l;
+  };
+  const select = (options, value, title, onChange) => {
+    const sel = document.createElement('select');
+    sel.title = title;
+    for (const { id, label, disabled } of options) {
+      const o = document.createElement('option');
+      o.value = id;
+      o.textContent = label;
+      o.disabled = !!disabled;
+      sel.appendChild(o);
+    }
+    sel.value = value;
+    sel.addEventListener('change', () => onChange(sel.value));
+    return sel;
   };
   const num = (key, { step, min, title, digits = 3 }) => {
     const i = document.createElement('input');
@@ -9649,36 +9673,101 @@ function snapGridSection(clip) {
     return i;
   };
 
-  const div = document.createElement('select');
-  div.title = 'how finely the timeline snaps — 1 bar, 1/2, 1/4 (a beat), 1/8, 1/16…';
-  for (const d of DIVISIONS) {
-    const o = document.createElement('option');
-    o.value = d.id;
-    o.textContent = d.label;
-    div.appendChild(o);
+  /* -- what the timeline snaps to: hits / beats / steady grid, and the
+   *    filter for that mode (band + floor for hits, division otherwise) -- */
+  const row = document.createElement('div');
+  row.className = 'snapgrid-row';
+  const haveHits = !!g.hits?.length;
+  const haveBeats = (g.beats?.length ?? 0) >= 2;
+  const modeSel = select(GRID_MODES.map((m) => ({
+    ...m,
+    disabled: (m.id === 'hits' && !haveHits) || (m.id === 'beats' && !haveBeats),
+    label: m.id === 'hits' && !haveHits ? `${m.label} (re-analyze)` : m.label,
+  })), mode, 'drum hits: every detected onset, exact to the attack · tracked beats: the pulse followed through tempo changes · steady grid: one BPM and a bar line',
+  (v) => edit((gr) => { gr.mode = v; }));
+  row.appendChild(field('snap to', modeSel));
+  if (mode === 'hits') {
+    row.appendChild(field('', select(HIT_BANDS, g.hitBand ?? 'all', 'which drums to snap to — kicks are low thumps, snares/claps/toms mid, hats/cymbals high',
+      (v) => edit((gr) => { gr.hitBand = v; }))));
+    const floor = document.createElement('input');
+    floor.type = 'range';
+    floor.min = '0';
+    floor.max = '0.9';
+    floor.step = '0.05';
+    floor.value = String(Number.isFinite(g.hitMin) ? g.hitMin : DEFAULT_HIT_MIN);
+    floor.title = 'ignore hits softer than this (relative to the hardest hit in the track)';
+    const count = document.createElement('span');
+    count.className = 'snapgrid-count';
+    count.textContent = `${activeHits(g).length.toLocaleString()} hits`;
+    floor.addEventListener('input', () => {
+      count.textContent = `${activeHits({ ...g, hitMin: parseFloat(floor.value) }).length.toLocaleString()} hits`;
+    });
+    floor.addEventListener('change', () => edit((gr) => { gr.hitMin = parseFloat(floor.value); }));
+    row.appendChild(field('min', floor));
+    row.appendChild(count);
+  } else {
+    const div = select(DIVISIONS, g.division, 'how finely the timeline snaps — 1 bar, 1/2, 1/4 (a beat), 1/8, 1/16…',
+      (v) => edit((gr) => { gr.division = v; }));
+    row.appendChild(field('division', div));
   }
-  div.value = g.division;
-  div.addEventListener('change', () => edit((gr) => { gr.division = div.value; }));
-  const divField = field('snap to', div);
-  divField.classList.add('wide');
-  row.appendChild(divField);
-
-  row.appendChild(field('BPM', num('bpm', { step: 0.01, min: 20, title: 'tempo of the source audio' })));
-  row.append(
-    secBtn('÷2', 'half the tempo (the analysis locked onto double time)', () => edit((gr) => { gr.bpm = +(gr.bpm / 2).toFixed(3); })),
-    secBtn('×2', 'double the tempo (the analysis locked onto half time)', () => edit((gr) => { gr.bpm = +(gr.bpm * 2).toFixed(3); })),
-  );
-  row.appendChild(field('beats/bar', num('beatsPerBar', { step: 1, min: 1, digits: 0, title: 'time signature numerator — sets where bars fall' })));
-  row.appendChild(field('bar 1 @', num('offset', { step: 0.001, title: 'a bar line, in seconds of the source audio' })));
   body.appendChild(row);
+
+  /* -- tempo: the steady grid's numbers, and the half/double-time fixes
+   *    (which re-thin or re-double the tracked beats too) -- */
+  const row1 = document.createElement('div');
+  row1.className = 'snapgrid-row';
+  row1.appendChild(field('BPM', num('bpm', { step: 0.01, min: 20, title: 'tempo of the source audio' })));
+  const halve = (gr) => {
+    gr.bpm = +(gr.bpm / 2).toFixed(3);
+    if (gr.beats?.length) {
+      const keep = (gr.beatPhase ?? 0) % 2;
+      gr.beats = gr.beats.filter((_, i) => i % 2 === keep);
+      gr.beatPhase = Math.floor((gr.beatPhase ?? 0) / 2);
+    }
+  };
+  const double = (gr) => {
+    gr.bpm = +(gr.bpm * 2).toFixed(3);
+    if (gr.beats?.length >= 2) {
+      const out = [];
+      gr.beats.forEach((t, i) => {
+        out.push(t);
+        const next = gr.beats[i + 1] ?? t + (t - gr.beats[i - 1] || 60 / gr.bpm);
+        out.push(+((t + next) / 2).toFixed(4));
+      });
+      gr.beats = out;
+      gr.beatPhase = (gr.beatPhase ?? 0) * 2;
+    }
+  };
+  row1.append(
+    secBtn('÷2', 'half the tempo (the analysis locked onto double time)', () => edit(halve)),
+    secBtn('×2', 'double the tempo (the analysis locked onto half time)', () => edit(double)),
+  );
+  if (mode !== 'hits') {
+    row1.appendChild(field('beats/bar', num('beatsPerBar', { step: 1, min: 1, digits: 0, title: 'time signature numerator — sets where bars fall' })));
+  }
+  if (mode === 'grid') {
+    row1.appendChild(field('bar 1 @', num('offset', { step: 0.001, title: 'a bar line, in seconds of the source audio' })));
+  }
+  body.appendChild(row1);
 
   const row2 = document.createElement('div');
   row2.className = 'snapgrid-row';
-  row2.appendChild(secBtn('Bar line = playhead', 'shift the grid so a bar line lands on the playhead', () => {
-    const src = srcTime(clip, tCur);
-    const bar = 60 / g.bpm * Math.max(1, Math.round(g.beatsPerBar));
-    edit((gr) => { gr.offset = +(((src % bar) + bar) % bar).toFixed(4); });
-  }));
+  if (mode !== 'hits') {
+    row2.appendChild(secBtn('Bar line = playhead', 'make the beat under the playhead a bar line', () => {
+      const src = srcTime(clip, tCur);
+      edit((gr) => {
+        if (mode === 'beats') {
+          // The tracked beat nearest the playhead becomes beat one.
+          let best = 0;
+          gr.beats.forEach((t, i) => { if (Math.abs(t - src) < Math.abs(gr.beats[best] - src)) best = i; });
+          gr.beatPhase = best % Math.max(1, Math.round(gr.beatsPerBar));
+        } else {
+          const bar = 60 / gr.bpm * Math.max(1, Math.round(gr.beatsPerBar));
+          gr.offset = +(((src % bar) + bar) % bar).toFixed(4);
+        }
+      });
+    }));
+  }
   const chk = (label, key, title) => {
     const i = document.createElement('input');
     i.type = 'checkbox';
@@ -9692,7 +9781,11 @@ function snapGridSection(clip) {
 
   const hint = document.createElement('div');
   hint.className = 'insp-note';
-  hint.textContent = 'Snapping follows the 🧲 toggle. Tempo is assumed constant; if it’s off, fix BPM and “Bar line = playhead”.';
+  hint.textContent = mode === 'hits'
+    ? 'Snapping follows the 🧲 toggle. Every line is a detected drum hit, placed on its attack: kicks teal, snares amber, hats pale.'
+    : mode === 'beats'
+      ? 'Snapping follows the 🧲 toggle. Beats are tracked through the track and pulled onto the drum hit they land on; subdivisions interpolate between beats.'
+      : 'Snapping follows the 🧲 toggle. Tempo is assumed constant; if it’s off, fix BPM and “Bar line = playhead”.';
   body.appendChild(hint);
   return sec;
 }

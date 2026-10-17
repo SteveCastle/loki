@@ -57,12 +57,16 @@ export default function GenerationInfo({ chunks }: { chunks?: Record<string, str
     copyables.push({ key: 'prompt', label: 'Copy API prompt JSON', title: `the ComfyUI API-format prompt (${sizeOf(info.promptJson)}) — what the server actually ran`, text: info.promptJson });
   if (info.parametersText)
     copyables.push({ key: 'parameters', label: 'Copy parameters', title: 'the whole WebUI parameters block — paste it into the PNG Info tab', text: info.parametersText });
+  if (info.commandLine)
+    copyables.push({ key: 'command', label: 'Copy command', title: 'the command line that made this file — run it again, or change a flag', text: info.commandLine });
+  if (info.recordJson)
+    copyables.push({ key: 'record', label: 'Copy generation JSON', title: `the full generation record (${sizeOf(info.recordJson)}) as the tool wrote it`, text: info.recordJson });
 
   const rawEntries = Object.entries(info.raw);
 
   return (
     <div className="section GenerationInfo">
-      <h2>Generation · {info.generator}</h2>
+      <h2>Generation · {info.generator}{info.tool ? ` · ${info.tool}` : ''}</h2>
 
       {info.prompt !== undefined && (
         <div className="gen-block">
@@ -91,6 +95,16 @@ export default function GenerationInfo({ chunks }: { chunks?: Record<string, str
               <span className="gen-param-val">{value}</span>
             </div>
           ))}
+        </div>
+      )}
+
+      {info.commandLine && (
+        <div className="gen-block">
+          <div className="gen-label">
+            Command
+            <CopyButton text={info.commandLine} title="copy the command line" />
+          </div>
+          <div className="gen-text gen-mono">{info.commandLine}</div>
         </div>
       )}
 

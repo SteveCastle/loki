@@ -28,6 +28,8 @@ The shared conventions (also see `../CONVENTIONS.md`):
 - **Inputs** are files, globs, directories, or `-` for stdin; **results** are written to a file whose path is printed
   on stdout (`--json` prints a JSON object instead), or streamed as the media itself with `-o -`.
 - **Progress and diagnostics go to stderr only**; `-q` silences them. Exit status: 0 ok, 1 error, 2 usage error.
+- Every PNG written carries a `loki` text chunk: the prompt, preset, seed, steps, size, inputs and command line as JSON
+  (the Lowkey Media Viewer shows it in its Generation panel; see `../CONVENTIONS.md`, "Provenance").
 - `-p/--prompt`, `-P/--prompt-file`, `--seed`, `--steps`, `--show-prompt` mean the same thing in every tool.
 - Models are looked up next to the binary, in `./models`, and in `$LOKI_MODELS`; missing ones are downloaded
   (and the download notice is printed even with `-q`).

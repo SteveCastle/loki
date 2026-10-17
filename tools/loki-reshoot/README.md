@@ -29,6 +29,8 @@ and with ordinary Unix tools, and are easy for agents to drive:
 - **Inputs** are files, or `-` for stdin (any one of `-i -`, `--animate -`, `-v -`, `-a -`, `-P -`); the **result** is a file whose path is
   printed on stdout (`--json` prints a JSON object instead), or the mp4 itself on stdout with `-o -` (fragmented mp4).
 - **Progress and diagnostics go to stderr only**; `-q` silences them. Exit status: 0 ok, 1 error, 2 usage error.
+- Every mp4 written carries a `loki` generation record in its `comment` tag: the prompt, seed, steps, size, length, references and
+  command line as JSON (the Lowkey Media Viewer shows it in its Generation panel; see `../CONVENTIONS.md`, "Provenance").
 - `-p/--prompt`, `-P/--prompt-file`, `--seed`, `--steps`, `--show-prompt` mean the same thing in every tool; models are found next to the
   binary, in `./models` and in `$LOKI_MODELS` (see `../CONVENTIONS.md`).
 - `lokictl` (the Lowkey Media Server client) is separate: these tools never talk to a server.

@@ -10,8 +10,11 @@
  */
 
 export interface GenerationInfo {
-  /** Which tool wrote the file, as the panel should name it. */
-  generator: 'ComfyUI' | 'Stable Diffusion WebUI' | 'NovelAI' | 'InvokeAI' | 'Unknown';
+  /** Which tool wrote the file, as the panel should name it. `Lowkey` is
+   * our own loki- toolkit (loki-retouch, loki-reshoot). */
+  generator: 'ComfyUI' | 'Stable Diffusion WebUI' | 'NovelAI' | 'InvokeAI' | 'Lowkey' | 'Unknown';
+  /** The specific program and version, when the record names one ("loki-retouch 0.1.0"). */
+  tool?: string;
   prompt?: string;
   negativePrompt?: string;
   /** Ordered label/value pairs: steps, sampler, model… */
@@ -22,6 +25,10 @@ export interface GenerationInfo {
   promptJson?: string;
   /** WebUI's one-block parameters text, verbatim. */
   parametersText?: string;
+  /** The loki- record itself, pretty-printed. */
+  recordJson?: string;
+  /** The command line that made the file, re-runnable in a shell. */
+  commandLine?: string;
   /** Every raw record, for the fallback listing. */
   raw: Record<string, string>;
 }
@@ -41,6 +48,11 @@ function parseJson(text: string | undefined): Json | null {
   }
 }
 
+const pretty = (v: Json) => JSON.stringify(v, null, 2);
+
+const fmt = (v: Json): string =>
+  typeof v === 'number' ? String(+v.toFixed(4)) : String(v);
+
 /** Return the first chunk whose keyword matches (case-insensitive). */
 function chunk(chunks: Record<string, string>, ...names: string[]): string | undefined {
   for (const name of names) {
@@ -50,13 +62,98 @@ function chunk(chunks: Record<string, string>, ...names: string[]): string | und
   return undefined;
 }
 
+/* ---- Lowkey (loki-retouch, loki-reshoot) ------------------------------- */
+
+/**
+ * The record our own tools stamp (tools/CONVENTIONS.md, "Provenance"): one
+ * JSON object, in a PNG iTXt chunk keyed `loki` or an mp4 `comment` tag,
+ * recognised by its markers `"loki": <format version>` and `"tool"`.
+ */
+const isLokiRecord = (v: Json): boolean =>
+  !!v && typeof v === 'object' && !Array.isArray(v) && typeof v.loki === 'number' && typeof v.tool === 'string';
+
+export function findLokiRecord(chunks: Record<string, string>): Json | null {
+  const own = parseJson(chunk(chunks, 'loki'));
+  if (isLokiRecord(own)) return own;
+  for (const text of Object.values(chunks)) {
+    if (!/"loki"\s*:/.test(text)) continue;
+    const v = parseJson(text);
+    if (isLokiRecord(v)) return v;
+  }
+  return null;
+}
+
+/**
+ * Quote one argument so the line pastes back into bash or PowerShell: plain
+ * words stay bare, anything else goes in double quotes with embedded quotes
+ * escaped. Backslashes are left alone on purpose — the arguments these tools
+ * see are Windows paths and prose, and `\\` would break the former in
+ * PowerShell.
+ */
+export function shellQuote(arg: string): string {
+  if (arg !== '' && /^[\w./:\\@%+=,-]+$/.test(arg)) return arg;
+  return `"${arg.replace(/"/g, '\\"')}"`;
+}
+
+function parseLoki(rec: Json): Omit<GenerationInfo, 'raw'> {
+  const params: Array<[string, string]> = [];
+  const put = (label: string, value: Json) => {
+    if (value === undefined || value === null || value === '') return;
+    params.push([label, typeof value === 'boolean' ? (value ? 'yes' : 'no') : fmt(value)]);
+  };
+  put('model', rec.model);
+  put('preset', rec.preset);
+  put('seed', rec.seed);
+  put('steps', rec.steps);
+  put('shift', rec.shift);
+  if (typeof rec.width === 'number' && typeof rec.height === 'number') {
+    const generated = typeof rec.generated_width === 'number' && (rec.generated_width !== rec.width || rec.generated_height !== rec.height)
+      ? ` (generated at ${rec.generated_width}×${rec.generated_height})` : '';
+    put('size', `${rec.width}×${rec.height}${generated}`);
+  }
+  if (typeof rec.frames === 'number') {
+    const secs = typeof rec.seconds === 'number' ? `${fmt(rec.seconds)} s · ` : '';
+    put('length', `${secs}${rec.frames} frames${typeof rec.fps === 'number' ? ` @ ${rec.fps} fps` : ''}`);
+  }
+  put('audio', rec.audio);
+  put('crf', rec.crf);
+  if (rec.ref_resolution !== undefined) put('reference size', rec.ref_resolution === 0 ? 'auto' : fmt(rec.ref_resolution));
+  put('reference images', rec.ref_image_size);
+  put('fit', rec.fit);
+  if (rec.animate) put('living photo', true);
+  put('describe', rec.describe);
+  put('shake', rec.shake);
+  if (Array.isArray(rec.inputs)) {
+    for (const input of rec.inputs) {
+      if (!input || typeof input !== 'object') continue;
+      const label = typeof input.tag === 'string' ? input.tag : 'input';
+      let value = typeof input.path === 'string' ? input.path : '';
+      const extra: string[] = [];
+      if (typeof input.width === 'number' && typeof input.height === 'number') extra.push(`${input.width}×${input.height}`);
+      if (typeof input.start === 'number' && input.start > 0) extra.push(`from ${fmt(input.start)} s`);
+      if (typeof input.duration === 'number') extra.push(`${fmt(input.duration)} s`);
+      if (typeof input.audio_tag === 'string') extra.push(`soundtrack ${input.audio_tag}`);
+      if (extra.length) value += ` (${extra.join(', ')})`;
+      if (value) params.push([label, value]);
+    }
+  }
+  put('created', typeof rec.created === 'string' ? rec.created.replace('T', ' ').replace(/Z$/, ' UTC') : undefined);
+
+  const args: string[] = Array.isArray(rec.args) ? rec.args.filter((a: Json) => typeof a === 'string') : [];
+  return {
+    generator: 'Lowkey',
+    tool: typeof rec.version === 'string' ? `${rec.tool} ${rec.version}` : rec.tool,
+    prompt: typeof rec.prompt === 'string' ? rec.prompt : undefined,
+    params,
+    recordJson: pretty(rec),
+    commandLine: Array.isArray(rec.args) ? [rec.tool, ...args.map(shellQuote)].join(' ') : undefined,
+  };
+}
+
 /* ---- ComfyUI ---------------------------------------------------------- */
 
 const isLink = (v: Json): v is [string, number] =>
   Array.isArray(v) && v.length === 2 && (typeof v[0] === 'string' || typeof v[0] === 'number');
-
-const fmt = (v: Json): string =>
-  typeof v === 'number' ? String(+v.toFixed(4)) : String(v);
 
 /**
  * Pull prompts and settings out of a ComfyUI API-format prompt: a map of
@@ -261,14 +358,17 @@ export function parseWebUiParameters(text: string): Partial<GenerationInfo> {
 
 /* ---- entry point -------------------------------------------------------- */
 
-const pretty = (v: Json) => JSON.stringify(v, null, 2);
-
 /** Interpret a file's embedded text records. Null when there are none. */
 export function parseGenerationMetadata(
   chunks: Record<string, string> | undefined | null
 ): GenerationInfo | null {
   if (!chunks || !Object.keys(chunks).length) return null;
   const raw = chunks;
+
+  // Our own tools first: their record has a `prompt` string too, which the
+  // ComfyUI comment handling below would otherwise try to read as a graph.
+  const loki = findLokiRecord(chunks);
+  if (loki) return { ...parseLoki(loki), raw };
 
   // ComfyUI: PNG keywords, or the webp/jpeg Exif "prompt:"/"workflow:"
   // prefixed fields, or a video comment holding both.

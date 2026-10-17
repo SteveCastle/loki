@@ -2349,3 +2349,7 @@ body.roto-analyzing #gizmo { display: none; }
 .sc-bar { height: 4px; background: var(--border); border-radius: 2px; overflow: hidden; margin: 4px 0; }
 .sc-bar i { display: block; height: 100%; background: var(--accent); transition: width 0.4s; }
 .sc-job-stage { color: var(--dim); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Snap grid: the hit-strength floor and its live count. */
+.snapgrid-row input[type=range] { width: 70px; accent-color: var(--accent); }
+.snapgrid-count { font-variant-numeric: tabular-nums; opacity: 0.8; }

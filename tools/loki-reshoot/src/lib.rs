@@ -9,6 +9,7 @@ pub mod weights;
 // H3 engine components (one workstream each)
 pub mod dit_h3;
 pub mod fit;
+pub mod genmeta;
 pub mod media;
 pub mod models;
 pub mod pipeline;

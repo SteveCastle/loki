@@ -1,6 +1,7 @@
 pub mod cli;
 pub mod cuda;
 pub mod dit;
+pub mod genmeta;
 pub mod image;
 pub mod llm;
 pub mod models;

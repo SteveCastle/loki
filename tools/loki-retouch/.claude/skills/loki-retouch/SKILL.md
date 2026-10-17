@@ -25,6 +25,8 @@ small, composable tools: see the sibling `loki-reshoot` (references -> video wit
 - Outputs: the path of each written file is printed on **stdout** (`--json`: one JSON object per result); `-o -` writes the PNG itself to
   stdout. Everything else (progress, timings) goes to **stderr**; `-q` silences it. Never parse stderr.
 - Exit status: 0 ok, 1 error, 2 usage error. One input failing in a batch reports `skipping <file>: ...` and exits 1 at the end.
+- Every PNG carries its generation record (prompt, preset, seed, steps, size, inputs, command line) as JSON in a `loki` text chunk;
+  `--json` repeats it under `generation`. To re-run or vary a result, read that instead of guessing the settings.
 - Shared env: `LOKI_MODELS` (model folder), `LOKI_PROFILE=1` (per-kernel timing).
 - Chaining: `loki-retouch --preset restore -o - old.jpg | loki-retouch -p "colorize" - -o - | loki-reshoot --animate - -d 5 -o alive.mp4`
 

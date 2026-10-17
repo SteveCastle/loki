@@ -167,7 +167,8 @@ fn load_image(ff: &Ffmpeg, path: &std::path::Path) -> Result<Rgb8> {
     }
 }
 
-pub fn run(dev: Arc<Device>, req: &Request, paths: &Paths, ff: &Ffmpeg) -> Result<()> {
+/// `record` is the generation record (compact JSON, see `genmeta`) stamped into the output's `comment` tag.
+pub fn run(dev: Arc<Device>, req: &Request, paths: &Paths, ff: &Ffmpeg, record: Option<&str>) -> Result<()> {
     let t_all = std::time::Instant::now();
     ensure!(req.ref_images.len() <= MAX_REF_IMAGES, "at most {MAX_REF_IMAGES} reference images");
     ensure!(req.ref_videos.len() <= MAX_REF_VIDEOS, "at most {MAX_REF_VIDEOS} reference videos");
@@ -372,7 +373,7 @@ pub fn run(dev: Arc<Device>, req: &Request, paths: &Paths, ff: &Ffmpeg) -> Resul
         wav_path = Some(p);
     }
     drop(xa);
-    let mut writer = VideoWriter::new(ff, &req.out, req.width, req.height, wav_path.as_deref(), req.crf)?;
+    let mut writer = VideoWriter::new(ff, &req.out, req.width, req.height, wav_path.as_deref(), req.crf, record)?;
     {
         let vvae = VideoVae::load(dev.clone(), &paths.video_vae).context("loading video VAE")?;
         let total = vvae

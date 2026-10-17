@@ -1,4 +1,75 @@
-import { parseGenerationMetadata, parseWebUiParameters } from '../renderer/generation-metadata';
+import { parseGenerationMetadata, parseWebUiParameters, shellQuote } from '../renderer/generation-metadata';
+
+/* The record loki-retouch stamps into its PNGs (iTXt chunk `loki`), as the
+ * Rust side writes it: markers first, then the run. */
+const retouchRecord = {
+  loki: 1, tool: 'loki-retouch', version: '0.1.0', model: 'Qwen Image 2.1', created: '2026-10-16T21:04:05Z',
+  args: ['--preset', '4kify', '-p', 'make it night, with rain', 'C:\\shots\\photo 1.jpg'],
+  prompt: 'make it night, with rain', preset: '4kify', seed: 3, steps: 25, shift: 0.69,
+  width: 3840, height: 2160, ref_resolution: 0,
+  inputs: [{ tag: '<image1>', path: 'C:\\shots\\photo 1.jpg', width: 1024, height: 768 }, { tag: '<image2>', path: 'jacket.png', width: 512, height: 512 }],
+};
+
+test('loki-retouch PNG record: Lowkey generator, prompt, settings, inputs, and a re-runnable command', () => {
+  const info = parseGenerationMetadata({ loki: JSON.stringify(retouchRecord) });
+  expect(info?.generator).toBe('Lowkey');
+  expect(info?.tool).toBe('loki-retouch 0.1.0');
+  expect(info?.prompt).toBe('make it night, with rain');
+  expect(info?.negativePrompt).toBeUndefined();
+  expect(Object.fromEntries(info!.params)).toMatchObject({
+    model: 'Qwen Image 2.1', preset: '4kify', seed: '3', steps: '25', shift: '0.69', size: '3840×2160', 'reference size': 'auto',
+    '<image1>': 'C:\\shots\\photo 1.jpg (1024×768)', '<image2>': 'jacket.png (512×512)', created: '2026-10-16 21:04:05 UTC',
+  });
+  expect(info?.commandLine).toBe('loki-retouch --preset 4kify -p "make it night, with rain" "C:\\shots\\photo 1.jpg"');
+  expect(JSON.parse(info!.recordJson!)).toEqual(retouchRecord);
+  expect(info?.workflowJson).toBeUndefined();
+  expect(info?.promptJson).toBeUndefined();
+});
+
+test('loki-reshoot mp4 record arrives as the container comment and is not mistaken for a ComfyUI comment', () => {
+  const rec = {
+    loki: 1, tool: 'loki-reshoot', version: '0.1.0', model: 'MiniMax H3', created: '2026-10-16T21:10:00Z',
+    args: ['--animate', 'face.png', '-d', '5'],
+    prompt: 'A living photo…', seed: 1234, steps: 20, width: 768, height: 1024, frames: 124, fps: 24, seconds: 5.167,
+    audio: true, crf: 18, ref_image_size: 'match', native: true, fit: 'crop', animate: true, shake: 'subtle',
+    inputs: [
+      { tag: '<Picture 1>', path: 'face.png', width: 1200, height: 1600 },
+      { tag: '<Video 1>', path: 'dance.mp4', start: 2, duration: 4, audio_tag: '<Audio 1>' },
+      { tag: '<Audio 2>', path: 'theme.mp3', start: 0 },
+    ],
+  };
+  const info = parseGenerationMetadata({ comment: JSON.stringify(rec), encoder: 'Lavf61', major_brand: 'isom' });
+  expect(info?.generator).toBe('Lowkey');
+  expect(info?.tool).toBe('loki-reshoot 0.1.0');
+  expect(info?.prompt).toBe('A living photo…');
+  expect(Object.fromEntries(info!.params)).toMatchObject({
+    model: 'MiniMax H3', seed: '1234', steps: '20', size: '768×1024', length: '5.167 s · 124 frames @ 24 fps', audio: 'yes', crf: '18',
+    'reference images': 'match', fit: 'crop', 'living photo': 'yes', shake: 'subtle',
+    '<Picture 1>': 'face.png (1200×1600)', '<Video 1>': 'dance.mp4 (from 2 s, 4 s, soundtrack <Audio 1>)', '<Audio 2>': 'theme.mp3',
+  });
+  expect(info?.commandLine).toBe('loki-reshoot --animate face.png -d 5');
+  expect(info?.raw).toHaveProperty('encoder', 'Lavf61');
+
+  // A newer record (more fields, higher version) still reads; a generated-size note appears when it differs.
+  const later = parseGenerationMetadata({ loki: JSON.stringify({ ...retouchRecord, loki: 2, width: 1000, height: 700, generated_width: 1008, generated_height: 704, future_field: { a: 1 } }) });
+  expect(later?.generator).toBe('Lowkey');
+  expect(Object.fromEntries(later!.params).size).toBe('1000×700 (generated at 1008×704)');
+
+  // Not ours: a `loki` key without the tool marker, or no record at all.
+  expect(parseGenerationMetadata({ loki: '{"loki":1}' })?.generator).toBe('Unknown');
+  expect(parseGenerationMetadata({ comment: 'loki was here' })?.generator).toBe('Unknown');
+});
+
+test('shellQuote leaves plain words bare and quotes the rest', () => {
+  expect(shellQuote('--preset')).toBe('--preset');
+  expect(shellQuote('photos/a-b_c.jpg')).toBe('photos/a-b_c.jpg');
+  expect(shellQuote('C:\\x\\y.png')).toBe('C:\\x\\y.png');
+  expect(shellQuote('two words')).toBe('"two words"');
+  expect(shellQuote('say "hi"')).toBe('"say \\"hi\\""');
+  expect(shellQuote('C:\\my shots\\a.jpg')).toBe('"C:\\my shots\\a.jpg"');
+  expect(shellQuote('')).toBe('""');
+  expect(shellQuote('<image1> and <image2>')).toBe('"<image1> and <image2>"');
+});
 
 /* A small but realistic ComfyUI API prompt: checkpoint → two text encoders
  * → KSampler, with the positive text routed through a primitive node and a

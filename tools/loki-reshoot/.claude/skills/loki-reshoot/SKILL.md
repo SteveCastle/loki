@@ -26,6 +26,8 @@ composable tools: see the sibling `loki-retouch` (image editing/upscaling) and t
 - Inputs: files, or `-` = that one input read from stdin (`-i -`, `--animate -`, `-v -`, `-a -`, `-P -`; at most one per run).
 - Outputs: the path of the written file is printed on **stdout** (`--json`: one JSON object instead); `-o -` writes the media itself to
   stdout (mp4 is fragmented). Everything else (progress, timings, warnings) goes to **stderr**; `-q` silences it. Never parse stderr.
+- Every mp4 carries its generation record (prompt, seed, steps, size, length, references, command line) as JSON in the container's
+  `comment` tag (`ffprobe -show_entries format_tags=comment`); `--json` repeats it under `generation`. Read it to re-run or vary a result.
 - Exit status: 0 ok, 1 error, 2 usage error. Errors are one `loki-reshoot: error: ...` line on stderr.
 - Shared env: `LOKI_MODELS` (model folder), `LOKI_PROFILE=1` (per-kernel timing).
 - Chaining example: `loki-retouch --preset restore -o - old.jpg | loki-reshoot --animate - -d 5 -o shot.mp4`

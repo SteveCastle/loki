@@ -134,6 +134,13 @@ test('PNG: tEXt, zTXt and iTXt chunks each decode by keyword; IDAT is skipped', 
   });
 });
 
+test('PNG: the loki-retouch record (iTXt keyed `loki`, as the png crate writes it) comes back verbatim', async () => {
+  const record = JSON.stringify({ loki: 1, tool: 'loki-retouch', version: '0.1.0', prompt: 'über — make it night', seed: 3, inputs: [{ tag: '<image1>', path: 'photo.jpg' }] });
+  // keyword \0 compression-flag(0) method(0) language \0 translated-keyword \0 text — the png crate leaves language/translation empty
+  const file = write('retouch.png', png([pngChunk('iTXt', Buffer.from(`loki\0\0\0\0\0${record}`, 'utf8'))]));
+  expect(await readGenerationText(file)).toEqual({ loki: record });
+});
+
 test('PNG with no text chunks, and non-image junk, report nothing', async () => {
   expect(await readGenerationText(write('plain.png', png([])))).toBeUndefined();
   expect(await readGenerationText(write('junk.bin', Buffer.from('not an image at all')))).toBeUndefined();

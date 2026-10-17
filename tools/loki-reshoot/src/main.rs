@@ -2,6 +2,7 @@
 use anyhow::{bail, ensure, Context, Result};
 use clap::{Parser, ValueEnum};
 use loki_reshoot::cuda::Device;
+use loki_reshoot::genmeta;
 use loki_reshoot::media::{Ffmpeg, FPS};
 use loki_reshoot::models;
 use loki_reshoot::fit::{self, Fit};
@@ -359,6 +360,7 @@ fn run() -> Result<()> {
     // fail on bad geometry before touching models
     let (fc, _, _) = pipeline::temporal_shape(req.frames);
     pipeline::check_limits(req.width, req.height, fc)?;
+    let record = generation_record(&cli, &req, fc, fit_resolved, &ff, _stdin_tmp.0.as_deref());
 
     let paths = Paths {
         dit: models::resolve(cli.dit.clone(), &models::DIT)?,
@@ -370,13 +372,13 @@ fn run() -> Result<()> {
     let dev = Device::new(0)?;
     eprintln!("  gpu: {} MB free of {} MB", dev.free_mem()? >> 20, dev.total_mem >> 20);
     let out_path = req.out.clone();
-    pipeline::run(dev, &req, &paths, &ff)?;
+    pipeline::run(dev, &req, &paths, &ff, Some(&record.to_json()))?;
     if !to_stdout {
         if cli.json {
-            let (fc, _, _) = pipeline::temporal_shape(req.frames);
             let j = serde_json::json!({
                 "output": out_path.display().to_string(), "width": req.width, "height": req.height, "frames": fc, "fps": FPS,
                 "seconds": fc as f64 / FPS as f64, "seed": req.seed, "steps": req.steps, "audio": !req.no_audio,
+                "generation": record.to_value(),
             });
             println!("{j}");
         } else {
@@ -384,6 +386,64 @@ fn run() -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// The generation record stamped into the output's `comment` tag (see `genmeta`): the final prompt, every setting that
+/// shaped the result, and the references by prompt tag. `stdin_tmp` is the temp file a `-` reference was spooled to; it is
+/// reported as `-` since the temp path means nothing later.
+fn generation_record(cli: &Cli, req: &Request, frame_count: usize, fit: Fit, ff: &Ffmpeg, stdin_tmp: Option<&Path>) -> genmeta::Record {
+    use serde_json::{json, Value};
+    let show = |p: &Path| -> String {
+        if stdin_tmp == Some(p) { "-".to_string() } else { p.display().to_string() }
+    };
+    let mut inputs: Vec<Value> = Vec::new();
+    for (i, p) in req.ref_images.iter().enumerate() {
+        let mut v = json!({ "tag": format!("<Picture {}>", i + 1), "path": show(p) });
+        if let Ok((w, h)) = image_dims(ff, p) {
+            v["width"] = w.into();
+            v["height"] = h.into();
+        }
+        inputs.push(v);
+    }
+    let mut audio_n = 0;
+    for (i, m) in req.ref_videos.iter().enumerate() {
+        let mut v = json!({ "tag": format!("<Video {}>", i + 1), "path": show(&m.path), "start": m.start });
+        if let Some(d) = m.dur {
+            v["duration"] = d.into();
+        }
+        if req.video_audio && ff.probe(&m.path).map(|i| i.has_audio).unwrap_or(false) {
+            audio_n += 1;
+            v["audio_tag"] = format!("<Audio {audio_n}>").into();
+        }
+        inputs.push(v);
+    }
+    for m in &req.ref_audios {
+        audio_n += 1;
+        let mut v = json!({ "tag": format!("<Audio {audio_n}>"), "path": show(&m.path), "start": m.start });
+        if let Some(d) = m.dur {
+            v["duration"] = d.into();
+        }
+        inputs.push(v);
+    }
+    let mut rec = genmeta::Record::new("loki-reshoot", env!("CARGO_PKG_VERSION"), "MiniMax H3");
+    rec.set("prompt", req.prompt.clone())
+        .set("seed", req.seed)
+        .set("steps", req.steps)
+        .set("width", req.width)
+        .set("height", req.height)
+        .set("frames", frame_count)
+        .set("fps", FPS)
+        .set("seconds", (frame_count as f64 / FPS as f64 * 1000.0).round() / 1000.0)
+        .set("audio", !req.no_audio)
+        .set("crf", req.crf)
+        .set("ref_image_size", match req.ref_image_size { RefImageSize::Match => "match", RefImageSize::Max => "max" })
+        .set("native", if cli.native { Some(true) } else { None })
+        .set("fit", if cli.native { Some(format!("{fit:?}").to_lowercase()) } else { None })
+        .set("animate", if cli.animate.is_some() { Some(true) } else { None })
+        .set("describe", if cli.animate.is_some() { cli.describe.clone() } else { None })
+        .set("shake", if cli.animate.is_some() { Some(format!("{:?}", cli.shake).to_lowercase()) } else { None })
+        .set("inputs", inputs);
+    rec
 }
 
 /// `-` as a reference (or prompt file) means stdin; at most one such input per run. The bytes go to a temp file so ffmpeg and
