@@ -1,4 +1,4 @@
-import { useContext, useEffect, useMemo, useState } from 'react';
+import { useContext, useMemo, useState } from 'react';
 import { store } from '../../platform';
 import { useSelector } from '@xstate/react';
 import { getFileType, FileTypes } from '../../../file-types';
@@ -112,6 +112,10 @@ export default function Metadata() {
 
   const itemType = getFileType(item?.path || '');
 
+  // The tab the user last picked is remembered as-is; when it doesn't apply
+  // (no transcript for an image, Jobs while the server check is pending or
+  // before an item has loaded) the first available tab shows instead, without
+  // overwriting the choice, so it comes back as soon as it applies again.
   const handleTabChange = (key: string) => {
     setActiveTabKey(key);
     store.set('metadata.activeTabKey', key);
@@ -126,13 +130,9 @@ export default function Metadata() {
     );
   }, [itemType, jobServerAvailable]);
 
-  // Ensure active tab remains valid across type changes; default to first available
-  useEffect(() => {
-    if (!filteredTabs.find((t) => t.key === activeTabKey)) {
-      const nextKey = filteredTabs[0]?.key || 'tags';
-      handleTabChange(nextKey);
-    }
-  }, [filteredTabs, activeTabKey, handleTabChange]);
+  const shownTabKey = filteredTabs.some((t) => t.key === activeTabKey)
+    ? activeTabKey
+    : filteredTabs[0]?.key || 'tags';
 
   const getAction = (action: string) => {
     const actions: ActionMap = {
@@ -154,7 +154,7 @@ export default function Metadata() {
       <div className={`tabs`}>
         {filteredTabs.map((tab) => (
           <div
-            className={`tab ${activeTabKey === tab.key ? 'active' : ''}`}
+            className={`tab ${shownTabKey === tab.key ? 'active' : ''}`}
             onClick={() => handleTabChange(tab.key)}
             key={tab.key}
           >
@@ -164,16 +164,16 @@ export default function Metadata() {
         ))}
       </div>
       <div className={`tab-content`}>
-        {activeTabKey === 'tags' && item && <FileMetadata item={item} />}
-        {activeTabKey === 'thumbnails' && item && (
+        {shownTabKey === 'tags' && item && <FileMetadata item={item} />}
+        {shownTabKey === 'thumbnails' && item && (
           <div className="thumbnails-container">
             <Thumbnails path={item.path} />
           </div>
         )}
-        {activeTabKey === 'transcript' && <Transcript />}
-        {activeTabKey === 'jobs' && <JobQueue />}
-        {activeTabKey === 'transformations' && <Transformations />}
-        {activeTabKey === 'duplicates' && item && (
+        {shownTabKey === 'transcript' && <Transcript />}
+        {shownTabKey === 'jobs' && <JobQueue />}
+        {shownTabKey === 'transformations' && <Transformations />}
+        {shownTabKey === 'duplicates' && item && (
           <div className="thumbnails-container">
             <Duplicates basePath={item.path} />
           </div>
