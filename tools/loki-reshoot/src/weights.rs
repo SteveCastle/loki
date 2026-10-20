@@ -70,6 +70,30 @@ impl<'a> Loader<'a> {
         Ok(QLinear { w, scale, n, k })
     }
 
+    /// A linear's weight as dense bf16 [N, K]: stored bf16, or an int8 ConvRot linear dequantized (and un-rotated) on the GPU.
+    pub fn dense_bf16(&mut self, prefix: &str) -> Result<Tensor> {
+        let name = format!("{prefix}.weight");
+        if self.st.info(&name)?.dtype == "BF16" {
+            return self.bf16(&name);
+        }
+        let q = self.qlinear(prefix)?;
+        let out = Tensor::new(&self.dev, DType::BF16, &[q.n, q.k])?;
+        let chunk = ((64usize << 20) / (q.k * 4)).clamp(1, q.n);
+        let tmp = Tensor::new(&self.dev, DType::F32, &[chunk, q.k])?;
+        let idx: Vec<i32> = (0..chunk as i32).collect();
+        let tokens = Tensor::from_buf(self.dev.upload(&idx)?, DType::F32, &[chunk]); // i32 row indices
+        let mut r = 0;
+        while r < q.n {
+            let c = chunk.min(q.n - r);
+            let (t, s) = (q.w.rows(r, c), q.scale.reshape(&[q.n, 1]).rows(r, c));
+            crate::ops::embed_int8(&self.dev, &t, &s, &tokens.rows(0, c), &tmp.rows(0, c))?;
+            crate::ops::to_bf16(&self.dev, &tmp.rows(0, c), &out.rows(r, c))?;
+            r += c;
+        }
+        self.dev.sync()?;
+        Ok(out)
+    }
+
     /// Several int8 linears with identical K concatenated along N (e.g. q|k|v or gate|up).
     pub fn qlinear_cat(&mut self, prefixes: &[&str]) -> Result<QLinear> {
         let mut n_total = 0;

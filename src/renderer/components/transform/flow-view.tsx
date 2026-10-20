@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  FAST_STEPS,
   INTENTS,
   MAX_DURATION,
   MAX_VARIATIONS,
@@ -28,6 +29,7 @@ import {
   type IntentId,
   type IntentKind,
   type Quality,
+  type ReshootModel,
   type Shake,
   type TransformSettings,
 } from './intents';
@@ -719,6 +721,11 @@ const QUALITY_OPTIONS = (engine: 'retouch' | 'reshoot'): Array<SegOption<Quality
   { value: 'fine', label: 'Fine', sub: 'slow' },
 ];
 
+const MODEL_OPTIONS: Array<SegOption<ReshootModel>> = [
+  { value: 'h3', label: 'H3', sub: 'best quality' },
+  { value: 'fast', label: 'Fast', sub: `${FAST_STEPS} steps, ~4x faster` },
+];
+
 function ShapeView(props: FlowViewProps & { def: ReturnType<typeof intentById> }) {
   const { def, settings: s, onSettings, source, paths } = props;
   const inputs = classify(paths);
@@ -976,9 +983,19 @@ function ShapeView(props: FlowViewProps & { def: ReturnType<typeof intentById> }
           </Field>
         )}
 
-        <Field label="Quality">
-          <Segmented<Quality> label="Quality" value={s.quality} options={QUALITY_OPTIONS(def.engine)} onChange={(v) => onSettings({ quality: v })} />
-        </Field>
+        {!isRetouch && (
+          <Field label="Model">
+            <Segmented<ReshootModel> label="Model" value={s.reshootModel} options={MODEL_OPTIONS} onChange={(v) => onSettings({ reshootModel: v })} />
+          </Field>
+        )}
+
+        {isRetouch || s.reshootModel !== 'fast' ? (
+          <Field label="Quality">
+            <Segmented<Quality> label="Quality" value={s.quality} options={QUALITY_OPTIONS(def.engine)} onChange={(v) => onSettings({ quality: v })} />
+          </Field>
+        ) : (
+          <p className="ts-note">The fast model always runs {FAST_STEPS} steps, the count it was distilled for: there is no quality setting. It may look less refined than H3.</p>
+        )}
 
         <div className="ts-row2">
           <Field label="Variations" hint={s.variations > 1 ? `${s.variations} results` : undefined}>
@@ -1287,7 +1304,7 @@ function ReviewView(props: FlowViewProps & { def: ReturnType<typeof intentById> 
           </dd>
           <dt>Settings</dt>
           <dd>
-            {s.quality} quality ({plan.steps} steps) · {s.seedMode === 'fixed' ? `seed ${s.seed}` : 'random seed'}
+            {def.engine === 'reshoot' && s.reshootModel === 'fast' ? 'fast model' : `${s.quality} quality`} ({plan.steps} steps) · {s.seedMode === 'fixed' ? `seed ${s.seed}` : 'random seed'}
             {s.variations > 1 ? ` · ${s.variations} variations` : ''}
             {def.id === 'alive' && !manual ? ` · camera ${s.shake === 'none' ? 'locked' : s.shake}` : ''}
           </dd>

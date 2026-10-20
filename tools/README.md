@@ -56,7 +56,7 @@ input and its path is printed, so the tools chain: `loki-retouch --preset restor
 | tool | does | model | dir |
 |---|---|---|---|
 | **loki-retouch** | edit images by prompt, upscale, restore, composite, wallpapers | Qwen Image 2.1 | [`loki-retouch/`](loki-retouch) |
-| **loki-reshoot** | reference images / videos / audio → video with generated sound | MiniMax H3 | [`loki-reshoot/`](loki-reshoot) |
+| **loki-reshoot** | reference images / videos / audio → video with generated sound | MiniMax H3, or FastH3 Omni (`--model fast`, 8 steps) | [`loki-reshoot/`](loki-reshoot) |
 
 They share one set of conventions (streams, flags, exit codes, model discovery): see [`CONVENTIONS.md`](CONVENTIONS.md).
 `lokictl` (the media-server client) is separate and unrelated.
@@ -77,7 +77,7 @@ They share one set of conventions (streams, flags, exit codes, model discovery):
   in `./models`, or in `$LOKI_MODELS`, and downloads whatever is missing from Hugging Face on first use (resumable). Keeping the
   executables and a shared `models/` folder together (this repo's author uses `~/bin`) means every tool and the media server find them.
   If you change a model file name or add one, update `media-server/deps/models/manifest.json` too (`qwen-image-2.1`,
-  `minimax-h3-ref2va`; the `loki-*` tool entries point at release assets and need no edit).
+  `minimax-h3-ref2va`, `fasth3-omni`; the `loki-*` tool entries point at release assets and need no edit).
 - Runtime needs only the NVIDIA driver. `loki-reshoot` also needs `ffmpeg` (downloaded automatically on Windows when missing).
 - macOS is not supported (no CUDA).
 

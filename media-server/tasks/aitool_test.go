@@ -125,7 +125,7 @@ func TestResolveAIToolPathBinaryWins(t *testing.T) {
 }
 
 func TestAIDependencyManifest(t *testing.T) {
-	for _, spec := range []aiToolSpec{retouchTool, reshootTool} {
+	for _, spec := range []aiToolSpec{retouchTool, reshootTool, reshootSpec(reshootModelFast)} {
 		tool, ok := models.Lookup(spec.Bin)
 		if !ok || tool.EffectiveCategory() != "tool" {
 			t.Fatalf("%s: missing tool entry", spec.Bin)
@@ -135,8 +135,10 @@ func TestAIDependencyManifest(t *testing.T) {
 				t.Errorf("%s %s: %+v", spec.Bin, f.OS, f)
 			}
 		}
-		if _, ok := models.Lookup(spec.Model); !ok {
-			t.Errorf("%s: missing model entry %s", spec.Bin, spec.Model)
+		for _, id := range spec.modelIDs() {
+			if _, ok := models.Lookup(id); !ok {
+				t.Errorf("%s: missing model entry %s", spec.Bin, id)
+			}
 		}
 	}
 }

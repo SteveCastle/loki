@@ -70,6 +70,7 @@ const REMEMBER_KEYS: Array<keyof TransformSettings> = [
   'shake',
   'duration',
   'refSize',
+  'reshootModel',
   'noAudio',
   'keepSoundtrack',
 ];

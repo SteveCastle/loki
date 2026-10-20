@@ -56,7 +56,9 @@ loki-reshoot --prompt TEXT [OPTIONS]
   -d, --duration SECONDS                default 5 (snapped up to the model's 17k+5 frame grid @ 24 fps)
       --frames N                        exact frame count instead of --duration
       --size WxH | --aspect W:H --megapixels F    output size (default: first reference's aspect at 0.4 MP)
-      --steps N (20)  --seed N  --ref-image-size match|max  --no-audio  --crf N (18)  -q  --json  --show-prompt  --prompt-guide  --meta JSON|--meta-file FILE
+      --model h3|fast                   h3 = MiniMax H3 (default, best quality); fast = FastH3 Omni (8 steps + sparse attention)
+      --dense-attention                 fast: full attention instead of VSA
+      --steps N (20 h3 / 8 fast)  --seed N  --ref-image-size match|max  --no-audio  --crf N (18)  -q  --json  --show-prompt  --prompt-guide  --meta JSON|--meta-file FILE
       --dit / --text-encoder / --video-vae / --audio-vae PATH   model files
       --ffmpeg PATH
 ```
@@ -95,12 +97,33 @@ Length is much cheaper than resolution for the same added value.
 
 ## Models
 
-Looked up next to the binary, in `./models`, and in `$LOKI_MODELS`; any that are missing are downloaded (resumable) from
-[Comfy-Org/MiniMax-H3](https://huggingface.co/Comfy-Org/MiniMax-H3) into `models/` next to the binary (~42 GB total).
+Two diffusion models share one text encoder and the VAEs, chosen with `--model`:
+
+- **`h3`** (default): MiniMax H3 ref2va, 20 steps of `res_multistep`. The best quality.
+- **`fast`**: [FastH3 Omni](https://huggingface.co/collections/FastVideo/fasth3-omni), FastVideo's 8-step distilled finetune of the
+  same model (DMD + progressive "PDD" output heads). Same inputs, prompts, sizes and limits; 8 plain Euler steps instead of 20, so a
+  clip samples in about 40% of the time (5 s at 1024x768 on a 4090: 72 s vs 196 s sampling, 129 s vs 234 s
+  end to end; FastVideo's own 8-11x figure also counts its sparse VSA attention, which this engine does not implement). Quality can be a little lower. It is the INT8 ConvRot file from
+  [FastVideo/FastH3-Omni-Comfy](https://huggingface.co/FastVideo/FastH3-Omni-Comfy), the right pick for an RTX 4090. The NVFP4 variants
+  need Blackwell, and FastVideo's FP8 one uses per-channel scales this engine doesn't implement. Run it with its schedule (8 steps).
+  Each step blends the 32 PDD heads its sigma interval covers, as ComfyUI does.
+  `fast` runs **Video Sparse Attention** (VSA) by default, as ComfyUI's `BlockSparseAttention` node does in `vsa` mode. The
+  sequence is cut into 64-token tiles: text, reference and audio rows stay exact, and the video goes in 4x4x4 latent cubes. Each
+  video tile attends exactly its 10% best-scoring cubes, plus its neighbours and all text/reference/audio tiles. A coarse
+  branch of tile means, gated by the model's `to_gate_compress` layers, covers the rest. Measured on a 4090 against
+  `--dense-attention`: attention is 2.5-3.5x faster, a whole step 1.3x at 1024x768 / 5 s and 1.9x at 1344x768 / 10 s. The
+  gain grows with clip length and size. Against `h3` (20 dense steps), sampling is ~4.3x faster at 1024x768 / 5 s and ~4.8x
+  at 1344x768 / 10 s. End to end it is ~2.5x faster at 5 s; the text encoder and VAE decode cost the same for both models.
+  The gate weights (1.9 GB) stay in pinned host memory and are streamed per layer. Runs under 12288 tokens stay dense.
+  `LOKI_VSA_SIGMA=s` keeps steps above sigma `s` dense; ComfyUI's default `start_percent` 0.2 is about 0.98.
+
+Looked up next to the binary, in `./models`, and in `$LOKI_MODELS` (a path list); any that are missing are downloaded (resumable)
+from Hugging Face into `models/` next to the binary (~42 GB for `h3`; `fast` adds 22 GB).
 
 | flag | file | size |
 |---|---|---|
-| `--dit` | `minimax_h3_ref2va_pruned_int8_convrot.safetensors` | 21.0 GB |
+| `--dit` (`--model h3`) | `minimax_h3_ref2va_pruned_int8_convrot.safetensors` ([Comfy-Org/MiniMax-H3](https://huggingface.co/Comfy-Org/MiniMax-H3)) | 21.0 GB |
+| `--dit` (`--model fast`) | `fasth3_omniref_8step_pruned_int8_convrot.safetensors` ([FastVideo/FastH3-Omni-Comfy](https://huggingface.co/FastVideo/FastH3-Omni-Comfy)) | 22.2 GB |
 | `--text-encoder` | `qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors` | 15.7 GB |
 | `--video-vae` | `minimax_h3_video_vae_fp16.safetensors` | 5.2 GB |
 | `--audio-vae` | `minimax_h3_audio_vae_fp32.safetensors` | 0.6 GB |

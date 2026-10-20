@@ -136,6 +136,25 @@ func TestUIContractReshoot(t *testing.T) {
 		}
 	})
 
+	t.Run("fast model: model=fast and steps=8 become --model fast --steps 8", func(t *testing.T) {
+		p := parse(map[string]string{"prompt": "x", "model": "fast", "steps": "8", "duration": "5", "seed": "2"})
+		if p.Model != "fast" || p.Steps != 8 {
+			t.Fatalf("params = %+v", p)
+		}
+		args := buildReshootArgs(p, []string{"a.png"}, nil, nil, "o.mp4", "")
+		got := strings.Join(args, "|")
+		for _, want := range []string{"--model|fast", "--steps|8"} {
+			if !strings.Contains(got, want) {
+				t.Errorf("args %q missing %q", args, want)
+			}
+		}
+		// The UI omits `model` for H3: no --model reaches the engine.
+		p = parse(map[string]string{"prompt": "x", "steps": "20"})
+		if args := buildReshootArgs(p, []string{"a.png"}, nil, nil, "o.mp4", ""); hasArg(args, "--model") || p.Model != "h3" {
+			t.Errorf("h3 args = %q (model %q)", args, p.Model)
+		}
+	})
+
 	t.Run("the UI's maximum duration is accepted unchanged", func(t *testing.T) {
 		if p := parse(map[string]string{"duration": "15", "animate": "1"}); p.Duration != 15 {
 			t.Errorf("duration = %v; want 15", p.Duration)

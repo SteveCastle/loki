@@ -1,5 +1,6 @@
 //! End-to-end reference-to-video pipeline (ComfyUI `video_minimax_h3_r2v`):
-//! references -> Qwen3-VL conditioning + VAE latents -> DiT sampling (res_multistep) -> video/audio decode -> mp4.
+//! references -> Qwen3-VL conditioning + VAE latents -> DiT sampling (res_multistep, or Euler for the distilled FastH3)
+//! -> video/audio decode -> mp4.
 //!
 //! Phases keep GPU memory bounded on a 24 GB card: text encoder (evicted) -> VAE encode (evicted) -> DiT (evicted) -> VAE decode.
 use crate::cuda::Device;
@@ -63,6 +64,8 @@ pub struct Request {
     pub fit_first: Option<Fit>,
     pub video_audio: bool,
     pub no_audio: bool,
+    /// Video Sparse Attention on a model that supports it (FastH3); otherwise ignored
+    pub sparse: bool,
     pub crf: u32,
     pub out: PathBuf,
 }
@@ -297,7 +300,9 @@ pub fn run(dev: Arc<Device>, req: &Request, paths: &Paths, ff: &Ffmpeg, record: 
     // ---- 4. DiT sampling ----------------------------------------------------------------------------------------
     let (xv, xa) = {
         let t0 = std::time::Instant::now();
-        let dit = Dit::load(dev.clone(), &paths.dit).context("loading DiT")?;
+        // VSA from the first step by default (as FastH3 is trained); LOKI_VSA_SIGMA=s keeps steps above sigma s dense
+        let vsa_sigma = std::env::var("LOKI_VSA_SIGMA").ok().and_then(|v| v.parse::<f32>().ok()).unwrap_or(f32::INFINITY);
+        let dit = Dit::load_opts(dev.clone(), &paths.dit, req.sparse.then_some(vsa_sigma)).context("loading DiT")?;
         let inp = DitInputs {
             text: &cond.context,
             text_tags: &cond.tags,
@@ -313,10 +318,14 @@ pub fn run(dev: Arc<Device>, req: &Request, paths: &Paths, ff: &Ffmpeg, record: 
         let xv = sampler::randn(&dev, &[24, latent_t, lh, lw], req.seed)?;
         let xa = sampler::randn(&dev, &[32, 2, audio_t], req.seed ^ 0x9E37_79B9_7F4A_7C15)?;
         let sigmas = sampler::simple_sigmas(req.steps, sampler::SHIFT_VIDEO);
+        run.sigmas = sigmas.clone();
+        // a PDD (few-step distilled) model is trained for plain Euler steps; the base model for res_multistep
+        let distilled = dit.pdd_heads() > 1;
         let show_bar = std::io::IsTerminal::is_terminal(&std::io::stderr()) && !crate::log::quiet();
         let bar = if show_bar { indicatif::ProgressBar::new(req.steps as u64) } else { indicatif::ProgressBar::hidden() };
         bar.set_style(indicatif::ProgressStyle::with_template("  sampling {bar:40} {pos}/{len} steps  {elapsed_precise} eta {eta_precise}").unwrap());
-        sampler::res_multistep(
+        let sample = if distilled { sampler::euler } else { sampler::res_multistep };
+        sample(
             &dev,
             &sigmas,
             &xv,
@@ -331,6 +340,7 @@ pub fn run(dev: Arc<Device>, req: &Request, paths: &Paths, ff: &Ffmpeg, record: 
         )?;
         bar.finish_and_clear();
         crate::info!("sampled {} steps in {:.1}s", req.steps, t0.elapsed().as_secs_f64());
+        dit.prof.report();
         (xv, xa)
     }; // DiT dropped
     dev.sync()?;

@@ -2,34 +2,39 @@
 use anyhow::{bail, Context, Result};
 use std::path::{Path, PathBuf};
 
-pub const HF_BASE: &str = "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/";
+/// Hugging Face repos the files come from (`<repo>/resolve/main/<hf_path>`).
+pub const HF_H3: &str = "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/";
+pub const HF_FAST: &str = "https://huggingface.co/FastVideo/FastH3-Omni-Comfy/resolve/main/";
 
 #[derive(Clone, Copy)]
 pub struct ModelSpec {
     pub what: &'static str,
     /// substrings that must all appear in the (lowercase) file name
     pub patterns: &'static [&'static str],
+    pub repo: &'static str,
     pub hf_path: &'static str,
     pub size_gb: f64,
 }
 
-pub const DIT: ModelSpec = ModelSpec { what: "diffusion model", patterns: &["minimax_h3_ref2va", "int8"], hf_path: "diffusion_models/minimax_h3_ref2va_pruned_int8_convrot.safetensors", size_gb: 21.0 };
-pub const TEXT_ENCODER: ModelSpec = ModelSpec { what: "text encoder", patterns: &["qwen3vl_32b", "minimax"], hf_path: "text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors", size_gb: 15.7 };
-pub const VIDEO_VAE: ModelSpec = ModelSpec { what: "video VAE", patterns: &["minimax_h3_video_vae"], hf_path: "vae/minimax_h3_video_vae_fp16.safetensors", size_gb: 5.2 };
-pub const AUDIO_VAE: ModelSpec = ModelSpec { what: "audio VAE", patterns: &["minimax_h3_audio_vae"], hf_path: "vae/minimax_h3_audio_vae_fp32.safetensors", size_gb: 0.6 };
+pub const DIT: ModelSpec = ModelSpec { what: "diffusion model", patterns: &["minimax_h3_ref2va", "int8"], repo: HF_H3, hf_path: "diffusion_models/minimax_h3_ref2va_pruned_int8_convrot.safetensors", size_gb: 21.0 };
+/// FastH3 Omni: FastVideo's 8-step distilled finetune of the same ref2va DiT (PDD output heads); shares everything else.
+pub const FAST_DIT: ModelSpec = ModelSpec { what: "FastH3 diffusion model", patterns: &["fasth3_omniref", "int8"], repo: HF_FAST, hf_path: "diffusion_models/fasth3_omniref_8step_pruned_int8_convrot.safetensors", size_gb: 22.2 };
+pub const TEXT_ENCODER: ModelSpec = ModelSpec { what: "text encoder", patterns: &["qwen3vl_32b", "minimax"], repo: HF_H3, hf_path: "text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors", size_gb: 15.7 };
+pub const VIDEO_VAE: ModelSpec = ModelSpec { what: "video VAE", patterns: &["minimax_h3_video_vae"], repo: HF_H3, hf_path: "vae/minimax_h3_video_vae_fp16.safetensors", size_gb: 5.2 };
+pub const AUDIO_VAE: ModelSpec = ModelSpec { what: "audio VAE", patterns: &["minimax_h3_audio_vae"], repo: HF_H3, hf_path: "vae/minimax_h3_audio_vae_fp32.safetensors", size_gb: 0.6 };
 
 fn exe_dir() -> PathBuf {
     std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.to_path_buf())).unwrap_or_else(|| PathBuf::from("."))
 }
 
-/// Directories searched for models: next to the binary, its `models/`, `$LOKI_MODELS`, `.` and `./models`.
+/// Directories searched for models: next to the binary, its `models/`, `$LOKI_MODELS` (a path list), `.` and `./models`.
 pub fn search_dirs() -> Vec<PathBuf> {
     let mut dirs: Vec<PathBuf> = Vec::new();
     let exe = exe_dir();
     dirs.push(exe.clone());
     dirs.push(exe.join("models"));
-    if let Ok(d) = std::env::var("LOKI_MODELS") {
-        dirs.push(PathBuf::from(d));
+    if let Some(d) = std::env::var_os("LOKI_MODELS") {
+        dirs.extend(std::env::split_paths(&d).filter(|p| !p.as_os_str().is_empty()));
     }
     dirs.push(PathBuf::from("."));
     dirs.push(PathBuf::from("models"));
@@ -65,14 +70,13 @@ pub fn resolve(explicit: Option<PathBuf>, spec: &ModelSpec) -> Result<PathBuf> {
     }
     let dest = exe_dir().join("models").join(spec.hf_path.rsplit('/').next().unwrap());
     eprintln!("{} not found locally; downloading {} (~{:.1} GB) from Hugging Face to {}", spec.what, spec.hf_path, spec.size_gb, dest.display());
-    download(spec.hf_path, &dest)?;
+    download(&format!("{}{}", spec.repo, spec.hf_path), &dest)?;
     Ok(dest)
 }
 
-/// Download `HF_BASE + hf_path` to `dest`, resuming a partial `.part` file if one exists.
-pub fn download(hf_path: &str, dest: &Path) -> Result<()> {
+/// Download `url` to `dest`, resuming a partial `.part` file if one exists.
+pub fn download(url: &str, dest: &Path) -> Result<()> {
     use std::io::{Read, Write};
-    let url = format!("{HF_BASE}{hf_path}");
     if let Some(dir) = dest.parent() {
         std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
     }

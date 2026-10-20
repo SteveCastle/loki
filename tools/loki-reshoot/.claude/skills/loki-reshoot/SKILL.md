@@ -15,6 +15,10 @@ composable tools: see the sibling `loki-retouch` (image editing/upscaling) and t
   copy `target/release/loki-reshoot.exe` over the one in `C:\Users\steph\bin`. If it can't find the models it downloads ~42 GB from
   Hugging Face (it prints a notice even with `-q`); `LOKI_MODELS` points it at another model folder. CI builds release binaries for
   Windows and Linux.
+- Two models (`--model`): `h3` (default, MiniMax H3, 20 steps, best quality) and `fast` (FastH3 Omni, FastVideo's 8-step distilled
+  finetune with sparse attention (VSA): ~4-5x faster sampling, ~2.5x end to end, quality may be a little lower). Same prompts, references, sizes and lengths; `fast` only adds its own
+  22 GB diffusion model (`fasth3_omniref_8step_pruned_int8_convrot.safetensors`, downloaded on first use). Use `fast` for drafts,
+  iterating on prompts/seeds and long or large clips; `h3` for finals when quality matters most. Don't raise `--steps` for `fast`.
 - The GPU must be free (~22 GB). If ComfyUI or another big GPU job is running the run fails with an allocation error. Check
   `nvidia-smi --query-gpu=memory.used --format=csv`; ask before stopping the user's processes.
 - ffmpeg/ffprobe are required (PATH, or next to the exe; auto-downloaded on Windows if absent).
@@ -26,10 +30,10 @@ composable tools: see the sibling `loki-retouch` (image editing/upscaling) and t
 - Inputs: files, or `-` = that one input read from stdin (`-i -`, `--animate -`, `-v -`, `-a -`, `-P -`; at most one per run).
 - Outputs: the path of the written file is printed on **stdout** (`--json`: one JSON object instead); `-o -` writes the media itself to
   stdout (mp4 is fragmented). Everything else (progress, timings, warnings) goes to **stderr**; `-q` silences it. Never parse stderr.
-- Every mp4 carries its generation record (prompt, seed, steps, size, length, references, command line) as JSON in the container's
+- Every mp4 carries its generation record (model, prompt, seed, steps, size, length, references, command line) as JSON in the container's
   `comment` tag (`ffprobe -show_entries format_tags=comment`); `--json` repeats it under `generation`. Read it to re-run or vary a result.
 - Exit status: 0 ok, 1 error, 2 usage error. Errors are one `loki-reshoot: error: ...` line on stderr.
-- Shared env: `LOKI_MODELS` (model folder), `LOKI_PROFILE=1` (per-kernel timing).
+- Shared env: `LOKI_MODELS` (model folder, or a path list), `LOKI_PROFILE=1` (per-kernel timing).
 - Chaining example: `loki-retouch --preset restore -o - old.jpg | loki-reshoot --animate - -d 5 -o shot.mp4`
 
 ## Quick mode: bring a still photo to life (the most common job)
@@ -63,7 +67,8 @@ ratio, else pad), `crop`, `pad` (black bars; the model keeps them in the video r
   Template sizes: 864x480, 1216x672, 1344x768 (0.98 MP, node default), 1920x1088 max in ComfyUI's table.
 - Cost ∝ tokens = latent_t × (H/32) × (W/32): doubling both sides is 4× tokens and ~16× attention; length is much cheaper than resolution.
   Measured on a 4090: ~11 s per sampling step at 768x1344 / 5 s (20 steps ≈ 4 min, ~4.5 min total); a 15 s 1344x768 clip is ~1 min per step.
-  Draft small and short first (`--size 384x672 --frames 22 --steps 12`, under a minute), then render the final at full settings.
+  Draft small and short first (`--model fast`, or `--size 384x672 --frames 22 --steps 12`), then render the final at full settings.
+  `--model fast` runs 8 steps instead of 20, plain Euler, so sampling takes roughly 40% of the h3 time per clip or less.
 - Faces are small and soft when the subject is far away or the output is small: use a larger size, a closer-framed reference,
   `--ref-image-size max` and ≥5 s clips.
 - Fixed `--seed N` for reproducibility (otherwise random, printed); changing the seed is the cheapest way to get another take.

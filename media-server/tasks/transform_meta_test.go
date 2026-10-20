@@ -62,9 +62,9 @@ func withHelp(t *testing.T, help string, err error) *int {
 		calls++
 		return help, err
 	}
-	metaSupportMu.Lock()
-	metaSupport = map[string]bool{}
-	metaSupportMu.Unlock()
+	helpCacheMu.Lock()
+	helpCache = map[string]string{}
+	helpCacheMu.Unlock()
 	t.Cleanup(func() { probeAIToolHelp = prev })
 	return &calls
 }

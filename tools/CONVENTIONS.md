@@ -37,7 +37,7 @@ so a reader of version 1 keeps working:
  "ref_resolution": 0,
  "inputs": [{"tag": "<image1>", "path": "photo.jpg", "width": 1024, "height": 768}]}
 ```
-loki-reshoot adds `frames`, `fps`, `seconds`, `audio`, `crf`, `ref_image_size`, `native`/`fit`, `animate`/`describe`/`shake`,
+loki-reshoot adds `model_id` (`h3` | `fast`, with `model` "MiniMax H3" / "FastH3 Omni"), `frames`, `fps`, `seconds`, `audio`, `crf`, `ref_image_size`, `native`/`fit`, `animate`/`describe`/`shake`,
 and its inputs are tagged `<Picture n>` / `<Video n>` (`start`, `duration`, `audio_tag`) / `<Audio n>`. An input read from stdin is
 reported as `-`. `--json` prints the same record under `generation`. Parsers: `src/renderer/generation-metadata.ts` (the app),
 writers: each tool's `src/genmeta.rs`.
@@ -49,7 +49,8 @@ and the job's inputs in order), which is what lets the Generation panel save a r
 (`src/renderer/components/transform/recipe.ts`). The media server only passes `--meta` to an engine whose `--help` lists it.
 
 ## Environment
-- `LOKI_MODELS`: extra folder searched for model files (after the binary's folder and `./models`).
+- `LOKI_MODELS`: extra folder(s) searched for model files (after the binary's folder and `./models`; an OS path list, `;` on
+  Windows, `:` on Linux).
 - `LOKI_PROFILE=1`: per-kernel GPU timing report on stderr. Other `LOKI_*` variables are engine tuning knobs (see each README).
 
 ## Models and hardware

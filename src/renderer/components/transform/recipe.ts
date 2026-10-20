@@ -51,6 +51,8 @@ function knownSettings(raw: Json): Partial<TransformSettings> {
     const want = BASE_SETTINGS[k];
     if (k === 'manualPrompt') {
       if (v === null || typeof v === 'string') out[k] = v;
+    } else if (k === 'reshootModel') {
+      if (v === 'h3' || v === 'fast') out[k] = v;
     } else if (k === 'pinned') {
       if (Array.isArray(v)) out[k] = v.filter((p) => typeof p === 'string' && p);
     } else if (typeof v === typeof want && !(typeof v === 'number' && !Number.isFinite(v))) {
@@ -164,7 +166,9 @@ function fromReshoot(rec: Json, args: string[]): RebuiltTask | null {
   const d = parseFloat(argValue(args, '--duration', '-d') ?? '');
   const seconds = Number.isFinite(d) ? d : typeof rec.seconds === 'number' ? Math.round(rec.seconds * 4) / 4 : s.duration;
   s.duration = Math.min(MAX_DURATION, Math.max(MIN_DURATION, seconds));
-  s.quality = nearestQuality('reshoot', rec.steps);
+  // The fast model always runs its own fixed steps: the quality (which picks H3's steps) stays at its default.
+  if (rec.model_id === 'fast' || argValue(args, '--model') === 'fast') s.reshootModel = 'fast';
+  else s.quality = nearestQuality('reshoot', rec.steps);
   if (rec.ref_image_size === 'max') s.refSize = 'max';
   s.noAudio = rec.audio === false;
   s.keepSoundtrack = !hasArg(args, '--no-video-audio');

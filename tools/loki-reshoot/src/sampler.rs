@@ -1,5 +1,5 @@
-//! Flow-matching schedule (ModelSamplingAV shift + `simple` scheduler) and the `res_multistep` sampler
-//! (ComfyUI k_diffusion, eta = 0), operating on the packed (video, carried-audio) latent pair.
+//! Flow-matching schedule (ModelSamplingAV shift + `simple` scheduler) and the `res_multistep` (ComfyUI k_diffusion,
+//! eta = 0) and `euler` samplers, operating on the packed (video, carried-audio) latent pair.
 use crate::cuda::{Arg, Device};
 use crate::tensor::{DType, Tensor};
 use anyhow::Result;
@@ -45,6 +45,23 @@ fn axpby3(dev: &Device, out: &Tensor, x: &Tensor, d: &Tensor, o: Option<&Tensor>
 /// A model evaluation: given the current (video, audio-carried) latents and sigma, write the velocity
 /// outputs (ComfyUI `forward()` convention, so that denoised = x - out * sigma).
 pub type Model<'a> = dyn FnMut(&Tensor, &Tensor, f32, &Tensor, &Tensor) -> Result<()> + 'a;
+
+/// Run the Euler sampler over `sigmas` in place on (`xv`, `xa`): what few-step distilled models (FastH3) are trained for.
+/// `progress(i, n)` is called after each step.
+pub fn euler(dev: &Device, sigmas: &[f64], xv: &Tensor, xa: &Tensor, model: &mut Model, progress: &dyn Fn(usize, usize)) -> Result<()> {
+    let steps = sigmas.len() - 1;
+    let (vv, va) = (Tensor::new(dev, DType::F32, &xv.shape)?, Tensor::new(dev, DType::F32, &xa.shape)?);
+    for i in 0..steps {
+        let (s, sn) = (sigmas[i], sigmas[i + 1]);
+        model(xv, xa, s as f32, &vv, &va)?;
+        // x + (sn - s) * v  ==  x*(sn/s) + denoised*(1 - sn/s)
+        axpby3(dev, xv, xv, &vv, None, 1.0, (sn - s) as f32, 0.0)?;
+        axpby3(dev, xa, xa, &va, None, 1.0, (sn - s) as f32, 0.0)?;
+        dev.sync()?;
+        progress(i + 1, steps);
+    }
+    Ok(())
+}
 
 /// Run res_multistep over `sigmas` in place on (`xv`, `xa`). `progress(i, n)` is called after each step.
 pub fn res_multistep(dev: &Device, sigmas: &[f64], xv: &Tensor, xa: &Tensor, model: &mut Model, progress: &dyn Fn(usize, usize)) -> Result<()> {

@@ -370,6 +370,25 @@
             "size_bytes": 605254808
           }
         ]
+      },
+      {
+        "id": "fasth3-omni",
+        "name": "FastH3 Omni reference-to-video (int8, 8-step)",
+        "feature": "AI video from references",
+        "description": "Optional faster model for loki-reshoot: FastVideo's FastH3 Omni, a finetune of MiniMax H3 distilled to 8 sampling steps (roughly 8-11x faster, possibly lower quality). Adds only its diffusion model; it uses the text encoder and video/audio VAEs of the MiniMax H3 dependency, which must be installed too.",
+        "version": "1.0.0",
+        "consumers": [
+          "reshoot"
+        ],
+        "size_bytes": 22213723064,
+        "files": [
+          {
+            "url": "https://huggingface.co/FastVideo/FastH3-Omni-Comfy/resolve/main/diffusion_models/fasth3_omniref_8step_pruned_int8_convrot.safetensors",
+            "rel_path": "fasth3_omniref_8step_pruned_int8_convrot.safetensors",
+            "sha256": "851b2dc9670ed864b7f1e951ac9da047d83b1c04ded9bfcc1a9e5bba0ee33f80",
+            "size_bytes": 22213723064
+          }
+        ]
       }
   ]
 }

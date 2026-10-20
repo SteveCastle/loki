@@ -396,7 +396,7 @@ extern "C" __global__ void __launch_bounds__(256) k_h3_gemm_i8_w(const int8_t* A
 // =============================================================================================
 extern "C" __global__ void __launch_bounds__(256) k_h3_embed(const float* __restrict__ src, int kind, int T, int Hl, int Wl, int nrows, float in_scale,
                                                             const float* __restrict__ wt, const float* __restrict__ bias, int Kf, int N,
-                                                            bf16* __restrict__ out) {
+                                                            bf16* __restrict__ out, const int* __restrict__ rowmap) {
     __shared__ float feat[8][96];
     const int r0 = blockIdx.x * 8;
     const int tid = threadIdx.x;
@@ -430,7 +430,7 @@ extern "C" __global__ void __launch_bounds__(256) k_h3_embed(const float* __rest
 #pragma unroll
             for (int rr = 0; rr < 8; ++rr) acc[rr] = fmaf(feat[rr][f], wv, acc[rr]);
         }
-        for (int rr = 0; rr < nr; ++rr) out[(int64_t)(r0 + rr) * N + n] = f2bf(acc[rr] + b);
+        for (int rr = 0; rr < nr; ++rr) out[(int64_t)(rowmap ? rowmap[r0 + rr] : r0 + rr) * N + n] = f2bf(acc[rr] + b);
     }
 }
 
@@ -438,12 +438,14 @@ extern "C" __global__ void __launch_bounds__(256) k_h3_embed(const float* __rest
 // Final layer
 // =============================================================================================
 // x bf16 [n][K] -> f32 [n][K]: bf16(RMSNorm(x) * w) * (1 + scale) + shift   (fp32 modulation)
+// rowmap (optional): output row m reads x row rowmap[m]
 extern "C" __global__ void __launch_bounds__(256) k_h3_final_mod(const bf16* __restrict__ x, int n, int K, const bf16* __restrict__ w, float eps,
-                                                                const float* __restrict__ shift, const float* __restrict__ scale, float* __restrict__ out) {
+                                                                const float* __restrict__ shift, const float* __restrict__ scale, float* __restrict__ out,
+                                                                const int* __restrict__ rowmap) {
     __shared__ float red[32];
     int64_t m = blockIdx.x;
     if (m >= n) return;
-    const bf16* xr = x + m * K;
+    const bf16* xr = x + (int64_t)(rowmap ? rowmap[m] : m) * K;
     float ss = 0.f;
     for (int i = threadIdx.x; i < K; i += 256) { float v = bf2f(xr[i]); ss += v * v; }
     float r = rsqrtf(block_sum(ss, red) / K + eps);
@@ -1323,8 +1325,14 @@ DEVI uint32_t e4m3x4_from_h2(__half2 lo, __half2 hi) {
 
 // HX: exponentials as packed f16x2 (ex2.approx.f16x2), x448 folded into the exponent, f16x2 -> e4m3x2 directly,
 //     per-tile row sums in half2
-template <int ABL = 0, bool HX = false>
-__device__ __forceinline__ void h3_attn_v6_kernel(const h3v5::Params p) {
+// SP: block-sparse (VSA fine branch). Key tiles come from list[(block, head)][0, cnt) as tile | (mask4 << 24), ascending;
+//     bit i of mask4 = query tile i of this block (warps 2i, 2i+1) attends the tile, the other warps mask it (and skip its
+//     MMAs). Only the first blen[tile] keys of a tile are live. V scale groups are tracked per tile.
+template <int ABL = 0, bool HX = false, bool SP = false>
+__device__ __forceinline__ void h3_attn_v6_kernel(const h3v5::Params p, const int* __restrict__ list = nullptr,
+                                                  const int* __restrict__ cnt = nullptr, const int* __restrict__ blen = nullptr,
+                                                  int cap = 0) {
+    static_assert(!(SP && HX), "the sparse path uses the f32 exponentials");
     using namespace h3v5;
     using h3attn::swz128;
     using namespace h3pp;
@@ -1339,7 +1347,8 @@ __device__ __forceinline__ void h3_attn_v6_kernel(const h3v5::Params p) {
     const int q0 = blockIdx.x * BQ;
     const int h = blockIdx.y;
     const int H = p.H;
-    const int ntiles = (p.nk + BKV - 1) / BKV;
+    const int* lst = SP ? list + ((int64_t)blockIdx.x * H + h) * cap : nullptr;
+    const int ntiles = SP ? cnt[blockIdx.x * H + h] : (p.nk + BKV - 1) / BKV;
 
     if (tid == 0) {
         for (int s = 0; s < STAGES; ++s) mbar_init(&full[s], 128);
@@ -1357,7 +1366,7 @@ __device__ __forceinline__ void h3_attn_v6_kernel(const h3v5::Params p) {
     const int lt = tid - 128;
     const uint8_t* vhead = p.vt + (int64_t)h * 128 * p.s_pad;
     auto load_kv = [&](int tile, int stage) {
-        const int j0 = tile * BKV;
+        const int j0 = (SP ? (lst[tile] & 0xFFFFFF) : tile) * BKV;
         uint8_t* ks = St + stage * STAGE;
         uint8_t* vs = ks + SMEM_K;
         float* sks = reinterpret_cast<float*>(vs + SMEM_V);
@@ -1420,6 +1429,8 @@ __device__ __forceinline__ void h3_attn_v6_kernel(const h3v5::Params p) {
 #pragma unroll
     for (int mt = 0; mt < 2; ++mt) { m[mt][0] = m[mt][1] = -INFINITY; l[mt][0] = l[mt][1] = 0.f; }
     float sv_cur = 1.f;
+    int cur_grp = -1;
+    bool prev_sel = true;
 
     auto pv = [&](uint32_t sbase) {
         const uint32_t vb_ = sbase + v_lane;
@@ -1444,6 +1455,10 @@ __device__ __forceinline__ void h3_attn_v6_kernel(const h3v5::Params p) {
     uint32_t prev_base = 0;
     for (int t = 0; t < ntiles; ++t) {
         const uint32_t sbase = st0 + st * STAGE;
+        const int ent = SP ? lst[t] : 0;
+        const int ktile = SP ? (ent & 0xFFFFFF) : t;
+        // warp-uniform: does this warp's query tile attend key tile t?
+        const bool sel = SP ? ((ent >> (24 + (warp >> 1))) & 1) != 0 : true;
         mbar_wait(&full[st], par);
         bar_sync(1 + grp, 256);
         int32_t s[2][8][4];
@@ -1451,7 +1466,7 @@ __device__ __forceinline__ void h3_attn_v6_kernel(const h3v5::Params p) {
         for (int mt = 0; mt < 2; ++mt)
 #pragma unroll
             for (int j = 0; j < 8; ++j) s[mt][j][0] = s[mt][j][1] = s[mt][j][2] = s[mt][j][3] = 0;
-        {
+        if (sel) {
             const uint32_t kb = sbase + k_lane;
 #pragma unroll
             for (int kk = 0; kk < 4; ++kk) {
@@ -1471,7 +1486,7 @@ __device__ __forceinline__ void h3_attn_v6_kernel(const h3v5::Params p) {
                 }
             }
         }
-        if (t > 0) pv(prev_base);
+        if (t > 0 && prev_sel) pv(prev_base);
         bar_arrive(next_bar, 256);
         if (t > 0) {
             const int ps = st == 0 ? STAGES - 1 : st - 1;
@@ -1485,8 +1500,9 @@ __device__ __forceinline__ void h3_attn_v6_kernel(const h3v5::Params p) {
             }
         }
         // ---- softmax(t) for both m-tiles
-        const int j0 = t * BKV;
-        const bool full_tile = j0 + BKV <= p.nk;
+        const int j0 = ktile * BKV;
+        const int lim = SP ? (sel ? min(blen[ktile], p.nk - j0) : 0) : p.nk - j0;  // live keys of this tile
+        const bool full_tile = lim >= BKV;
         float alpha[2][2];
 #pragma unroll
         for (int mt = 0; mt < 2; ++mt) {
@@ -1503,8 +1519,8 @@ __device__ __forceinline__ void h3_attn_v6_kernel(const h3v5::Params p) {
                 sf[j][3] = fmaf(__int_as_float(s[mt][j][3] + 0x4B400000), sky, c1);
                 if (!full_tile) {
                     int kl = j * 8 + t4 * 2;
-                    if (j0 + kl >= p.nk) { sf[j][0] = -INFINITY; sf[j][2] = -INFINITY; }
-                    if (j0 + kl + 1 >= p.nk) { sf[j][1] = -INFINITY; sf[j][3] = -INFINITY; }
+                    if (kl >= lim) { sf[j][0] = -INFINITY; sf[j][2] = -INFINITY; }
+                    if (kl + 1 >= lim) { sf[j][1] = -INFINITY; sf[j][3] = -INFINITY; }
                 }
                 mx0 = fmaxf(mx0, fmaxf(sf[j][0], sf[j][1]));
                 mx1 = fmaxf(mx1, fmaxf(sf[j][2], sf[j][3]));
@@ -1514,8 +1530,14 @@ __device__ __forceinline__ void h3_attn_v6_kernel(const h3v5::Params p) {
             mx1 = fmaxf(mx1, __shfl_xor_sync(0xffffffff, mx1, 1));
             mx1 = fmaxf(mx1, __shfl_xor_sync(0xffffffff, mx1, 2));
             const float mn0 = fmaxf(m[mt][0], mx0), mn1 = fmaxf(m[mt][1], mx1);
-            alpha[mt][0] = fast_exp2((m[mt][0] - mn0) * sqr[mt][0]);
-            alpha[mt][1] = fast_exp2((m[mt][1] - mn1) * sqr[mt][1]);
+            if (SP) {
+                // a row that has seen no live key yet keeps m = -inf: no rescale, all probabilities 0
+                alpha[mt][0] = mn0 == -INFINITY ? 1.f : fast_exp2((m[mt][0] - mn0) * sqr[mt][0]);
+                alpha[mt][1] = mn1 == -INFINITY ? 1.f : fast_exp2((m[mt][1] - mn1) * sqr[mt][1]);
+            } else {
+                alpha[mt][0] = fast_exp2((m[mt][0] - mn0) * sqr[mt][0]);
+                alpha[mt][1] = fast_exp2((m[mt][1] - mn1) * sqr[mt][1]);
+            }
             m[mt][0] = mn0; m[mt][1] = mn1;
             float rs0 = 0.f, rs1 = 0.f;
             if (HX) {
@@ -1542,7 +1564,8 @@ __device__ __forceinline__ void h3_attn_v6_kernel(const h3v5::Params p) {
                 rs0 = __low2float(hs0) + __high2float(hs0);
                 rs1 = __low2float(hs1) + __high2float(hs1);
             } else {
-            const float nm0 = -mn0 * sqr[mt][0], nm1 = -mn1 * sqr[mt][1];
+            const float nm0 = (SP && mn0 == -INFINITY) ? 0.f : -mn0 * sqr[mt][0];
+            const float nm1 = (SP && mn1 == -INFINITY) ? 0.f : -mn1 * sqr[mt][1];
 #pragma unroll
             for (int ks = 0; ks < 2; ++ks) {
                 float pa[8], pb[8];
@@ -1572,10 +1595,12 @@ __device__ __forceinline__ void h3_attn_v6_kernel(const h3v5::Params p) {
             l[mt][1] = l[mt][1] * alpha[mt][1] + rs1;
         }
         float vsr = 1.f;
-        if ((j0 & 255) == 0) {
+        // o_acc is kept in units of the current 256-key group's V scale (tiles of a sparse list jump between groups)
+        if (SP ? (j0 >> 8) != cur_grp : (j0 & 255) == 0) {
             const float svn = p.sv[(int64_t)(j0 >> 8) * H + h];
             vsr = sv_cur / svn;
             sv_cur = svn;
+            cur_grp = j0 >> 8;
         }
         const float r00 = alpha[0][0] * vsr, r01 = alpha[0][1] * vsr, r10 = alpha[1][0] * vsr, r11 = alpha[1][1] * vsr;
         if (__any_sync(0xffffffff, (r00 != 1.f) || (r01 != 1.f) || (r10 != 1.f) || (r11 != 1.f))) {
@@ -1586,10 +1611,11 @@ __device__ __forceinline__ void h3_attn_v6_kernel(const h3v5::Params p) {
             }
         }
         prev_base = sbase;
+        prev_sel = sel;
         if (++st == STAGES) { st = 0; par ^= 1; }
     }
     bar_sync(1 + grp, 256);
-    pv(prev_base);
+    if (ntiles > 0 && prev_sel) pv(prev_base);
     bar_arrive(next_bar, 256);
     if (grp == 0) bar_sync(1, 256);
 
@@ -1616,6 +1642,10 @@ __device__ __forceinline__ void h3_attn_v6_kernel(const h3v5::Params p) {
 }
 
 extern "C" __global__ void __launch_bounds__(256, 1) k_h3_attn_v6(const h3v5::Params p) { h3_attn_v6_kernel<0, false>(p); }
+extern "C" __global__ void __launch_bounds__(256, 1) k_h3_attn_v6_sparse(const h3v5::Params p, const int* __restrict__ list,
+                                                                         const int* __restrict__ cnt, const int* __restrict__ blen, int cap) {
+    h3_attn_v6_kernel<0, false, true>(p, list, cnt, blen, cap);
+}
 
 // =============================================================================================
 // Fused per-head RMSNorm + partial split-half rope + H128 rotation (+ optional per-channel mean subtraction) +

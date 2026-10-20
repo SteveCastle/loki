@@ -48,6 +48,11 @@ export function classify(paths: string[]): Inputs {
 }
 
 export type Quality = 'draft' | 'balanced' | 'fine';
+/**
+ * Which loki-reshoot model runs a video: `h3` (MiniMax H3, the engine's default; Quality picks its steps) or `fast`
+ * (FastH3 Omni, distilled for exactly FAST_STEPS steps: ~4-5x faster sampling with sparse attention, maybe lower quality).
+ */
+export type ReshootModel = 'h3' | 'fast';
 export type SizeMode = 'same' | 'scale' | 'custom';
 export type Shake = 'none' | 'subtle' | 'handheld';
 export type WallpaperTarget = 'desktop' | 'phone';
@@ -128,6 +133,8 @@ export interface TransformSettings {
   /** Seconds of video. */
   duration: number;
   refSize: 'match' | 'max';
+  /** Video model (reshoot only). */
+  reshootModel: ReshootModel;
   noAudio: boolean;
   keepSoundtrack: boolean;
 }
@@ -169,6 +176,7 @@ export const BASE_SETTINGS: TransformSettings = {
   shake: 'subtle',
   duration: 5,
   refSize: 'match',
+  reshootModel: 'h3',
   noAudio: false,
   keepSoundtrack: true,
   pinned: [],
@@ -328,7 +336,7 @@ export function runSummary(id: IntentId, s: TransformSettings): string {
     if (s.sizeMode === 'scale') parts.push(`${s.scale}×`);
     else if (s.sizeMode === 'custom' && parseSize(s.customSize)) parts.push(s.customSize);
   } else parts.push(`${s.duration.toFixed(1).replace(/\.0$/, '')} s`);
-  parts.push(s.quality);
+  parts.push(intentById(id).engine === 'reshoot' && s.reshootModel === 'fast' ? 'fast model' : s.quality);
   if (s.variations > 1) parts.push(`${s.variations} variations`);
   if (s.seedMode === 'fixed') parts.push(`seed ${s.seed}`);
   const pins = pinnable(id) ? (s.pinned || []).length : 0;
@@ -511,6 +519,14 @@ export function stepsFor(engine: EngineId, q: Quality): number {
   return QUALITY_STEPS[engine][q];
 }
 
+/** The fast video model (FastH3 Omni) is distilled for exactly this many steps, whatever the quality. */
+export const FAST_STEPS = 8;
+
+/** The step count a run of these settings uses: the quality's, except the fast video model's fixed count. */
+export function stepsForSettings(engine: EngineId, s: Pick<TransformSettings, 'quality' | 'reshootModel'>): number {
+  return engine === 'reshoot' && s.reshootModel === 'fast' ? FAST_STEPS : stepsFor(engine, s.quality);
+}
+
 /** `WxH` → [w, h] (positive integers) or null. */
 export function parseSize(s: string): [number, number] | null {
   const m = /^\s*(\d{2,5})\s*[x×X]\s*(\d{2,5})\s*$/.exec(s || '');
@@ -657,7 +673,7 @@ export function buildJobs(
   const inputs = classify(paths);
   const avail = availability(id, inputs);
   if (!avail.ok) return { jobs: [], error: avail.reason || 'Not available' };
-  const steps = stepsFor(def.engine, s.quality);
+  const steps = stepsForSettings(def.engine, s);
   const seedList = seeds(s, ctx);
   const jobs: JobRequest[] = [];
   const recipe = ctx.recipe === true ? s : ctx.recipe;
@@ -707,6 +723,8 @@ export function buildJobs(
   if (id === 'direct' && !(manual ?? s.prompt.trim()))
     return { jobs: [], error: 'Describe the scene' };
   const common = (f: Record<string, string>, seed: number) => {
+    // Only the fast model is named: H3 is the engine's default, so its jobs run on engines from before --model.
+    if (s.reshootModel === 'fast') put(f, 'model', 'fast');
     put(f, 'duration', Math.min(MAX_DURATION, Math.max(MIN_DURATION, s.duration)));
     put(f, 'steps', steps);
     put(f, 'seed', seed);
@@ -783,7 +801,7 @@ export function planFor(
 ): Plan {
   const def = intentById(id);
   const inputs = classify(paths);
-  const steps = stepsFor(def.engine, s.quality);
+  const steps = stepsForSettings(def.engine, s);
   const first = inputs.images[0] || inputs.videos[0] || inputs.audios[0] || '';
   const built = buildJobs(id, s, paths, { random: () => 0.5 });
   const jobCount = built.jobs.length;

@@ -15,11 +15,27 @@ import (
 
 // --- reshoot (loki-reshoot) ---
 //
-// Wraps the standalone `loki-reshoot` CLI (MiniMax H3): reference images,
+// Wraps the standalone `loki-reshoot` CLI (MiniMax H3, or the distilled
+// 8-step FastH3 Omni with `model` = fast): reference images,
 // videos and audio -> one video with sound. Unlike retouch this task is NOT
 // per-file: every input of the job (plus the `refs` option) becomes one
 // reference of a single generation, producing ONE `<first>_reshoot.mp4`
 // beside the first input (or in the workflow temp dir when chained).
+
+// Models loki-reshoot can run (`--model`). h3 is the original MiniMax H3
+// ref2va (20 steps); fast is FastH3 Omni, distilled for exactly 8 steps.
+const (
+	reshootModelH3   = "h3"
+	reshootModelFast = "fast"
+)
+
+// reshootDefaultSteps is the step count a model runs when none is given.
+func reshootDefaultSteps(model string) int {
+	if model == reshootModelFast {
+		return 8
+	}
+	return 20
+}
 
 // CLI limits on references per kind.
 const (
@@ -37,7 +53,8 @@ var reshootOptions = []TaskOption{
 	{Name: "size", Label: "Size", Type: "string", Default: "", Description: "Output size WxH (multiples of 32); empty = native / megapixels"},
 	{Name: "native", Label: "Native Canvas", Type: "bool", Default: true, Description: "Snap to the model's native canvas for the first reference's aspect (ignored when Size is set)"},
 	{Name: "megapixels", Label: "Megapixels", Type: "number", Default: 0.4, Description: "Pixel budget when Native is off and no Size is given"},
-	{Name: "steps", Label: "Steps", Type: "number", Default: 20.0, Description: "Sampling steps (4-60)"},
+	{Name: "model", Label: "Model", Type: "enum", Choices: []string{reshootModelH3, reshootModelFast}, Default: reshootModelH3, Description: "h3 = MiniMax H3 (best quality, 20 steps); fast = FastH3 Omni, distilled for 8 steps: about 2.5x faster end to end (4-5x faster sampling), may be lower quality (needs the fasth3-omni dependency besides MiniMax H3's)"},
+	{Name: "steps", Label: "Steps", Type: "number", Default: 0.0, Description: "Sampling steps (4-60); 0 = the model's default (20 for h3, 8 for fast)"},
 	{Name: "seed", Label: "Seed", Type: "number", Default: -1.0, Description: "Noise seed; -1 = random (logged)"},
 	{Name: "refsize", Label: "Reference Image Size", Type: "enum", Choices: []string{"match", "max"}, Default: "match", Description: "match = scaled to the generation's area; max = up to 2048px (better identity, much slower)"},
 	{Name: "noaudio", Label: "No Audio", Type: "bool", Default: false, Description: "Do not generate/mux audio"},
@@ -47,6 +64,7 @@ var reshootOptions = []TaskOption{
 }
 
 type reshootParams struct {
+	Model        string // reshootModelH3 | reshootModelFast
 	Animate      bool
 	Describe     string
 	Shake        string
@@ -69,6 +87,7 @@ type reshootParams struct {
 
 func reshootParamsFromOptions(opts map[string]any) reshootParams {
 	p := reshootParams{
+		Model:        strings.ToLower(strings.TrimSpace(optString(opts, "model"))),
 		Animate:      optBool(opts, "animate"),
 		Describe:     strings.TrimSpace(optString(opts, "describe")),
 		Shake:        strings.ToLower(strings.TrimSpace(optString(opts, "shake"))),
@@ -90,6 +109,9 @@ func reshootParamsFromOptions(opts map[string]any) reshootParams {
 	default:
 		p.Shake = "subtle"
 	}
+	if p.Model != reshootModelFast {
+		p.Model = reshootModelH3
+	}
 	if p.RefSize != "max" {
 		p.RefSize = "match"
 	}
@@ -106,7 +128,7 @@ func reshootParamsFromOptions(opts map[string]any) reshootParams {
 	}
 	steps := int(optFloat(opts, "steps"))
 	if steps == 0 {
-		steps = 20
+		steps = reshootDefaultSteps(p.Model)
 	}
 	p.Steps = clampInt(steps, 4, 60)
 	p.Seed = -1
@@ -159,6 +181,11 @@ func capReshootInputs(images, videos, audios []string) (imgs, vids, auds, droppe
 // `--flag=value` form; promptFile (non-empty) replaces the inline prompt.
 func buildReshootArgs(p reshootParams, images, videos, audios []string, output, promptFile string) []string {
 	var args []string
+	// h3 is the engine's default: its args stay exactly what engines from
+	// before --model accept.
+	if p.Model == reshootModelFast {
+		args = append(args, "--model", reshootModelFast)
+	}
 	imgs := images
 	if p.Animate && len(imgs) > 0 {
 		args = append(args, "--animate", imgs[0])
@@ -253,9 +280,15 @@ func reshootTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 
 	p := reshootParamsFromOptions(ParseOptions(j, reshootOptions))
 
-	bin, err := resolveAITool(ctx, q, j.ID, tag, reshootTool)
+	bin, err := resolveAITool(ctx, q, j.ID, tag, reshootSpec(p.Model))
 	if err != nil {
 		return fail(err.Error(), err)
+	}
+	if p.Model == reshootModelFast {
+		if !aiToolHelpHas(ctx, bin, "--model") {
+			return fail("this loki-reshoot is too old for the fast model (FastH3 Omni); update it (Dependencies page, or your own build on PATH) or use the H3 model", nil)
+		}
+		q.PushJobStdout(j.ID, fmt.Sprintf("%s: model FastH3 Omni, %d steps", tag, p.Steps))
 	}
 
 	res, rerr := resolveJobItemsRaw(j, q)

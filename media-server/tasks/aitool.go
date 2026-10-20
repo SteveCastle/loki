@@ -21,12 +21,33 @@ import (
 type aiToolSpec struct {
 	Bin   string // executable name, also the "tool" dependency id
 	Model string // model dependency id
+	// Extra are further model dependencies a run needs on top of Model (a
+	// second model that shares Model's encoders / VAEs). All of them are
+	// installed on demand and searched through LOKI_MODELS, in this order.
+	Extra []string
+}
+
+// modelIDs is every model dependency of the spec: Model first, then Extra.
+func (s aiToolSpec) modelIDs() []string {
+	return append([]string{s.Model}, s.Extra...)
 }
 
 var (
 	retouchTool = aiToolSpec{Bin: "loki-retouch", Model: "qwen-image-2.1"}
 	reshootTool = aiToolSpec{Bin: "loki-reshoot", Model: "minimax-h3-ref2va"}
 )
+
+// reshootSpec is the engine spec for a reshoot model: the fast model
+// (FastH3 Omni) adds its own diffusion model to MiniMax H3's text encoder
+// and VAEs, so it needs both dependencies.
+func reshootSpec(model string) aiToolSpec {
+	if model == reshootModelFast {
+		s := reshootTool
+		s.Extra = []string{"fasth3-omni"}
+		return s
+	}
+	return reshootTool
+}
 
 // installAIDep installs a dependency on demand; a variable so tests never touch the network.
 var installAIDep = installDep
@@ -49,8 +70,9 @@ type aiToolRun struct {
 //     Dependencies page and setup wizard can pre-fetch both so a first job does
 //     not wait.
 //
-// Whenever the model dependency is installed, LOKI_MODELS points at it so the
-// engine and the Dependencies page share one copy of the weights.
+// Whenever the model dependencies are installed, LOKI_MODELS lists their
+// folders so the engine and the Dependencies page share one copy of the
+// weights.
 func resolveAITool(ctx context.Context, q *jobqueue.Queue, jobID, tag string, spec aiToolSpec) (aiToolRun, error) {
 	run := aiToolRun{}
 	logf := func(format string, a ...any) { q.PushJobStdout(jobID, tag+": "+fmt.Sprintf(format, a...)) }
@@ -74,10 +96,13 @@ func resolveAITool(ctx context.Context, q *jobqueue.Queue, jobID, tag string, sp
 		}
 		run.Bin = p
 
-		if !dirHasModel(spec.Model) {
-			m, _ := models.Lookup(spec.Model)
+		for _, id := range spec.modelIDs() {
+			if dirHasModel(id) {
+				continue
+			}
+			m, _ := models.Lookup(id)
 			logf("downloading the %s model files (%.0f GB, one-time; resumable, also available on the Dependencies page)", m.Name, float64(m.EffectiveSizeBytes())/1e9)
-			if ierr := installAIDep(ctx, logf, spec.Model); ierr != nil {
+			if ierr := installAIDep(ctx, logf, id); ierr != nil {
 				return run, fmt.Errorf("could not install %s: %w", m.Name, ierr)
 			}
 		}
@@ -90,9 +115,16 @@ func resolveAITool(ctx context.Context, q *jobqueue.Queue, jobID, tag string, sp
 // aiToolEnv is the extra environment every engine run gets.
 func aiToolEnv(spec aiToolSpec) []string {
 	var env []string
-	// Share the dependency-managed weights with the engine when present.
-	if dir := models.ModelDir(spec.Model); dirHasModel(spec.Model) {
-		env = append(env, "LOKI_MODELS="+dir)
+	// Share the dependency-managed weights with the engine when present: an
+	// OS path list of every installed model folder, searched in order.
+	var dirs []string
+	for _, id := range spec.modelIDs() {
+		if dirHasModel(id) {
+			dirs = append(dirs, models.ModelDir(id))
+		}
+	}
+	if len(dirs) > 0 {
+		env = append(env, "LOKI_MODELS="+strings.Join(dirs, string(os.PathListSeparator)))
 	}
 	// The server bundles ffmpeg/ffprobe; hand them to engines that need them.
 	if ff := deps.BundledOrEmpty("ffmpeg"); ff != "" {
@@ -143,11 +175,11 @@ func installDep(ctx context.Context, logf func(string, ...any), id string) error
 	return nil
 }
 
-// metaSupport caches whether an engine binary accepts --meta, keyed by path
-// plus size and mtime so a rebuilt or updated engine is probed again.
+// helpCache caches engines' --help text, keyed by path plus size and mtime
+// so a rebuilt or updated engine is probed again.
 var (
-	metaSupportMu sync.Mutex
-	metaSupport   = map[string]bool{}
+	helpCacheMu sync.Mutex
+	helpCache   = map[string]string{}
 )
 
 // probeAIToolHelp returns an engine's --help text; a variable so tests never
@@ -166,25 +198,50 @@ var probeAIToolHelp = func(ctx context.Context, tool aiToolRun) (string, error) 
 // caller's recipe into its generation record). Engines built before it
 // reject unknown flags, so the flag is only passed when --help lists it.
 func aiToolSupportsMeta(ctx context.Context, tool aiToolRun) bool {
+	return aiToolHelpHas(ctx, tool, "--meta")
+}
+
+// aiToolHelpHas reports whether the engine's --help lists flag (engines
+// reject flags they do not know, so newer ones are only passed when listed).
+// A failed probe reports false and is not cached, so it is retried next job.
+func aiToolHelpHas(ctx context.Context, tool aiToolRun, flag string) bool {
 	key := tool.Bin
 	if st, err := os.Stat(tool.Bin); err == nil {
 		key = fmt.Sprintf("%s|%d|%d", tool.Bin, st.Size(), st.ModTime().UnixNano())
 	}
-	metaSupportMu.Lock()
-	ok, known := metaSupport[key]
-	metaSupportMu.Unlock()
-	if known {
-		return ok
+	helpCacheMu.Lock()
+	help, known := helpCache[key]
+	helpCacheMu.Unlock()
+	if !known {
+		var err error
+		if help, err = probeAIToolHelp(ctx, tool); err != nil {
+			return false
+		}
+		helpCacheMu.Lock()
+		helpCache[key] = help
+		helpCacheMu.Unlock()
 	}
-	help, err := probeAIToolHelp(ctx, tool)
-	if err != nil {
-		return false // not cached: a failed probe is retried next job
+	return helpListsFlag(help, flag)
+}
+
+// helpListsFlag reports whether help mentions flag as a whole option name
+// (so "--model" does not match "--models-dir").
+func helpListsFlag(help, flag string) bool {
+	for i := 0; ; {
+		k := strings.Index(help[i:], flag)
+		if k < 0 {
+			return false
+		}
+		end := i + k + len(flag)
+		if end == len(help) {
+			return true
+		}
+		c := help[end]
+		if !(c == '-' || c == '_' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9') {
+			return true
+		}
+		i = end
 	}
-	ok = strings.Contains(help, "--meta")
-	metaSupportMu.Lock()
-	metaSupport[key] = ok
-	metaSupportMu.Unlock()
-	return ok
 }
 
 // prepareMeta readies a task's recipe for the engine: it is dropped (with a

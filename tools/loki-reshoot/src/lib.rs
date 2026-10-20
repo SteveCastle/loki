@@ -18,6 +18,7 @@ pub mod sampler;
 pub mod te_h3;
 pub mod vae_audio;
 pub mod vae_video;
+pub mod vsa;
 
 /// Progress/diagnostic output (stderr), silenced by `--quiet`. Results go to stdout, never through this.
 pub mod log {

@@ -78,6 +78,13 @@ describe('rebuilding a task from a stamped recipe', () => {
     expect(task.settings).not.toHaveProperty('evil');
   });
 
+  test('the video model is restored from a recipe; an unknown one falls back to H3', () => {
+    const rec = (reshootModel: unknown) => taskFromRecord(recordWith({ kind: 'loki-transform', v: 1, intent: 'alive', settings: { describe: 'a dog', reshootModel } }, 'loki-reshoot'))!;
+    expect(rec('fast').settings.reshootModel).toBe('fast');
+    expect(rec('turbo').settings.reshootModel).toBe('h3');
+    expect(rec(undefined).settings.reshootModel).toBe('h3');
+  });
+
   test('a recipe for an intent this version does not know falls back to the engine fields', () => {
     const rec = { ...recordWith({ kind: 'loki-transform', v: 9, intent: 'teleport', settings: {} }), args: ['--preset', 'restore', 'in.png'], preset: 'restore', steps: 25 };
     expect(taskFromRecord(rec)).toMatchObject({ intent: 'restore', approximate: true });
@@ -126,6 +133,17 @@ describe('rebuilding from an older record (no recipe)', () => {
     expect(taskFromRecord(null)).toBeNull();
     expect(taskFromRecord({ loki: 1, tool: 'loki-something' })).toBeNull();
     expect(taskFromRecord(retouch({ args: [IMG], prompt: '' }))).toBeNull(); // an edit needs its prompt
+  });
+
+  test('reshoot on the fast model: from model_id or --model, without a quality guessed from its 8 steps', () => {
+    const base = { loki: 1, tool: 'loki-reshoot', steps: 8, seed: 3, seconds: 5.208, audio: true, prompt: 'She dances', inputs: [{ tag: '<Picture 1>', path: IMG }] };
+    const byId = taskFromRecord({ ...base, model: 'FastH3 Omni', model_id: 'fast', args: ['--model', 'fast', '--prompt=She dances', '-i', IMG] })!;
+    expect(byId.settings).toMatchObject({ reshootModel: 'fast', quality: 'balanced' });
+    expect(buildJobs('direct', byId.settings, [IMG]).jobs[0].fields).toMatchObject({ model: 'fast', steps: '8' });
+    expect(taskFromRecord({ ...base, args: ['--model=fast', '--prompt=She dances', '-i', IMG] })!.settings.reshootModel).toBe('fast');
+    // An H3 record (or one from before the model field): H3, quality from the steps as before.
+    const h3 = taskFromRecord({ ...base, steps: 12, model: 'MiniMax H3', model_id: 'h3', args: ['--prompt=She dances', '-i', IMG] })!;
+    expect(h3.settings).toMatchObject({ reshootModel: 'h3', quality: 'draft' });
   });
 
   test('quality from steps', () => {

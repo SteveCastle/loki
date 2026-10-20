@@ -23,6 +23,29 @@ enum ShakeArg {
     Handheld,
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
+enum ModelArg {
+    /// MiniMax H3 ref2va: the original model, best quality (20 steps, res_multistep)
+    H3,
+    /// FastH3 Omni: FastVideo's 8-step distilled finetune of H3 with sparse attention, ~4-5x faster sampling, may lose some quality
+    Fast,
+}
+
+impl ModelArg {
+    fn default_steps(self) -> usize {
+        match self {
+            ModelArg::H3 => 20,
+            ModelArg::Fast => 8,
+        }
+    }
+    fn name(self) -> &'static str {
+        match self {
+            ModelArg::H3 => "MiniMax H3",
+            ModelArg::Fast => "FastH3 Omni",
+        }
+    }
+}
+
 #[derive(Copy, Clone, Debug, ValueEnum)]
 enum FitArg {
     Auto,
@@ -54,7 +77,10 @@ COMPOSING (loki- toolkit conventions, shared with loki-retouch)
     loki-retouch --preset restore -o - old.jpg | loki-reshoot --animate - -d 5 -o - | ffmpeg -i - -vf scale=720:-2 small.mp4
 
 MODELS
-  Looked up next to the binary, in ./models, $LOKI_MODELS; missing ones are downloaded from Hugging Face (~42 GB).
+  --model h3 (default): MiniMax H3, 20 steps. --model fast: FastH3 Omni, an 8-step distilled finetune run with Video Sparse
+  Attention: ~4-5x faster sampling, ~2.5x end to end at 1024x768 / 5 s (quality may be a little lower; --dense-attention). Both share the text encoder and VAEs; fast only adds its own diffusion model (22 GB).
+  Looked up next to the binary, in ./models, $LOKI_MODELS (a path list); missing ones are downloaded from Hugging Face
+  (~42 GB for h3, +22 GB for fast).
 
 ",
         include_str!("../docs/PROMPT_CHEATSHEET.txt")
@@ -138,9 +164,17 @@ struct Cli {
     /// Pixel budget for the default size, in megapixels.
     #[arg(long, default_value_t = 0.4)]
     megapixels: f64,
-    /// Sampling steps (res_multistep, `simple` schedule, shift 12).
-    #[arg(long, default_value_t = 20)]
-    steps: usize,
+    /// Which diffusion model generates: `h3` (original, best quality) or `fast` (FastH3 Omni, 8 steps + sparse attention, ~4-5x faster sampling).
+    #[arg(long, value_enum, default_value_t = ModelArg::H3)]
+    model: ModelArg,
+    /// With --model fast: full attention instead of Video Sparse Attention (VSA, the default for FastH3: each query attends
+    /// its 10% most relevant video cubes plus all text/reference/audio tokens, ~1.5-2x faster per step).
+    #[arg(long)]
+    dense_attention: bool,
+    /// Sampling steps (`simple` schedule, shift 12). Default 20 for h3 (res_multistep), 8 for fast (Euler; it is distilled
+    /// for exactly 8).
+    #[arg(long)]
+    steps: Option<usize>,
     /// Noise seed (default: random, printed).
     #[arg(long)]
     seed: Option<u64>,
@@ -154,7 +188,8 @@ struct Cli {
     /// x264 CRF of the output.
     #[arg(long, default_value_t = 18)]
     crf: u32,
-    /// Diffusion model file. Default: auto-discover (or download).
+    /// Diffusion model file (overrides --model's file; a FastH3 file is recognised and sampled as such). Default: auto-discover
+    /// (or download).
     #[arg(long)]
     dit: Option<PathBuf>,
     /// Qwen3-VL text encoder file.
@@ -353,7 +388,7 @@ fn run() -> Result<()> {
         width,
         height,
         frames,
-        steps: cli.steps,
+        steps: cli.steps.unwrap_or(cli.model.default_steps()),
         seed,
         ref_image_size: match cli.ref_image_size {
             RefSize::Match => RefImageSize::Match,
@@ -362,6 +397,7 @@ fn run() -> Result<()> {
         fit_first: if cli.native { Some(fit_resolved) } else { None },
         video_audio: !cli.no_video_audio,
         no_audio: cli.no_audio,
+        sparse: !cli.dense_attention,
         crf: cli.crf,
         out,
     };
@@ -372,7 +408,7 @@ fn run() -> Result<()> {
     record.set("meta", meta);
 
     let paths = Paths {
-        dit: models::resolve(cli.dit.clone(), &models::DIT)?,
+        dit: models::resolve(cli.dit.clone(), if cli.model == ModelArg::Fast { &models::FAST_DIT } else { &models::DIT })?,
         text_encoder: models::resolve(cli.text_encoder.clone(), &models::TEXT_ENCODER)?,
         video_vae: models::resolve(cli.video_vae.clone(), &models::VIDEO_VAE)?,
         audio_vae: models::resolve(cli.audio_vae.clone(), &models::AUDIO_VAE)?,
@@ -434,8 +470,10 @@ fn generation_record(cli: &Cli, req: &Request, frame_count: usize, fit: Fit, ff:
         }
         inputs.push(v);
     }
-    let mut rec = genmeta::Record::new("loki-reshoot", env!("CARGO_PKG_VERSION"), "MiniMax H3");
-    rec.set("prompt", req.prompt.clone())
+    let mut rec = genmeta::Record::new("loki-reshoot", env!("CARGO_PKG_VERSION"), cli.model.name());
+    rec.set("model_id", format!("{:?}", cli.model).to_lowercase())
+        .set("attention", if cli.model == ModelArg::Fast { Some(if req.sparse { "vsa" } else { "dense" }) } else { None })
+        .set("prompt", req.prompt.clone())
         .set("seed", req.seed)
         .set("steps", req.steps)
         .set("width", req.width)

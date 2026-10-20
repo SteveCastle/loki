@@ -144,8 +144,11 @@ func engineModelsDir(m models.Model) string {
 	}
 	base := filepath.Dir(exe)
 	dirs := []string{base, filepath.Join(base, "models")}
-	if d := os.Getenv("LOKI_MODELS"); d != "" {
-		dirs = append(dirs, d)
+	// LOKI_MODELS is an OS path list, searched in order (like the engines do).
+	for _, d := range filepath.SplitList(os.Getenv("LOKI_MODELS")) {
+		if d != "" {
+			dirs = append(dirs, d)
+		}
 	}
 	files := m.EffectiveFiles()
 	for _, d := range dirs {

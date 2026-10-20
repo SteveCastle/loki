@@ -3,6 +3,8 @@
 //! bidirectional attention over the packed [text | refs | audio | video] sequence.
 //!
 //! Port of ComfyUI `comfy/ldm/minimax/model.py` (MiniMaxH3Model.forward incl. the audio-carry conversion).
+//! Also runs FastH3 Omni (FastVideo's 8-step distilled finetune): same blocks, an int8 token refiner, a PDD bank of
+//! output heads (see `PddHeads`) and Video Sparse Attention (`crate::vsa`, with its `to_gate_compress` coarse gates).
 //!
 //! Per block and forward:
 //!   phase 1 (row chunks of `chunk` rows): RMSNorm+adaLN+ConvRot int8 quant -> K|V int8 GEMM -> fused k RMSNorm +
@@ -20,6 +22,7 @@ use crate::cuda::{Arg, Device, Profiler};
 use crate::ops::{self, AttnArgs, AttnView, Epi, QuantAct};
 use crate::safetensors::SafeTensors;
 use crate::tensor::{bf16_bits, DType, Tensor};
+use crate::vsa::{self, VsaRun};
 use crate::weights::{Loader, QLinear};
 use anyhow::{ensure, Context, Result};
 use cudarc::driver::PushKernelArg;
@@ -118,6 +121,12 @@ pub struct Dit {
     vout_b: Tensor,
     aout_w: Tensor,
     aout_b: Tensor,
+    /// FastH3 PDD head bank; vout_*/aout_* then hold the per-step blend
+    pdd: Option<PddHeads>,
+    /// VSA enabled (gates loaded): steps at sigma <= this run sparse
+    vsa_max_sigma: Option<f32>,
+    /// VSA coarse-branch gates (to_gate_compress), streamed per layer
+    gates: Option<GateStream>,
     vproj_wt: Tensor, // f32 [96, 5376] (transposed)
     vproj_b: Tensor,
     aproj_wt: Tensor, // f32 [32, 5376]
@@ -125,6 +134,151 @@ pub struct Dit {
     t_table: Vec<f32>, // [1025, 8]
     inv_freq: Vec<f32>,
     pub path: PathBuf,
+}
+
+/// FastH3 PDD output heads (host f32): `n` stacked heads per stream, block 0 a full head and blocks 1.. offsets from it.
+/// A step uses the dt-weighted mean of the heads its sigma interval spans (ComfyUI `FinalLayer.forward` / `_pdd_head`).
+struct PddHeads {
+    n: usize,
+    video_w: Vec<f32>,
+    video_b: Vec<f32>,
+    audio_w: Vec<f32>,
+    audio_b: Vec<f32>,
+}
+
+/// Head interval [start, stop) of an `n`-head PDD bank for the step at `sigma` of the schedule `sigmas`: the step's sigma
+/// interval mapped back to the unshifted [1, 0] grid.
+pub fn pdd_span(n: usize, sigmas: &[f64], sigma: f64, shift: f64) -> (usize, usize) {
+    let i = (0..sigmas.len()).min_by(|&a, &b| (sigmas[a] - sigma).abs().total_cmp(&(sigmas[b] - sigma).abs())).unwrap_or(0);
+    let next = sigmas[(i + 1).min(sigmas.len() - 1)];
+    let at = |s: f64| ((1.0 - s / (shift + s * (1.0 - shift))) * n as f64).round_ties_even() as usize;
+    let start = at(sigma).min(n - 1);
+    (start, at(next).max(start + 1))
+}
+
+/// Blend weights of heads start..stop: their dt on the `flow_shift`-shifted grid, normalized.
+pub fn pdd_weights(n: usize, start: usize, stop: usize, flow_shift: f64) -> Vec<f64> {
+    let sig = |k: usize| {
+        let g = 1.0 - k as f64 / n as f64;
+        1.0 - flow_shift * g / (1.0 + (flow_shift - 1.0) * g)
+    };
+    let dt: Vec<f64> = (start..stop).map(|k| sig(k + 1) - sig(k)).collect();
+    let sum: f64 = dt.iter().sum();
+    dt.iter().map(|d| d / sum).collect()
+}
+
+/// head0 + sum_j w_j * offset_j over the interval (offset_0 is zero) for one stream: rows x k weight and rows bias.
+fn pdd_blend(w: &[f32], b: &[f32], rows: usize, k: usize, start: usize, wts: &[f64]) -> (Vec<f32>, Vec<f32>) {
+    let (mut ow, mut ob) = (w[..rows * k].to_vec(), b[..rows].to_vec());
+    for (j, &c) in (start..start + wts.len()).zip(wts) {
+        if j == 0 {
+            continue;
+        }
+        let c = c as f32;
+        for (o, x) in ow.iter_mut().zip(&w[j * rows * k..(j + 1) * rows * k]) {
+            *o += c * x;
+        }
+        for (o, x) in ob.iter_mut().zip(&b[j * rows..(j + 1) * rows]) {
+            *o += c * x;
+        }
+    }
+    (ow, ob)
+}
+
+/// FastH3's VSA gates (to_gate_compress, int8 7168 x 5376 = 38.5 MB per layer, 1.9 GB in all) stay in pinned host memory
+/// and are copied into one of two device slots on a separate stream while the layer's first phase runs, keeping the
+/// VRAM for the run (otherwise fc1 layers get evicted and the GEMM chunks halve).
+struct GateStream {
+    host: usize, // pinned, LAYERS x INNER x HIDDEN int8
+    scales: Vec<Tensor>,
+    slots: [Tensor; 2],
+    copy: Arc<cudarc::driver::CudaStream>,
+    ready: [usize; 2], // CUevent
+    free: [usize; 2],
+}
+
+impl GateStream {
+    const BYTES: usize = INNER * HIDDEN;
+
+    fn new(dev: &Arc<Device>, st: &SafeTensors) -> Result<GateStream> {
+        use cudarc::driver::sys;
+        let mut scales = Vec::with_capacity(LAYERS);
+        for i in 0..LAYERS {
+            let m: serde_json::Value = serde_json::from_slice(st.bytes(&format!("blocks.{i}.attn.to_gate_compress.comfy_quant"))?)?;
+            ensure!(m["format"] == "int8_tensorwise" && m["convrot"] == true && m["convrot_groupsize"] == 256, "blocks.{i}.attn.to_gate_compress: unsupported quant format {m}");
+            ensure!(st.bytes(&format!("blocks.{i}.attn.to_gate_compress.weight"))?.len() == Self::BYTES, "blocks.{i}.attn.to_gate_compress: unexpected size");
+            scales.push(Tensor::from_buf(dev.upload(st.bytes(&format!("blocks.{i}.attn.to_gate_compress.weight_scale"))?)?, DType::F32, &[INNER]));
+        }
+        let mut host: *mut std::ffi::c_void = std::ptr::null_mut();
+        unsafe {
+            let r = sys::cuMemHostAlloc(&mut host, LAYERS * Self::BYTES, sys::CU_MEMHOSTALLOC_WRITECOMBINED);
+            ensure!(r == sys::CUresult::CUDA_SUCCESS, "allocating {} MB of pinned host memory for the VSA gates: {r:?}", (LAYERS * Self::BYTES) >> 20);
+        }
+        for i in 0..LAYERS {
+            let src = st.bytes(&format!("blocks.{i}.attn.to_gate_compress.weight"))?;
+            unsafe { std::ptr::copy_nonoverlapping(src.as_ptr(), (host as *mut u8).add(i * Self::BYTES), Self::BYTES) };
+        }
+        let mk_event = || -> Result<usize> {
+            let mut e: sys::CUevent = std::ptr::null_mut();
+            let r = unsafe { sys::cuEventCreate(&mut e, sys::CUevent_flags::CU_EVENT_DISABLE_TIMING as u32) };
+            ensure!(r == sys::CUresult::CUDA_SUCCESS, "cuEventCreate: {r:?}");
+            Ok(e as usize)
+        };
+        Ok(GateStream {
+            host: host as usize,
+            scales,
+            slots: [Tensor::new(dev, DType::I8, &[INNER, HIDDEN])?, Tensor::new(dev, DType::I8, &[INNER, HIDDEN])?],
+            copy: dev.ctx.new_stream()?,
+            ready: [mk_event()?, mk_event()?],
+            free: [mk_event()?, mk_event()?],
+        })
+    }
+
+    /// Queue the copy of layer `li`'s gate into its slot, after the main stream is done with the slot's previous layer.
+    fn fetch(&self, li: usize) -> Result<()> {
+        use cudarc::driver::sys;
+        let s = li % 2;
+        let cs = self.copy.cu_stream();
+        unsafe {
+            let r = sys::cuStreamWaitEvent(cs, self.free[s] as sys::CUevent, 0);
+            ensure!(r == sys::CUresult::CUDA_SUCCESS, "cuStreamWaitEvent: {r:?}");
+            let r = sys::cuMemcpyHtoDAsync_v2(self.slots[s].ptr, (self.host as *const u8).add(li * Self::BYTES) as *const _, Self::BYTES, cs);
+            ensure!(r == sys::CUresult::CUDA_SUCCESS, "cuMemcpyHtoDAsync: {r:?}");
+            let r = sys::cuEventRecord(self.ready[s] as sys::CUevent, cs);
+            ensure!(r == sys::CUresult::CUDA_SUCCESS, "cuEventRecord: {r:?}");
+        }
+        Ok(())
+    }
+
+    /// Make the main stream wait for layer `li`'s gate and return it as a linear.
+    fn acquire(&self, li: usize) -> Result<QLinear> {
+        use cudarc::driver::sys;
+        let s = li % 2;
+        let r = unsafe { sys::cuStreamWaitEvent(std::ptr::null_mut(), self.ready[s] as sys::CUevent, 0) };
+        ensure!(r == sys::CUresult::CUDA_SUCCESS, "cuStreamWaitEvent: {r:?}");
+        Ok(QLinear { w: self.slots[s].clone(), scale: self.scales[li].clone(), n: INNER, k: HIDDEN })
+    }
+
+    /// The main stream's last use of layer `li`'s slot has been queued.
+    fn release(&self, li: usize) -> Result<()> {
+        use cudarc::driver::sys;
+        let r = unsafe { sys::cuEventRecord(self.free[li % 2] as sys::CUevent, std::ptr::null_mut()) };
+        ensure!(r == sys::CUresult::CUDA_SUCCESS, "cuEventRecord: {r:?}");
+        Ok(())
+    }
+}
+
+impl Drop for GateStream {
+    fn drop(&mut self) {
+        use cudarc::driver::sys;
+        unsafe {
+            let _ = self.copy.synchronize();
+            for e in self.ready.iter().chain(&self.free) {
+                sys::cuEventDestroy_v2(*e as sys::CUevent);
+            }
+            sys::cuMemFreeHost(self.host as *mut std::ffi::c_void);
+        }
+    }
 }
 
 enum Fc1W {
@@ -174,6 +328,14 @@ pub struct Run {
     /// debug: copy x to the host after these blocks (index, data)
     pub snap_layers: Vec<usize>,
     pub snapshots: Vec<(usize, Vec<f32>)>,
+    /// the sampler's sigma schedule (needed by PDD heads to know each step's interval)
+    pub sigmas: Vec<f64>,
+    /// target video rows (lt x lh/2 x lw/2)
+    pub n_video: usize,
+    /// VSA tiling + scratch: x rows are then in tile order (video rows through `vmap`, pad rows zero)
+    pub vsa: Option<VsaRun>,
+    /// PDD head interval currently blended into the output heads
+    head_span: Option<(usize, usize)>,
 }
 
 impl Run {
@@ -444,7 +606,18 @@ fn video_grid(pos: &mut Vec<[f64; 3]>, vt: usize, frame: &[[f64; 2]], cursor: f6
 
 impl Dit {
     pub fn load(dev: Arc<Device>, path: &Path) -> Result<Dit> {
+        Dit::load_opts(dev, path, None)
+    }
+
+    /// `vsa`: run Video Sparse Attention at steps with sigma <= this (needs a FastH3 model, which ships the gates; other
+    /// models ignore it).
+    pub fn load_opts(dev: Arc<Device>, path: &Path, vsa: Option<f32>) -> Result<Dit> {
         let st = SafeTensors::open(path)?;
+        let vsa = vsa.filter(|_| st.has("blocks.0.attn.to_gate_compress.weight"));
+        if vsa.is_some() && attn_kernel().0 != "k_h3_attn_v6" {
+            crate::info!("  dit: VSA needs the default attention kernel; LOKI_ATTN is set, running dense");
+        }
+        let vsa = vsa.filter(|_| attn_kernel().0 == "k_h3_attn_v6");
         let t0 = std::time::Instant::now();
         ops::gemm_init(&dev)?;
         ops::attn_init(&dev)?;
@@ -454,6 +627,10 @@ impl Dit {
             dev.set_max_smem("k_h3_norm_mod_quant", (HIDDEN * 4) as u32)?;
         let (an, asm, _, _) = attn_kernel();
         dev.set_max_smem(an, asm)?;
+        if vsa.is_some() {
+            dev.set_max_smem("k_h3_attn_v6_sparse", ATTN_V6_SMEM)?;
+            dev.set_max_smem("k_vsa_select", 88 * 1024)?;
+        }
         dev.set_max_smem("k_h3_quant_v8", 64 * 129 * 4)?;
         // All block weights live in one exact-size allocation (the stream-ordered pool otherwise over-reserves
         // ~1.7 GB while growing, which matters at ~110k tokens).
@@ -485,7 +662,7 @@ impl Dit {
                     total += align(bytes);
                 }
                 let meta: serde_json::Value = serde_json::from_slice(st.bytes(&format!("blocks.{i}.mlp.fc1.comfy_quant"))?)?;
-                for q in ["attn.qkv_proj", "attn.out_proj", "mlp.fc1", "mlp.fc2"] {
+                for q in ["attn.qkv_proj", "attn.out_proj", "mlp.fc1", "mlp.fc2"].into_iter().chain(vsa.map(|_| "attn.to_gate_compress")) {
                     let m: serde_json::Value = serde_json::from_slice(st.bytes(&format!("blocks.{i}.{q}.comfy_quant"))?)?;
                     ensure!(m["format"] == "int8_tensorwise" && m["convrot"] == true && m["convrot_groupsize"] == 256, "blocks.{i}.{q}: unsupported quant format {m}");
                 }
@@ -560,14 +737,25 @@ impl Dit {
             (blocks, adaln_w, adaln_b, uploaded + adaln_bytes + LAYERS * FC1_BYTES)
         };
         let mut l = Loader::new(&st, dev.clone());
-        ensure!(!st.has("final_layer.video_out.weight") || st.info("final_layer.video_out.weight")?.shape[0] == 96, "PDD multi-head final layer is not supported");
         let fin_adaln_w = Tensor::from_buf(dev.upload(st.bytes("final_layer.adaln_proj.linear.weight")?)?, DType::U8, &[2 * HIDDEN * T_DIM * 2]);
         let fin_adaln_b = Tensor::from_buf(dev.upload(st.bytes("final_layer.adaln_proj.linear.bias")?)?, DType::U8, &[2 * HIDDEN * 2]);
         let fin_norm = l.bf16("final_layer.norm.weight")?;
-        let vout_w = l.f32("final_layer.video_out.weight")?;
-        let vout_b = l.f32("final_layer.video_out.bias")?;
-        let aout_w = l.f32("final_layer.audio_out.weight")?;
-        let aout_b = l.f32("final_layer.audio_out.bias")?;
+        let heads = st.info("final_layer.video_out.weight")?.shape[0];
+        ensure!(heads % 96 == 0, "unexpected final_layer.video_out rows {heads}");
+        let (vout_w, vout_b, aout_w, aout_b, pdd) = if heads == 96 {
+            (l.f32("final_layer.video_out.weight")?, l.f32("final_layer.video_out.bias")?, l.f32("final_layer.audio_out.weight")?, l.f32("final_layer.audio_out.bias")?, None)
+        } else {
+            let p = PddHeads {
+                n: heads / 96,
+                video_w: st.f32s("final_layer.video_out.weight")?,
+                video_b: st.f32s("final_layer.video_out.bias")?,
+                audio_w: st.f32s("final_layer.audio_out.weight")?,
+                audio_b: st.f32s("final_layer.audio_out.bias")?,
+            };
+            ensure!(p.audio_w.len() == p.n * 32 * HIDDEN && p.audio_b.len() == p.n * 32, "PDD audio heads do not match the video heads");
+            crate::info!("  dit: PDD output heads x{}", p.n);
+            (Tensor::new(&dev, DType::F32, &[96, HIDDEN])?, Tensor::new(&dev, DType::F32, &[96])?, Tensor::new(&dev, DType::F32, &[32, HIDDEN])?, Tensor::new(&dev, DType::F32, &[32])?, Some(p))
+        };
         let transpose = |name: &str, k: usize| -> Result<Tensor> {
             let w = st.f32s(name)?; // [N, k]
             let n = w.len() / k;
@@ -588,6 +776,13 @@ impl Dit {
         let inv_freq = st.f32s("rope.inv_freq")?;
         ensure!(inv_freq.len() == 16);
         trim_mem_pool(&dev)?;
+        let gates = match vsa {
+            Some(_) => Some(GateStream::new(&dev, &st).context("loading the VSA gates")?),
+            None => None,
+        };
+        if vsa.is_some() {
+            crate::info!("  dit: video sparse attention (VSA, {:.0}% of key tiles)", vsa::KEEP * 100.0);
+        }
         crate::info!("  dit: {:.2} GB uploaded in {:.1}s, {} MB free", (uploaded + l.uploaded) as f64 / 1e9, t0.elapsed().as_secs_f64(), dev.free_mem()? >> 20);
         Ok(Dit {
             dev,
@@ -604,6 +799,9 @@ impl Dit {
             vout_b,
             aout_w,
             aout_b,
+            pdd,
+            vsa_max_sigma: vsa,
+            gates,
             vproj_wt,
             vproj_b,
             aproj_wt,
@@ -612,6 +810,32 @@ impl Dit {
             inv_freq,
             path: path.to_path_buf(),
         })
+    }
+
+    /// Number of PDD output heads (1 for a plain model): a PDD model is a few-step distilled one.
+    pub fn pdd_heads(&self) -> usize {
+        self.pdd.as_ref().map_or(1, |p| p.n)
+    }
+
+    /// Blend the PDD heads for the step at `sigma` into the output head tensors (once per step interval).
+    fn set_pdd_heads(&self, run: &mut Run, sigma: f32) -> Result<()> {
+        let Some(p) = &self.pdd else { return Ok(()) };
+        ensure!(run.sigmas.len() >= 2, "PDD output heads need the sampler's sigma schedule (Run::sigmas)");
+        let span = pdd_span(p.n, &run.sigmas, sigma as f64, SHIFT_VIDEO as f64);
+        if run.head_span == Some(span) {
+            return Ok(());
+        }
+        let as_bytes = |v: &[f32]| -> Vec<u8> { v.iter().flat_map(|x| x.to_le_bytes()).collect() };
+        for (w, b, rows, shift, tw, tb) in [
+            (&p.video_w, &p.video_b, 96, SHIFT_VIDEO, &self.vout_w, &self.vout_b),
+            (&p.audio_w, &p.audio_b, 32, SHIFT_AUDIO, &self.aout_w, &self.aout_b),
+        ] {
+            let (hw, hb) = pdd_blend(w, b, rows, HIDDEN, span.0, &pdd_weights(p.n, span.0, span.1, shift as f64));
+            self.dev.htod_at(tw.ptr, &as_bytes(&hw))?;
+            self.dev.htod_at(tb.ptr, &as_bytes(&hb))?;
+        }
+        run.head_span = Some(span);
+        Ok(())
     }
 
     // ------------------------------------------------------------------ kernels
@@ -655,6 +879,12 @@ impl Dit {
     /// Patch-embed rows from a channel-first latent into bf16 rows at `out`.
     #[allow(clippy::too_many_arguments)]
     fn embed(&self, src: &Tensor, video: bool, t: usize, h: usize, w: usize, nrows: usize, in_scale: f32, out: u64) -> Result<()> {
+        self.embed_map(src, video, t, h, w, nrows, in_scale, out, 0)
+    }
+
+    /// `embed` with row `r` written to row `rowmap[r]` of `out` (rowmap = 0: in order).
+    #[allow(clippy::too_many_arguments)]
+    fn embed_map(&self, src: &Tensor, video: bool, t: usize, h: usize, w: usize, nrows: usize, in_scale: f32, out: u64, rowmap: u64) -> Result<()> {
         ensure!(src.dtype == DType::F32, "embed: latent must be f32");
         let (wt, b, kf) = if video { (&self.vproj_wt, &self.vproj_b, 96) } else { (&self.aproj_wt, &self.aproj_b, 32) };
         if nrows == 0 {
@@ -678,6 +908,7 @@ impl Dit {
                 Arg::I32(kf),
                 Arg::I32(HIDDEN as i32),
                 Arg::Ptr(out),
+                Arg::Ptr(rowmap),
             ],
         )
     }
@@ -707,6 +938,12 @@ impl Dit {
             m * HEADS * 32,
             &[Arg::Ptr(x), Arg::I64(ts as i64), Arg::I32(m as i32), Arg::I32(HEADS as i32), Arg::Ptr(w.ptr), Arg::F32(EPS), Arg::Ptr(rope), Arg::Ptr(mean), Arg::Ptr(q8), Arg::Ptr(scale)],
         )
+    }
+
+    /// Kernel parameters of the default (fp8 PV) attention for the current batch's queries.
+    fn attn_params(&self, run: &Run, n: usize, out: u64) -> Attn8Raw {
+        let scale_log2 = (1.0 / (HEAD_DIM as f32).sqrt()) * std::f32::consts::LOG2_E;
+        Attn8Raw { q: run.q8.ptr, sq: run.sq.ptr, k: run.k8.ptr, sk: run.sk.ptr, vt: run.vbuf.ptr, s_pad: run.s_pad as i64, sv: run.sv.ptr, mv: run.mean_v.ptr, o: out, o_ts: INNER as i64, nq: n as i32, nk: run.seq as i32, h: HEADS as i32, scale_log2 }
     }
 
     /// Attention of the current chunk's queries (run.q8 / run.sq, n rows) against the whole sequence.
@@ -748,7 +985,7 @@ impl Dit {
             let qn = ld.bf16(&format!("{p}.attn.q_norm.weight"))?;
             let kn = ld.bf16(&format!("{p}.attn.k_norm.weight"))?;
             {
-                let wqkv = ld.bf16(&format!("{p}.attn.qkv_proj.weight"))?;
+                let wqkv = ld.dense_bf16(&format!("{p}.attn.qkv_proj"))?;
                 ops::rmsnorm(dev, &x, Some(&norm1), false, EPS, &n)?;
                 ops::gemm_bf16(dev, &n, &wqkv, None, ops::Act::None, Epi::Store, &qkv)?;
             }
@@ -771,17 +1008,17 @@ impl Dit {
                 },
             )?;
             {
-                let wo = ld.bf16(&format!("{p}.attn.out_proj.weight"))?;
+                let wo = ld.dense_bf16(&format!("{p}.attn.out_proj"))?;
                 ops::gemm_bf16(dev, &attn, &wo, None, ops::Act::None, Epi::AddRes(&x), &x)?;
             }
             ops::rmsnorm(dev, &x, Some(&norm2), false, EPS, &n)?;
             {
-                let w1 = ld.bf16(&format!("{p}.mlp.fc1.weight"))?;
+                let w1 = ld.dense_bf16(&format!("{p}.mlp.fc1"))?;
                 ops::gemm_bf16(dev, &n, &w1, None, ops::Act::None, Epi::Store, &h)?;
             }
             ops::swiglu(dev, &h, &s)?;
             {
-                let w2 = ld.bf16(&format!("{p}.mlp.fc2.weight"))?;
+                let w2 = ld.dense_bf16(&format!("{p}.mlp.fc2"))?;
                 ops::gemm_bf16(dev, &s, &w2, None, ops::Act::None, Epi::AddRes(&x), &x)?;
             }
             dev.sync()?; // release this block's weights before loading the next
@@ -873,6 +1110,33 @@ impl Dit {
         let v0 = pos.len();
         video_grid(&mut pos, lt, &frame, target_cursor);
         modrow.extend(std::iter::repeat(CLS_V * 3 + TAG_VIDEO).take(pos.len() - v0));
+        let n_video = pos.len() - v0;
+
+        // ---------------- VSA: rows in tile order for the whole run (segments padded to 64-row tiles, video in cubes)
+        let plan = match self.vsa_max_sigma {
+            Some(_) if pos.len() >= vsa::MIN_TOKENS => {
+                let mut cuts: Vec<usize> = std::iter::once(0)
+                    .chain(embeds.iter().map(|e| match *e {
+                        Emb::Video { row, .. } | Emb::Audio { row, .. } => row,
+                    }))
+                    .chain([prefix, v0])
+                    .collect();
+                cuts.dedup();
+                let segs: Vec<usize> = cuts.windows(2).map(|w| w[1] - w[0]).collect();
+                Some(vsa::Plan::new(&segs, lt, lh / 2, lw / 2))
+            }
+            _ => None,
+        };
+        // (rows copied from prefix_x, target audio start, target video start) in run rows
+        let (prefix_rows, a0, v0_run) = match &plan {
+            Some(p) => {
+                let dummy = CLS_V * 3 + TAG_VIDEO;
+                pos = p.src.iter().map(|&r| if r >= 0 { pos[r as usize] } else { [0.0; 3] }).collect();
+                modrow = p.src.iter().map(|&r| if r >= 0 { modrow[r as usize] } else { dummy }).collect();
+                (p.inv[a0] as usize, p.inv[a0] as usize, p.sink_tiles * vsa::TILE)
+            }
+            None => (prefix, a0, v0),
+        };
         let seq = pos.len();
         let s_pad = (seq + 255) / 256 * 256;
 
@@ -893,7 +1157,7 @@ impl Dit {
         let modrow_t = Tensor::from_buf(dev.upload(&modrow)?, DType::F32, &[seq]);
 
         // ---------------- prefix rows: refined text + reference embeddings
-        let prefix_x = Tensor::new(dev, DType::BF16, &[prefix.max(1), HIDDEN])?;
+        let mut prefix_x = Tensor::new(dev, DType::BF16, &[prefix.max(1), HIDDEN])?;
         let text_states = self.refine_text(inp.text).context("token refiner")?;
         dev.dtod(prefix_x.ptr, text_states.ptr, l * HIDDEN * 2)?;
         drop(text_states);
@@ -934,6 +1198,16 @@ impl Dit {
                 }
             }
         }
+        if let Some(p) = &plan {
+            // into tile order, pad rows zero
+            let tiled = Tensor::zeros(dev, DType::BF16, &[prefix_rows.max(1), HIDDEN])?;
+            if prefix > 0 {
+                let map = Tensor::from_buf(dev.upload(&p.inv[..prefix])?, DType::F32, &[prefix]);
+                dev.launch_n("k_vsa_scatter_rows_bf16", prefix * HIDDEN / 8, &[Arg::Ptr(prefix_x.ptr), Arg::I32(prefix as i32), Arg::I32(HIDDEN as i32), Arg::Ptr(map.ptr), Arg::Ptr(tiled.ptr)])?;
+                dev.sync()?;
+            }
+            prefix_x = tiled;
+        }
 
         // ---------------- buffers
         let x = Tensor::new(dev, DType::BF16, &[seq, HIDDEN])?;
@@ -950,8 +1224,12 @@ impl Dit {
         // Scratch sizes from the free memory: GEMM/MLP chunk rows `chunk` (big + xq: ~43 KB/row) and the attention
         // query batch `abatch` (Q8 + scales + bf16 output: ~22 KB/row), abatch a multiple of chunk, both multiples of 256.
         let per_c = 2 * INNER * 2 + FFN + 4;
-        let per_a = INNER + 4 * HEADS + INNER * 2;
-        let margin = 160usize << 20;
+        // VSA adds the gate rows (bf16) to the attention batch, and per-tile means / tile lists
+        let per_a = INNER + 4 * HEADS + INNER * 2 + if plan.is_some() { INNER * 2 + 2 * INNER * 4 / 64 } else { 0 };
+        // VRAM left free for the driver and other applications: with less, Windows silently backs device memory with
+        // system RAM (sysmem fallback) and attention runs 1.5-3x slower; evicting a few more fc1 layers costs ms per step.
+        let headroom = std::env::var("LOKI_VRAM_MARGIN_MB").ok().and_then(|v| v.parse::<usize>().ok()).unwrap_or(640) << 20;
+        let margin = headroom + plan.as_ref().map_or(0, |p| p.tiles() * INNER * 8 + 32 * HEADS * p.tiles() * 4);
         let fc1_stage = self.balance_fc1(8192 * per_a + 4096 * per_c + margin)?;
         trim_mem_pool(dev)?;
         let free = dev.free_mem()?;
@@ -984,14 +1262,27 @@ impl Dit {
         let attn_out = Tensor::new(dev, DType::BF16, &[abatch, INNER])?;
         let xq = Tensor::new(dev, DType::I8, &[chunk, FFN])?;
         let xs = Tensor::new(dev, DType::F32, &[chunk])?;
+        let vsa = match &plan {
+            Some(p) => {
+                let v = VsaRun::new(dev, p, v0, n_video, abatch, HEADS, self.vsa_max_sigma.unwrap_or(f32::INFINITY))?;
+                crate::info!("  vsa: {} tiles ({} sink), {} key tiles per query tile, {} pad rows", v.tiles, v.sink_tiles, v.kk, v.n_dead);
+                Some(v)
+            }
+            None => {
+                if self.vsa_max_sigma.is_some() {
+                    crate::info!("  vsa: {seq} tokens < {}, dense attention", vsa::MIN_TOKENS);
+                }
+                None
+            }
+        };
         Ok(Run {
             seq,
             s_pad,
             text_len: l,
-            prefix,
+            prefix: prefix_rows,
             a0,
             audio_t: ta,
-            v0,
+            v0: v0_run,
             lt,
             lh,
             lw,
@@ -1018,6 +1309,10 @@ impl Dit {
             fc1_stage,
             snap_layers: Vec::new(),
             snapshots: Vec::new(),
+            sigmas: Vec::new(),
+            head_span: None,
+            n_video,
+            vsa,
         })
     }
 
@@ -1110,8 +1405,17 @@ impl Dit {
         pr.time(dev, "embed", || {
             dev.dtod(run.x.ptr, run.prefix_x.ptr, run.prefix * HIDDEN * 2)?;
             self.embed(x_audio, false, ta, 0, 0, 2 * ta, carry, run.x.ptr + (run.a0 * HIDDEN * 2) as u64)?;
-            self.embed(x_video, true, lt, lh, lw, lt * (lh / 2) * (lw / 2), 1.0, run.x.ptr + (run.v0 * HIDDEN * 2) as u64)
+            match &run.vsa {
+                Some(v) => {
+                    self.embed_map(x_video, true, lt, lh, lw, run.n_video, 1.0, run.x.ptr, v.vmap.ptr)?;
+                    v.zero_dead(dev, run.x.ptr, HIDDEN)
+                }
+                None => self.embed(x_video, true, lt, lh, lw, run.n_video, 1.0, run.x.ptr + (run.v0 * HIDDEN * 2) as u64),
+            }
         })?;
+        // this step's attention: VSA (fine + gated coarse branch) or dense
+        let sparse = run.vsa.as_ref().filter(|v| s_v <= v.max_sigma);
+        let attn_scale = 1.0 / (HEAD_DIM as f32).sqrt();
         if run.snap_layers.contains(&usize::MAX) {
             let v = run.x.to_f32_vec(dev)?;
             run.snapshots.push((usize::MAX, v));
@@ -1140,6 +1444,15 @@ impl Dit {
                 };
                 QLinear { w, scale: b.fc1_scale.clone(), n: 2 * FFN, k: HIDDEN }
             };
+            // VSA gate weights of this layer: copied in while phase 1 runs
+            let gate = match (sparse, &self.gates) {
+                (Some(_), Some(g)) => {
+                    g.fetch(li)?;
+                    Some(g)
+                }
+                _ => None,
+            };
+            let mut gate_w: Option<QLinear> = None;
             // this layer's adaLN rows: 4 timestep classes x 3 modality tags x (shift, scale, gate) x 2
             let modtab = run.modtab.ptr;
             pr.time(dev, "adaln tables", || {
@@ -1217,6 +1530,12 @@ impl Dit {
                         )
                     }
                 })?;
+                if let Some(v) = sparse {
+                    pr.time(dev, "vsa means", || v.v_means(dev, vp, ts_kv, r0, n, HEADS))?;
+                }
+            }
+            if let Some(v) = sparse {
+                pr.time(dev, "vsa means", || v.k_means(dev, run.k8.ptr, run.sk.ptr, seq, HEADS))?;
             }
             // phase 2, per attention batch of `abatch` rows (sub-chunks of `chunk` rows):
             //   norm1 -> Q projection -> q norm + rope + rotate + int8 -> attention over the whole sequence ->
@@ -1230,8 +1549,33 @@ impl Dit {
                     pr.time(dev, "gemm q", || self.gemm(run.xq.ptr, run.xs.ptr, n, &b.q, 0, 0, 0, 0, run.big.ptr))?;
                     let qo = ((r0 - b0) * HEADS) as u64;
                     pr.time(dev, "qk norm+rope+quant", || self.head_nrq(run.big.ptr, INNER, n, &b.q_norm, run.rope.ptr + (r0 * 96 * 2) as u64, 0, run.q8.ptr + qo * 128, run.sq.ptr + qo * 4))?;
+                    if let (Some(v), Some(g)) = (sparse, gate) {
+                        if gate_w.is_none() {
+                            gate_w = Some(g.acquire(li)?);
+                        }
+                        let w = gate_w.as_ref().unwrap();
+                        pr.time(dev, "gemm gate", || self.gemm(run.xq.ptr, run.xs.ptr, n, w, 0, 0, 0, 0, v.gate_rows(r0 - b0, INNER)))?;
+                    }
                 }
-                pr.time(dev, "attention", || self.attention(run, bn, run.attn_out.ptr))?;
+                match sparse {
+                    Some(v) => {
+                        pr.time(dev, "vsa select", || v.select(dev, run.q8.ptr, run.sq.ptr, b0, bn, HEADS, attn_scale))?;
+                        if std::env::var("LOKI_VSA_STATS").is_ok() && li % 10 == 0 {
+                            let (list, cnt) = v.lists(dev)?;
+                            let nb = bn.div_ceil(256);
+                            let (mut uni, mut per) = (0usize, 0usize);
+                            for i in 0..nb * HEADS {
+                                let n = cnt[i] as usize;
+                                uni += n;
+                                per += list[i * v.tiles..i * v.tiles + n].iter().map(|e| ((*e as u32) >> 24).count_ones() as usize).sum::<usize>();
+                            }
+                            crate::info!("  vsa stats layer {li} rows {b0}+{bn}: union {:.1} tiles/block, per query tile {:.1} of {}", uni as f64 / (nb * HEADS) as f64, per as f64 / (4 * nb * HEADS) as f64, v.tiles);
+                        }
+                        pr.time(dev, "attention", || v.attention(dev, &self.attn_params(run, bn, run.attn_out.ptr), bn, HEADS, ATTN_V6_SMEM))?;
+                        pr.time(dev, "vsa coarse", || v.add_coarse(dev, run.attn_out.ptr, bn, INNER))?;
+                    }
+                    None => pr.time(dev, "attention", || self.attention(run, bn, run.attn_out.ptr))?,
+                }
                 for r0 in (b0..b0 + bn).step_by(c) {
                     let n = c.min(b0 + bn - r0);
                     let xr = run.x.ptr + (r0 * row_bytes) as u64;
@@ -1248,6 +1592,9 @@ impl Dit {
                     pr.time(dev, "gemm fc2", || self.gemm(run.xq.ptr, run.xs.ptr, n, &b.fc2, 4, xr, modtab + (5 * HIDDEN * 4) as u64, mr, xr))?;
                 }
             }
+            if let Some(g) = gate {
+                g.release(li)?;
+            }
             if run.snap_layers.contains(&li) {
                 let v = run.x.to_f32_vec(dev)?;
                 run.snapshots.push((li, v));
@@ -1255,9 +1602,11 @@ impl Dit {
         }
 
         // ---- final layer (video rows, then audio rows), chunked through `big` as f32 scratch
+        self.set_pdd_heads(run, s_v)?;
         let coef = 1.0 + (audio_scale - 1.0) * s_a;
         pr.time(dev, "final", || {
-            for (start, rows, video) in [(run.v0, seq - run.v0, true), (run.a0, 2 * ta, false)] {
+            let vmap = run.vsa.as_ref().map_or(0, |v| v.vmap.ptr);
+            for (start, rows, video) in [(run.v0, run.n_video, true), (run.a0, 2 * ta, false)] {
                 let cls_i = if video { 0 } else { 1 };
                 let shift = run.fmod.ptr + ((cls_i * 2) * HIDDEN * 4) as u64;
                 let scale = run.fmod.ptr + ((cls_i * 2 + 1) * HIDDEN * 4) as u64;
@@ -1265,12 +1614,14 @@ impl Dit {
                 let mut r = 0;
                 while r < rows {
                     let n = fc.min(rows - r);
+                    // video rows in tile order are gathered back through the map
+                    let (src, map) = if video && vmap != 0 { (run.x.ptr, vmap + (r * 4) as u64) } else { (run.x.ptr + ((start + r) * row_bytes) as u64, 0) };
                     dev.launch(
                         "k_h3_final_mod",
                         (n as u32, 1, 1),
                         (256, 1, 1),
                         0,
-                        &[Arg::Ptr(run.x.ptr + ((start + r) * row_bytes) as u64), Arg::I32(n as i32), Arg::I32(HIDDEN as i32), Arg::Ptr(self.fin_norm.ptr), Arg::F32(EPS), Arg::Ptr(shift), Arg::Ptr(scale), Arg::Ptr(run.big.ptr)],
+                        &[Arg::Ptr(src), Arg::I32(n as i32), Arg::I32(HIDDEN as i32), Arg::Ptr(self.fin_norm.ptr), Arg::F32(EPS), Arg::Ptr(shift), Arg::Ptr(scale), Arg::Ptr(run.big.ptr), Arg::Ptr(map)],
                     )?;
                     let (w, bias, no, kind, t) = if video { (&self.vout_w, &self.vout_b, 96, 0, lt) } else { (&self.aout_w, &self.aout_b, 32, 1, ta) };
                     let (yp, alpha, beta, out) = if video { (0u64, 0.0f32, 1.0f32, out_video) } else { (x_audio.ptr, 1.0 - audio_scale, coef, out_audio) };
@@ -1287,5 +1638,47 @@ impl Dit {
             Ok(())
         })?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pdd_span_follows_the_step_grid() {
+        // FastH3: 32 heads, 8 steps on the shift-12 `simple` schedule -> each step owns 4 heads
+        let sig = crate::sampler::simple_sigmas(8, 12.0);
+        for i in 0..8 {
+            assert_eq!(pdd_span(32, &sig, sig[i], 12.0), (4 * i, 4 * i + 4), "step {i}");
+        }
+        // other step counts still tile the bank
+        let sig = crate::sampler::simple_sigmas(4, 12.0);
+        assert_eq!(pdd_span(32, &sig, sig[3], 12.0), (24, 32));
+        let sig = crate::sampler::simple_sigmas(64, 12.0);
+        let (a, b) = pdd_span(32, &sig, sig[1], 12.0);
+        assert!(b == a + 1 && a <= 1);
+    }
+
+    #[test]
+    fn pdd_weights_are_normalized_dt() {
+        let w = pdd_weights(32, 4, 8, 12.0);
+        assert_eq!(w.len(), 4);
+        assert!((w.iter().sum::<f64>() - 1.0).abs() < 1e-12);
+        // dt grows towards sigma 0 on a shift-12 grid at the high-noise end
+        assert!(w.windows(2).all(|p| p[0] < p[1]));
+        let w = pdd_weights(32, 0, 4, 1.0);
+        assert!(w.iter().all(|x| (x - 0.25).abs() < 1e-12), "unshifted grid = uniform weights");
+    }
+
+    #[test]
+    fn pdd_blend_adds_weighted_offsets_to_head0() {
+        // 3 heads of 1 row x 2: head0 = [1, 2], offsets [10, 20], [100, 200]
+        let w = [1.0, 2.0, 10.0, 20.0, 100.0, 200.0];
+        let b = [0.5, 1.0, 2.0];
+        let (hw, hb) = pdd_blend(&w, &b, 1, 2, 0, &[0.5, 0.5]); // heads 0..2: offset0 is zero
+        assert_eq!((hw, hb), (vec![6.0, 12.0], vec![1.0]));
+        let (hw, hb) = pdd_blend(&w, &b, 1, 2, 1, &[0.25, 0.75]); // heads 1..3
+        assert_eq!((hw, hb), (vec![1.0 + 2.5 + 75.0, 2.0 + 5.0 + 150.0], vec![0.5 + 0.25 + 1.5]));
     }
 }

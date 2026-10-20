@@ -18,6 +18,8 @@ import {
   retouchPreset,
   settingsFor,
   stepsFor,
+  stepsForSettings,
+  FAST_STEPS,
   tokenIssues,
   usesReferences,
 } from '../renderer/components/transform/intents';
@@ -167,6 +169,51 @@ describe('buildJobs: reshoot', () => {
   it('clamps the duration', () => {
     const s = { ...settingsFor('alive'), describe: 'x', duration: 99 };
     expect(buildJobs('alive', s, [IMG], fixed).jobs[0].fields.duration).toBe('15');
+  });
+});
+
+describe('the fast video model (FastH3 Omni)', () => {
+  const fixed = { random: () => 0.5 };
+
+  it('H3 is the default and sends no model field (old engines keep working)', () => {
+    expect(settingsFor('alive').reshootModel).toBe('h3');
+    const alive = buildJobs('alive', { ...settingsFor('alive'), describe: 'x' }, [IMG], fixed).jobs[0].fields;
+    expect(alive.model).toBeUndefined();
+    expect(alive.steps).toBe('20');
+    const direct = buildJobs('direct', { ...settingsFor('direct'), prompt: 'x', quality: 'fine' }, [IMG], fixed).jobs[0].fields;
+    expect(direct.model).toBeUndefined();
+    expect(direct.steps).toBe('32');
+  });
+
+  it('fast sends model=fast and always 8 steps, whatever the quality', () => {
+    for (const quality of ['draft', 'balanced', 'fine'] as const) {
+      const s = { ...settingsFor('direct'), prompt: 'x', quality, reshootModel: 'fast' as const };
+      expect(buildJobs('direct', s, [IMG, AUD], fixed).jobs[0].fields).toMatchObject({ model: 'fast', steps: String(FAST_STEPS) });
+    }
+    const alive = buildJobs('alive', { ...settingsFor('alive'), describe: 'x', reshootModel: 'fast' }, [IMG, IMG2], fixed);
+    expect(alive.jobs.map((j) => [j.fields.model, j.fields.steps])).toEqual([['fast', '8'], ['fast', '8']]);
+    expect(FAST_STEPS).toBe(8);
+  });
+
+  it('the model never touches image runs', () => {
+    expect(stepsForSettings('retouch', { quality: 'balanced', reshootModel: 'fast' })).toBe(25);
+    const f = buildJobs('restore', { ...settingsFor('restore'), reshootModel: 'fast' }, [IMG], fixed).jobs[0].fields;
+    expect(f.model).toBeUndefined();
+    expect(f.steps).toBe('25');
+  });
+
+  it('the plan and the time estimate follow the fast step count', () => {
+    const src = { width: 973, height: 1646 };
+    const h3 = planFor('alive', settingsFor('alive', { duration: 5 }), [IMG], src);
+    const fast = planFor('alive', settingsFor('alive', { duration: 5, reshootModel: 'fast', quality: 'fine' }), [IMG], src);
+    expect(h3.steps).toBe(20);
+    expect(fast.steps).toBe(8);
+    expect(estimateSeconds(fast)).toBeLessThan(estimateSeconds(h3) * 0.6);
+  });
+
+  it('the last-run summary names the model instead of a quality', () => {
+    expect(runSummary('alive', { ...settingsFor('alive'), describe: 'a dog', reshootModel: 'fast' })).toContain('fast model');
+    expect(runSummary('alive', { ...settingsFor('alive'), describe: 'a dog' })).toContain('balanced');
   });
 });
 

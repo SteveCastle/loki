@@ -200,6 +200,23 @@ describe('TransformFlowView', () => {
     expect(screen.getByText(/Shorter than the model was trained on/)).toBeTruthy();
   });
 
+  it('shape (video): the Model control picks the fast model, which hides Quality', () => {
+    const h3 = baseProps({ intent: 'alive', phase: 'shape', settings: { ...settingsFor('alive'), describe: 'x' } });
+    const { rerender } = render(<TransformFlowView {...h3} />);
+    expect(screen.getByRole('radiogroup', { name: 'Quality' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('radio', { name: /^Fast/ }));
+    expect(h3.onSettings).toHaveBeenCalledWith({ reshootModel: 'fast' });
+    rerender(<TransformFlowView {...baseProps({ intent: 'alive', phase: 'shape', settings: { ...settingsFor('alive'), describe: 'x', reshootModel: 'fast' } })} />);
+    expect(screen.queryByRole('radiogroup', { name: 'Quality' })).toBeNull();
+    expect(screen.getByText(/always runs 8 steps/)).toBeTruthy();
+  });
+
+  it('shape (image): no Model control', () => {
+    render(<TransformFlowView {...baseProps({ intent: 'upscale', phase: 'shape', settings: settingsFor('upscale') })} />);
+    expect(screen.queryByRole('radiogroup', { name: 'Model' })).toBeNull();
+    expect(screen.getByRole('radiogroup', { name: 'Quality' })).toBeTruthy();
+  });
+
   it('review: summarises, warns about the GPU queue and runs', () => {
     const props = baseProps({
       intent: 'upscale',
