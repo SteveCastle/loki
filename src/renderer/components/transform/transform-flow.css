@@ -35,6 +35,7 @@
 }
 
 .ts-panel {
+  position: relative; /* the expanded prompt editor covers it */
   width: min(860px, 100%);
   max-height: min(740px, calc(100vh - 48px));
   display: flex;
@@ -1553,4 +1554,92 @@
   object-fit: cover;
   border-radius: 6px;
   border: 1px solid var(--ts-hairline);
+}
+
+/* ---- expandable prompt editor ---- */
+
+.ts-xprompt-inline {
+  position: relative;
+}
+
+.ts-xprompt-inline > .ts-text {
+  padding-right: 30px; /* room for the expand toggle */
+}
+
+.ts-xprompt-toggle {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  color: var(--ts-faint);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.ts-xprompt-toggle:hover {
+  color: var(--ts-accent);
+  background: var(--ts-accent-soft);
+}
+
+.ts-xprompt-toggle:focus-visible {
+  outline: none;
+  border-color: var(--ts-accent);
+}
+
+.ts-xprompt-away {
+  display: grid;
+  place-items: center;
+  min-height: 52px;
+  color: var(--ts-faint);
+  font-size: 12px;
+  border: 1px dashed var(--ts-hairline);
+  border-radius: 5px;
+}
+
+.ts-xprompt {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px 16px;
+  background-color: var(--controls-background-color, #000);
+}
+
+.ts-xprompt-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.ts-xprompt-collapse {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+}
+
+.ts-xprompt-extra {
+  flex-shrink: 0;
+  max-height: 32%;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+.ts-text.ts-xprompt-text {
+  flex: 1;
+  min-height: 0;
+  padding: 12px 14px;
+  resize: none;
+  overflow-y: auto;
+  font-size: 14px;
+  line-height: 1.6;
+  scrollbar-width: thin;
 }

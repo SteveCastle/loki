@@ -175,6 +175,29 @@ describe('TransformFlowView', () => {
     expect(empty.onPhase).toHaveBeenCalledWith('review');
   });
 
+  it('shape (edit): the prompt expands over the panel and collapses with Esc, keeping its text', () => {
+    const props = baseProps({ intent: 'edit', phase: 'shape', settings: { ...settingsFor('edit'), prompt: 'make it night and rainy' } });
+    const { container } = render(<TransformFlowView {...props} />);
+    expect(container.ownerDocument.querySelector('.ts-xprompt')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Expand the prompt editor' }));
+    const overlay = container.ownerDocument.querySelector('.ts-xprompt') as HTMLElement;
+    expect(overlay).toBeTruthy();
+    expect(overlay.closest('.ts-panel')).toBeTruthy();
+    expect(overlay.textContent).toContain('5 words');
+    const area = overlay.querySelector('textarea') as HTMLTextAreaElement;
+    expect(area.value).toBe('make it night and rainy');
+    expect(document.activeElement).toBe(area);
+    // expanded, Enter is a newline: no phase change; Ctrl+Enter continues
+    fireEvent.keyDown(area, { key: 'Enter' });
+    expect(props.onPhase).not.toHaveBeenCalled();
+    fireEvent.keyDown(area, { key: 'Enter', ctrlKey: true });
+    expect(props.onPhase).toHaveBeenCalledWith('review');
+    fireEvent.keyDown(area, { key: 'Escape' });
+    expect(container.ownerDocument.querySelector('.ts-xprompt')).toBeNull();
+    expect(props.onClose).not.toHaveBeenCalled();
+    expect((screen.getByRole('textbox', { name: 'What should change?' }) as HTMLTextAreaElement).value).toBe('make it night and rainy');
+  });
+
   it('shape (edit): idea chips write into the prompt', () => {
     const props = baseProps({ intent: 'edit', phase: 'shape', settings: { ...settingsFor('edit'), prompt: '' } });
     render(<TransformFlowView {...props} />);

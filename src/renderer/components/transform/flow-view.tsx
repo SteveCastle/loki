@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   FAST_STEPS,
   INTENTS,
@@ -358,6 +359,127 @@ function useTokenInsert(ref: React.RefObject<HTMLTextAreaElement>, value: string
       ta?.setSelectionRange(r.caret, r.caret);
     }, 0);
   };
+}
+
+function wordCount(text: string): number {
+  const t = text.trim();
+  return t ? t.split(/\s+/).length : 0;
+}
+
+/**
+ * A prompt textarea with a toggle that expands it over the whole Transform panel for long, focused writing (the
+ * reference chips in `extra` stay usable there). Esc or the toggle collapses it. Only one textarea is mounted at a
+ * time, on `textRef`, so token insertion keeps working; focus and caret carry over. Expanded, Enter is a newline and
+ * only Ctrl/Cmd+Enter submits.
+ */
+export function ExpandablePrompt({
+  textRef,
+  value,
+  onChange,
+  label,
+  placeholder,
+  rows,
+  className = 'ts-text',
+  ariaLabel,
+  onSubmit,
+  submitOnEnter = false,
+  extra,
+}: {
+  textRef: React.RefObject<HTMLTextAreaElement>;
+  value: string;
+  onChange: (v: string) => void;
+  /** Heading of the expanded view. */
+  label: string;
+  placeholder?: string;
+  rows?: number;
+  className?: string;
+  ariaLabel?: string;
+  onSubmit?: () => void;
+  /** Collapsed: plain Enter submits (Shift+Enter is a newline). */
+  submitOnEnter?: boolean;
+  /** Shown above the text in the expanded view (e.g. the reference chips). */
+  extra?: React.ReactNode;
+}) {
+  // the panel the expanded view covers; null = collapsed
+  const [panel, setPanel] = useState<HTMLElement | null>(null);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const carry = useRef<{ start: number; end: number } | null>(null);
+
+  const toggle = (open: boolean) => {
+    const ta = textRef.current;
+    carry.current = ta ? { start: ta.selectionStart, end: ta.selectionEnd } : { start: value.length, end: value.length };
+    setPanel(open ? (wrapRef.current?.closest('.ts-panel') as HTMLElement | null) : null);
+  };
+  useEffect(() => {
+    const ta = textRef.current;
+    const c = carry.current;
+    if (!ta || !c) return;
+    carry.current = null;
+    ta.focus();
+    ta.setSelectionRange(c.start, c.end);
+  }, [panel, textRef]);
+
+  const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (panel && e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      toggle(false);
+      return;
+    }
+    if (e.key === 'Enter' && onSubmit && (e.ctrlKey || e.metaKey || (!panel && submitOnEnter && !e.shiftKey))) {
+      e.preventDefault();
+      onSubmit();
+    }
+  };
+  const area = (expanded: boolean) => (
+    <textarea
+      ref={textRef}
+      className={expanded ? 'ts-text ts-xprompt-text' : className}
+      rows={expanded ? undefined : rows}
+      value={value}
+      placeholder={placeholder}
+      aria-label={ariaLabel ?? label}
+      onChange={(e) => onChange(e.target.value)}
+      onKeyDown={onKeyDown}
+    />
+  );
+  const words = wordCount(value);
+
+  return (
+    <>
+      <div ref={wrapRef} className="ts-xprompt-inline">
+        {panel ? <div className="ts-xprompt-away">Editing in the expanded view</div> : area(false)}
+        {!panel && (
+          <button type="button" className="ts-xprompt-toggle" title="Expand the prompt to the whole window" aria-label="Expand the prompt editor" onClick={() => toggle(true)}>
+            <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M9.5 2.5h4v4M13.5 2.5 9 7M6.5 13.5h-4v-4M2.5 13.5 7 9" />
+            </svg>
+          </button>
+        )}
+      </div>
+      {panel &&
+        createPortal(
+          <div className="ts-xprompt" data-ts-local-esc role="group" aria-label={`${label} (expanded)`}>
+            <div className="ts-xprompt-head">
+              <span className="ts-field-label">{label}</span>
+              <span className="ts-field-hint">
+                {words} {words === 1 ? 'word' : 'words'}
+                {onSubmit ? ' · Ctrl+Enter to continue' : ''} · Esc to collapse
+              </span>
+              <button type="button" className="ts-chip ts-xprompt-collapse" aria-label="Collapse the prompt editor" onClick={() => toggle(false)}>
+                <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M13.5 6.5h-4v-4M9.5 6.5l4.5-4.5M2.5 9.5h4v4M6.5 9.5 2 14" />
+                </svg>
+                Collapse
+              </button>
+            </div>
+            {extra ? <div className="ts-xprompt-extra">{extra}</div> : null}
+            {area(true)}
+          </div>,
+          panel
+        )}
+    </>
+  );
 }
 
 export interface RefItem {
@@ -789,19 +911,23 @@ function ShapeView(props: FlowViewProps & { def: ReturnType<typeof intentById> }
             hint="sent as written · Enter ▸ review"
             action={<SavePrompt intent={def.id} settings={s} />}
           >
-            <textarea
-              ref={textRef}
-              className="ts-text"
+            <ExpandablePrompt
+              textRef={textRef}
               rows={3}
               value={s.prompt}
               placeholder={examples[0]}
-              onChange={(e) => onSettings({ prompt: e.target.value })}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && (e.ctrlKey || e.metaKey || !e.shiftKey)) {
-                  e.preventDefault();
-                  props.onPhase('review');
-                }
-              }}
+              label={def.id === 'direct' ? 'Describe the scene' : 'What should change?'}
+              onChange={(v) => onSettings({ prompt: v })}
+              submitOnEnter
+              onSubmit={() => props.onPhase('review')}
+              extra={
+                refs.length > 0 ? (
+                  <>
+                    <ReferenceChips refs={refs} thumbUrl={props.thumbUrl} onPick={pickToken} pinned={pins} />
+                    <TokenWarnings prompt={s.prompt} refs={refs} shared={shared || def.id === 'direct'} />
+                  </>
+                ) : null
+              }
             />
             <SavedPrompts
               intent={def.id}
@@ -1226,14 +1352,23 @@ function PromptPanel(props: FlowViewProps & { def: ReturnType<typeof intentById>
       )}
 
       {editing ? (
-        <textarea
-          ref={textRef}
+        <ExpandablePrompt
+          textRef={textRef}
           className="ts-text ts-prompt-edit"
           rows={manual ? 12 : 5}
           value={value}
           placeholder="Write the whole prompt, using the tokens above for the references"
-          onChange={(e) => setValue(e.target.value)}
-          aria-label="Full prompt"
+          onChange={setValue}
+          label="Prompt sent to the model"
+          ariaLabel="Full prompt"
+          extra={
+            refs.length > 0 ? (
+              <>
+                <ReferenceChips refs={refs} thumbUrl={props.thumbUrl} onPick={insert} />
+                <TokenWarnings prompt={value} refs={refs} shared={shared || manual} />
+              </>
+            ) : null
+          }
         />
       ) : raw && data?.modelInput ? (
         <pre className="ts-prompt-text raw">{data.modelInput}</pre>
