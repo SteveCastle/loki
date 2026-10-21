@@ -23,16 +23,18 @@ import (
 // image for classification, and the one place that wants it counted as video
 // (thumbnail generation, which needs a frame grab) says so explicitly.
 //
-// .avif and .heic are listed because they are images the viewer displays and
-// the library should track — but note that the Go decoders registered by
-// onnxtag/onnxface cover jpeg, png, gif, bmp, tiff and webp only, so local
-// ONNX work on those two formats fails at decode rather than being skipped.
+// .avif, .heic and .heif are listed because they are images the viewer
+// displays and the library should track. The Go decoders registered by
+// onnxtag/onnxface cover jpeg, png, gif, bmp, tiff and webp only: HEIC/HEIF
+// reach the ONNX tasks as an ffmpeg-extracted frame (tasks.extractFrameForFile)
+// and browsers get a JPEG rendering (package heic), but local ONNX work on
+// .avif still fails at decode rather than being skipped.
 // .jfif/.pjpeg/.pjp are JPEG payloads under other names and decode normally,
 // since image.Decode sniffs magic bytes rather than trusting the extension.
 var imageExts = []string{
 	".jpg", ".jpeg", ".jfif", ".pjpeg", ".pjp",
 	".png", ".webp", ".avif", ".gif", ".bmp",
-	".tif", ".tiff", ".heic",
+	".tif", ".tiff", ".heic", ".heif",
 }
 
 // videoExts are containers ffmpeg/ffprobe handle.
@@ -118,7 +120,7 @@ var mimeTypes = map[string]string{
 	".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".jfif": "image/jpeg",
 	".pjpeg": "image/jpeg", ".pjp": "image/jpeg",
 	".png": "image/png", ".gif": "image/gif", ".webp": "image/webp",
-	".avif": "image/avif", ".bmp": "image/bmp", ".heic": "image/heic",
+	".avif": "image/avif", ".bmp": "image/bmp", ".heic": "image/heic", ".heif": "image/heif",
 	".tif": "image/tiff", ".tiff": "image/tiff", ".svg": "image/svg+xml",
 	".ico": "image/x-icon",
 

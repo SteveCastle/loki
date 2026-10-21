@@ -4,9 +4,9 @@
   "binaries": {
     "ffmpeg": {
       "windows-amd64": {
-        "version": "n7.1.5",
-        "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-06-30-13-34/ffmpeg-n7.1.5-1-g7d0e842004-win64-gpl-7.1.zip",
-        "sha256": "405b190f746db40539eb453967f72c0e69d8bf260b10ceff36e0c2149a9ad22f",
+        "version": "n9.0.2",
+        "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-30-13-08/ffmpeg-n9.0.2-17-g2a571b6068-win64-gpl-9.0.zip",
+        "sha256": "a0e45723c72141975f51d8666302e614711745f3102b704ca3f82c897a58d278",
         "archive": "zip",
         "extract": [
           {"from": "*/bin/ffmpeg.exe",  "to": "ffmpeg.exe"},
@@ -15,9 +15,9 @@
         ]
       },
       "linux-amd64": {
-        "version": "n7.1.5",
-        "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-06-30-13-34/ffmpeg-n7.1.5-1-g7d0e842004-linux64-gpl-7.1.tar.xz",
-        "sha256": "f0c580f5f12af54e8c9c649c70b2d25f264edb35393203d34b20cf4f9c126288",
+        "version": "n9.0.2",
+        "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-30-13-08/ffmpeg-n9.0.2-17-g2a571b6068-linux64-gpl-9.0.tar.xz",
+        "sha256": "68ee646831adaae2495618346f3bba94ff207ff83bbd34d643e7004730d66269",
         "archive": "tar.xz",
         "extract": [
           {"from": "*/bin/ffmpeg",  "to": "ffmpeg"},

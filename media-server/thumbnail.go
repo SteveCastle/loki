@@ -17,6 +17,7 @@ import (
 	"time"
 
 	depspkg "github.com/stevecastle/shrike/deps"
+	"github.com/stevecastle/shrike/heic"
 	"github.com/stevecastle/shrike/mediaext"
 	"github.com/stevecastle/shrike/platform"
 	"github.com/stevecastle/shrike/storage"
@@ -272,7 +273,20 @@ func generateS3ThumbnailThrottled(ctx context.Context, mediaPath string, backend
 	fileType := getFileType(mediaPath)
 	switch fileType {
 	case "image":
-		if err := generateImageThumbnail(ffmpegPath, tmpSourcePath, tmpOutputPath, cache); err != nil {
+		source := tmpSourcePath
+		if heic.IsHeic(mediaPath) {
+			// A throwaway copy: render it without filling the display cache.
+			jpeg, err := heic.Render(ffmpegPath, tmpSourcePath)
+			if err != nil {
+				return "", err
+			}
+			source = tmpSourcePath + ".jpg"
+			if err := os.WriteFile(source, jpeg, 0o644); err != nil {
+				return "", fmt.Errorf("failed to write HEIC rendering: %w", err)
+			}
+			defer os.Remove(source)
+		}
+		if err := generateImageThumbnail(ffmpegPath, source, tmpOutputPath, cache); err != nil {
 			return "", err
 		}
 	case "video":
@@ -320,7 +334,20 @@ func generateThumbnail(mediaPath, basePath, cache string, timeStamp float64) (st
 	fileType := getFileType(mediaPath)
 	switch fileType {
 	case "image":
-		if err := generateImageThumbnail(ffmpegPath, mediaPath, thumbPath, cache); err != nil {
+		source := mediaPath
+		if heic.IsHeic(mediaPath) {
+			// Scale from the display JPEG: ffmpeg won't put -vf on top of
+			// the filtergraph it builds for a tile grid, and the JPEG keeps
+			// the ICC profile grid assembly drops.
+			info, err := os.Stat(mediaPath)
+			if err != nil {
+				return "", err
+			}
+			if source, _, err = heicDisplayFile(context.Background(), mediaPath, info); err != nil {
+				return "", err
+			}
+		}
+		if err := generateImageThumbnail(ffmpegPath, source, thumbPath, cache); err != nil {
 			return "", err
 		}
 	case "video":

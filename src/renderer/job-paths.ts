@@ -3,7 +3,7 @@
 // queue panel to make both clickable.
 
 const DRIVE_RE = /^[A-Za-z]:[\\/]/;
-const MEDIA_EXT_RE = /\.(jpe?g|jfif|png|webp|avif|gif|bmp|tiff?|heic|mp4|webm|mov|mkv|avi|m4v|mp3|wav|flac|ogg|m4a|aac|opus)$/i;
+const MEDIA_EXT_RE = /\.(jpe?g|jfif|png|webp|avif|gif|bmp|tiff?|heic|heif|mp4|webm|mov|mkv|avi|m4v|mp3|wav|flac|ogg|m4a|aac|opus)$/i;
 
 function looksLikePath(s: string): boolean {
   if (DRIVE_RE.test(s)) return true;

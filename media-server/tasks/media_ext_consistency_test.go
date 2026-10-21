@@ -18,7 +18,7 @@ import (
 // actually broken, plus the ordinary ones whose behavior must not regress.
 var formats = []string{
 	".jpg", ".jpeg", ".jfif", ".pjpeg", ".pjp", ".png", ".webp", ".avif",
-	".gif", ".bmp", ".tif", ".tiff", ".heic",
+	".gif", ".bmp", ".tif", ".tiff", ".heic", ".heif",
 	".mp4", ".mov", ".avi", ".mkv", ".webm", ".wmv", ".m4v", ".mpeg", ".mpg",
 	".mp3", ".wav", ".flac", ".aac", ".ogg", ".m4a", ".opus", ".wma", ".aiff", ".ape",
 }

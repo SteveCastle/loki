@@ -32,6 +32,7 @@ import (
 	"github.com/stevecastle/shrike/auth"
 	"github.com/stevecastle/shrike/deps/bundled"
 	"github.com/stevecastle/shrike/deps/models"
+	"github.com/stevecastle/shrike/heic"
 	"github.com/stevecastle/shrike/jobqueue"
 	"github.com/stevecastle/shrike/media"
 	"github.com/stevecastle/shrike/mediaext"
@@ -1916,6 +1917,17 @@ func mediaFileHandler(deps *Dependencies) http.HandlerFunc {
 		if fileInfo.Size() > maxFileSize {
 			http.Error(w, "File too large for preview", http.StatusRequestEntityTooLarge)
 			return
+		}
+
+		// Browsers can't decode HEIC: serve a cached JPEG rendering instead.
+		if heic.IsHeic(filePath) {
+			jpegPath, jpegInfo, err := heicDisplayFile(r.Context(), filePath, fileInfo)
+			if err != nil {
+				log.Printf("HEIC conversion failed for %s: %v", filePath, err)
+				http.Error(w, "HEIC conversion failed", http.StatusUnsupportedMediaType)
+				return
+			}
+			filePath, fileInfo = jpegPath, jpegInfo
 		}
 
 		// Set appropriate content type based on file extension

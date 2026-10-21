@@ -338,7 +338,9 @@ contextBridge.exposeInMainWorld('electron', {
 // (see warmInitialMedia). Videos are excluded on purpose: the <video> element
 // range-requests what it needs, and prefetching a multi-GB file would fight it
 // for bandwidth instead of helping.
-const WARMABLE_IMAGE_RE = /\.(jpe?g|jfif|pjpe?g|pjp|png|gif|webp|avif|bmp|svg)$/i;
+// HEIC is warmable too: the gsm:// handler serves its JPEG conversion, so
+// warming starts that conversion while the renderer boots.
+const WARMABLE_IMAGE_RE = /\.(jpe?g|jfif|pjpe?g|pjp|png|gif|webp|avif|heic|heif|bmp|svg)$/i;
 
 // Kick off the fetch for the file the user opened *before* the renderer bundle
 // has even parsed. The gsm:// handler lives in the main process, which is busy

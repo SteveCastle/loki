@@ -63,9 +63,11 @@ func ExtractFrameForMedia(ctx context.Context, mediaPath string) (imagePath, tem
 // extractFrameForFile returns the path to feed the model plus a temp-frame path
 // to delete afterward (empty for non-video). Video frame extraction is bounded
 // by a per-file timeout so a corrupt video can't hang the worker indefinitely.
+// HEIC goes through ffmpeg too: the Go image decoders the ONNX tools use can't
+// read it, and ffmpeg (8.0+) assembles its tile grid into the full photo.
 func extractFrameForFile(ctx context.Context, mediaPath string, timeout time.Duration) (imagePath, tempFrame string, err error) {
 	switch strings.ToLower(filepath.Ext(mediaPath)) {
-	case ".mp4", ".mov", ".avi", ".mkv", ".webm", ".wmv", ".gif":
+	case ".mp4", ".mov", ".avi", ".mkv", ".webm", ".wmv", ".gif", ".heic", ".heif":
 		fctx := ctx
 		if timeout > 0 {
 			var cancel context.CancelFunc

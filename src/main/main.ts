@@ -26,6 +26,7 @@ import { withTimeout } from './async-timeout';
 import { isValidFilePath, filePathFromArgv } from './file-handling';
 import { registerStudioProtocol, openStudioWindow } from './studio-window';
 import { registerWallpaperHandlers } from './wallpaper';
+import { heicDisplayFile, isHeicPath } from './heic';
 import {
   mark,
   getBootId,
@@ -720,6 +721,8 @@ ipcMain.handle(
             'pjp',
             'webp',
             'avif',
+            'heic',
+            'heif',
             'mp4',
             'mov',
             'mkv',
@@ -743,6 +746,8 @@ ipcMain.handle(
             'pjp',
             'webp',
             'avif',
+            'heic',
+            'heif',
           ],
         },
         { name: 'Movies', extensions: ['mp4', 'mkv', 'webm', 'mov'] },
@@ -998,6 +1003,20 @@ app.on('ready', async () => {
       } catch {
         trace.stat(false);
         return new Response('Not Found', { status: 404 });
+      }
+
+      // Chromium can't decode HEIC: serve a cached JPEG rendering instead.
+      // Everything below (ranges, ETag) then applies to the JPEG.
+      if (isHeicPath(filePath)) {
+        try {
+          filePath = await heicDisplayFile(filePath, stats);
+          stats = await fs.promises.stat(filePath);
+        } catch (err) {
+          logEvent({ scope: 'heic', message: 'display conversion failed', data: { filePath }, error: err });
+          trace.responding(415);
+          trace.done('error', 0);
+          return new Response('HEIC conversion failed', { status: 415 });
+        }
       }
 
       const fileSize = stats.size;

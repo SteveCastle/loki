@@ -52,7 +52,7 @@ const FileTypes = {
 };
 
 const Extensions = {
-  Image: /\.(jpg|jpeg|png|bmp|svg|jfif|pjpeg|pjp|webp|avif)$/i,
+  Image: /\.(jpg|jpeg|png|bmp|svg|jfif|pjpeg|pjp|webp|avif|heic|heif)$/i,
   Video: /\.(mp4|webm|ogg|mkv|mov|m4v|gif)$/i,
   Audio: /\.(mp3|wav|flac|aac|m4a|opus|wma|aiff|ape)$/i,
   Document: /\.(pdf|doc|docx|xls|xlsx|ppt|pptx|txt|csv)$/i,
@@ -73,7 +73,9 @@ const cacheSizes = {
   thumbnail_path_100: 100,
 };
 
-async function createThumbnail(filePath, basePath, cache, timeStamp) {
+// sourcePath, when given, is what ffmpeg actually decodes (a HEIC's display
+// JPEG); the thumbnail is still named and typed by filePath.
+async function createThumbnail(filePath, basePath, cache, timeStamp, sourcePath) {
   const thumbnailBasePath = path.join(basePath, cache);
   await fs.promises.mkdir(thumbnailBasePath, { recursive: true });
 
@@ -87,7 +89,7 @@ async function createThumbnail(filePath, basePath, cache, timeStamp) {
     thumbnailFullPath += '.mp4';
     await createVideoThumbnail(filePath, thumbnailFullPath, timeStamp);
   } else if (fileType === FileTypes.Image) {
-    await createImageThumbnail(filePath, thumbnailFullPath, cache);
+    await createImageThumbnail(sourcePath || filePath, thumbnailFullPath, cache);
   } else {
     throw new Error('Unsupported file type');
   }

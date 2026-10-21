@@ -24,9 +24,9 @@ FFmpeg is a trademark of Fabrice Bellard, originator of the FFmpeg project.
 Corresponding source code:
 
 - **Windows / Linux builds** (BtbN FFmpeg-Builds, pinned tag
-  `autobuild-2026-07-06-14-19`): built from FFmpeg release branch 7.1 at
-  commit `7d0e842004` (version `n7.1.5-1-g7d0e842004`) — source at
-  <https://github.com/FFmpeg/FFmpeg/commit/7d0e842004> /
+  `autobuild-2026-09-30-13-08`): built from FFmpeg release branch 9.0 at
+  commit `2a571b6068` (version `n9.0.2-17-g2a571b6068`) — source at
+  <https://github.com/FFmpeg/FFmpeg/commit/2a571b6068> /
   <https://git.ffmpeg.org/ffmpeg.git>; build scripts and dependency
   versions at <https://github.com/BtbN/FFmpeg-Builds> (same tag).
 - **macOS builds** (ffmpeg.martin-riedl.de static release builds, version
