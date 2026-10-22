@@ -120,6 +120,11 @@ type SceneJob struct {
 	// Chain is every job of the generation in order (motion: reshoot, then
 	// the scene-lock pass); ID is the last one, whose output is the result.
 	Chain []string `json:"chain,omitempty"`
+	// Requeued counts later steps queued again after being cancelled before
+	// they ran (see reconcileLayerJob).
+	Requeued int `json:"requeued,omitempty"`
+	// Step is the command of the step running now (e.g. reshoot, scene-lock).
+	Step string `json:"step,omitempty"`
 	// Line is the job's latest log line, for the editor's status text.
 	Line string `json:"line,omitempty"`
 }
@@ -446,9 +451,7 @@ func DeleteScene(q *jobqueue.Queue, id string) error {
 		return err
 	}
 	for _, l := range s.Layers {
-		if l.Job != nil && q != nil {
-			_ = q.CancelJob(l.Job.ID)
-		}
+		cancelSceneJob(q, l.Job, "the scene was deleted")
 	}
 	dir, _ := sceneDir(id)
 	return os.RemoveAll(dir)
@@ -510,9 +513,7 @@ func UpdateScene(q *jobqueue.Queue, id string, in *Scene) (*Scene, error) {
 		if seen[oid] {
 			continue
 		}
-		if l.Job != nil && q != nil {
-			_ = q.CancelJob(l.Job.ID)
-		}
+		cancelSceneJob(q, l.Job, fmt.Sprintf("layer %q was deleted in the Scene editor", l.Name))
 		for _, v := range l.Versions {
 			if inSceneDir(id, v.Path) {
 				os.Remove(v.Path)
@@ -546,77 +547,8 @@ func reconcileScene(q *jobqueue.Queue, s *Scene) bool {
 	}
 	changed := false
 	for _, l := range s.Layers {
-		if l.Job == nil {
-			continue
-		}
-		job, lines, ok := q.JobSnapshot(l.Job.ID, 4)
-		// A chain reports its first unfinished step (and the step that failed).
-		for _, cid := range l.Job.Chain {
-			if cid == l.Job.ID {
-				break
-			}
-			cj, clines, cok := q.JobSnapshot(cid, 4)
-			if !cok || cj.State == jobqueue.StateCompleted {
-				continue
-			}
-			if cj.State == jobqueue.StateError || cj.State == jobqueue.StateCancelled || job.State == jobqueue.StatePending {
-				job, lines, ok = cj, clines, true
-			}
-			break
-		}
-		if !ok {
-			// Cleared from the queue before the scene looked: the result (if
-			// any) is still where the engine writes it, beside the crop.
-			job = jobqueue.Job{ID: l.Job.ID, State: jobqueue.StateError}
-			if out := sceneJobOutput(l.Kind, l.Job.Input); out != "" {
-				job.State, job.OutputFiles = jobqueue.StateCompleted, []string{out}
-			} else {
-				lines = []string{"the job was removed from the queue"}
-			}
-		}
-		switch job.State {
-		case jobqueue.StateCompleted:
-			out := ""
-			for _, f := range job.OutputFiles {
-				if inSceneDir(s.ID, f) {
-					out = f
-				}
-			}
-			if out == "" {
-				l.Error = "the engine finished without a result"
-			} else {
-				v := SceneVersion{Path: out, Region: l.Job.Region, Prompt: l.Job.Prompt, JobID: job.ID, Created: time.Now().UTC()}
-				if l.Kind == SceneKindMotion {
-					v.Duration = probeVideoDuration(context.Background(), out)
-					v.Audio = probeHasAudio(out)
-				}
-				l.Versions = append(l.Versions, v)
-				l.Active = len(l.Versions) - 1
-				l.Error = ""
-			}
-			l.Job = nil
+		if l.Job != nil && reconcileLayerJob(q, s, l) {
 			changed = true
-		case jobqueue.StateError, jobqueue.StateCancelled:
-			msg := "generation failed"
-			if job.State == jobqueue.StateCancelled {
-				msg = "generation cancelled"
-			}
-			if len(lines) > 0 {
-				msg += ": " + lastMeaningfulLine(lines)
-			}
-			l.Error = msg
-			l.Job = nil
-			changed = true
-		default:
-			st := jobStateName(job.State)
-			line := ""
-			if len(lines) > 0 {
-				line = lines[len(lines)-1]
-			}
-			if l.Job.State != st || l.Job.Done != job.ProgressDone || l.Job.Total != job.ProgressTotal || l.Job.Line != line {
-				l.Job.State, l.Job.Done, l.Job.Total, l.Job.Line = st, job.ProgressDone, job.ProgressTotal, line
-				changed = true
-			}
 		}
 	}
 	if r := s.Render; r != nil && (r.State == "pending" || r.State == "in_progress" || r.State == "paused") {
@@ -640,6 +572,184 @@ func reconcileScene(q *jobqueue.Queue, s *Scene) bool {
 		changed = true
 	}
 	return changed
+}
+
+// sceneMaxRequeue bounds how often a generation's later step is queued again.
+const sceneMaxRequeue = 2
+
+// ids is every job of a generation, in order.
+func (j *SceneJob) ids() []string {
+	if len(j.Chain) > 0 {
+		return j.Chain
+	}
+	return []string{j.ID}
+}
+
+// cancelSceneJob cancels every still-live step of a generation, noting why in
+// each job's log (so a cancelled step on the Jobs page says who cancelled it).
+// A chain is cancelled whole: a step left behind would keep the GPU busy for
+// a result nothing is waiting for.
+func cancelSceneJob(q *jobqueue.Queue, j *SceneJob, why string) {
+	if q == nil || j == nil {
+		return
+	}
+	for _, id := range j.ids() {
+		job, _, ok := q.JobSnapshot(id, 0)
+		if !ok || (job.State != jobqueue.StatePending && job.State != jobqueue.StateInProgress && job.State != jobqueue.StatePaused) {
+			continue
+		}
+		_ = q.PushJobStdout(id, "scene: cancelled because "+why)
+		_ = q.CancelJob(id)
+	}
+}
+
+// reconcileLayerJob folds a layer's generation into it when it has ended, or
+// copies its progress while it runs. Returns whether the layer changed.
+//
+// A generation is a chain (motion: reshoot -> scene-lock). Its state is the
+// chain's, never one step's: while it runs, the first unfinished step's
+// progress shows. If the engine's step fails or is cancelled, the steps
+// still alive are cancelled too and the layer reports it. A later step that
+// was cancelled before it ever ran is queued again once the engine is done
+// (the engine's work is the expensive part; up to sceneMaxRequeue times). A
+// later step that ran and failed keeps the engine's result as a version that
+// says its edges are not locked, rather than throwing it away.
+func reconcileLayerJob(q *jobqueue.Queue, s *Scene, l *SceneLayer) bool {
+	ids := l.Job.ids()
+	type step struct {
+		job   jobqueue.Job
+		lines []string
+		ok    bool
+	}
+	steps := make([]step, len(ids))
+	for i, id := range ids {
+		steps[i].job, steps[i].lines, steps[i].ok = q.JobSnapshot(id, 4)
+	}
+	last := len(steps) - 1
+
+	addVersion := func(out, jobID, note string) {
+		v := SceneVersion{Path: out, Region: l.Job.Region, Prompt: l.Job.Prompt, JobID: jobID, Note: note, Created: time.Now().UTC()}
+		if l.Kind == SceneKindMotion && deps.BundledOrEmpty("ffprobe") != "" {
+			v.Duration = probeVideoDuration(context.Background(), out)
+			v.Audio = probeHasAudio(out)
+		}
+		l.Versions = append(l.Versions, v)
+		l.Active = len(l.Versions) - 1
+		l.Error = ""
+	}
+	outputOf := func(st step) string {
+		out := ""
+		for _, f := range st.job.OutputFiles {
+			if inSceneDir(s.ID, f) {
+				out = f
+			}
+		}
+		return out
+	}
+
+	// Cleared from the queue before the scene looked: the result (if any) is
+	// still where the engine writes it, beside the crop.
+	if !steps[last].ok {
+		if out := sceneJobOutput(l.Kind, l.Job.Input); out != "" {
+			addVersion(out, l.Job.ID, "")
+		} else {
+			l.Error = "generation lost: the job was removed from the queue"
+		}
+		cancelSceneJob(q, l.Job, "its generation was removed from the queue")
+		l.Job = nil
+		return true
+	}
+
+	// The step that ended the chain early, if any.
+	broken := -1
+	for i, st := range steps {
+		if st.ok && (st.job.State == jobqueue.StateError || st.job.State == jobqueue.StateCancelled) {
+			broken = i
+			break
+		}
+	}
+	// A later step cancelled before it ran: not the user's intent to drop the
+	// generation (the editor's Cancel clears the layer's job itself).
+	if broken > 0 && steps[broken].job.State == jobqueue.StateCancelled && steps[broken].job.ClaimedAt.IsZero() && l.Job.Requeued < sceneMaxRequeue {
+		gen := steps[0]
+		switch {
+		case gen.ok && (gen.job.State == jobqueue.StatePending || gen.job.State == jobqueue.StateInProgress || gen.job.State == jobqueue.StatePaused):
+			// Keep following the engine; the step is queued again when it ends.
+			broken = -1
+			if l.Job.State != jobStateName(gen.job.State) || l.Job.Done != gen.job.ProgressDone {
+				l.Job.State, l.Job.Done, l.Job.Total, l.Job.Step = jobStateName(gen.job.State), gen.job.ProgressDone, gen.job.ProgressTotal, gen.job.Command
+				if len(gen.lines) > 0 {
+					l.Job.Line = gen.lines[len(gen.lines)-1]
+				}
+				return true
+			}
+			return false
+		case gen.ok && gen.job.State == jobqueue.StateCompleted && broken == last && outputOf(gen) != "":
+			lost := steps[broken].job
+			ids, err := q.AddWorkflow(jobqueue.Workflow{Tasks: []jobqueue.WorkflowTask{{Command: lost.Command, Arguments: lost.Arguments, Input: outputOf(gen)}}})
+			if err == nil && len(ids) == 1 {
+				_ = q.PushJobStdout(ids[0], fmt.Sprintf("scene: queued again: step %s was cancelled before it ran", lost.ID))
+				l.Job.Chain = []string{gen.job.ID, ids[0]}
+				l.Job.ID = ids[0]
+				l.Job.Requeued++
+				l.Job.State, l.Job.Done, l.Job.Total, l.Job.Line, l.Job.Step = "pending", 0, 0, "", lost.Command
+				return true
+			}
+		}
+	}
+	if broken >= 0 {
+		st := steps[broken]
+		cancelSceneJob(q, l.Job, fmt.Sprintf("step %s of the same generation ended (%s)", st.job.Command, jobStateName(st.job.State)))
+		if broken > 0 && steps[0].ok && steps[0].job.State == jobqueue.StateCompleted {
+			if out := outputOf(steps[0]); out != "" {
+				addVersion(out, steps[0].job.ID, fmt.Sprintf("edges not locked: the %s step was %s", st.job.Command, jobStateName(st.job.State)))
+				l.Job = nil
+				return true
+			}
+		}
+		msg := "generation failed"
+		if st.job.State == jobqueue.StateCancelled {
+			msg = "generation cancelled"
+		}
+		if len(ids) > 1 {
+			msg += " (" + st.job.Command + " step)"
+		}
+		if len(st.lines) > 0 {
+			msg += ": " + lastMeaningfulLine(st.lines)
+		}
+		l.Error = msg
+		l.Job = nil
+		return true
+	}
+
+	if steps[last].job.State == jobqueue.StateCompleted {
+		if out := outputOf(steps[last]); out != "" {
+			addVersion(out, steps[last].job.ID, "")
+		} else {
+			l.Error = "the engine finished without a result"
+		}
+		l.Job = nil
+		return true
+	}
+
+	// Running: report the first unfinished step.
+	cur := steps[last]
+	for _, st := range steps {
+		if st.ok && st.job.State != jobqueue.StateCompleted {
+			cur = st
+			break
+		}
+	}
+	state := jobStateName(cur.job.State)
+	line := ""
+	if len(cur.lines) > 0 {
+		line = cur.lines[len(cur.lines)-1]
+	}
+	if l.Job.State == state && l.Job.Done == cur.job.ProgressDone && l.Job.Total == cur.job.ProgressTotal && l.Job.Line == line && l.Job.Step == cur.job.Command {
+		return false
+	}
+	l.Job.State, l.Job.Done, l.Job.Total, l.Job.Line, l.Job.Step = state, cur.job.ProgressDone, cur.job.ProgressTotal, line, cur.job.Command
+	return true
 }
 
 // sceneJobOutput is where retouch / reshoot put the result for a crop (see
@@ -1016,7 +1126,7 @@ func CancelLayer(q *jobqueue.Queue, id, lid string) (*Scene, error) {
 	}
 	for _, l := range s.Layers {
 		if l.ID == lid && l.Job != nil {
-			_ = q.CancelJob(l.Job.ID)
+			cancelSceneJob(q, l.Job, fmt.Sprintf("Cancel pressed on layer %q in the Scene editor", l.Name))
 			l.Job = nil
 			l.Error = ""
 		}

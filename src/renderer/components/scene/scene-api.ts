@@ -26,6 +26,8 @@ export interface SceneJob {
   prompt: string;
   input?: string;
   line?: string;
+  /** The step running now: the engine (retouch / reshoot) or scene-lock (fixing the edges to the still). */
+  step?: string;
 }
 
 /** Per-layer generation settings (stored as the layer's `options`). */

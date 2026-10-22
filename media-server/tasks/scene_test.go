@@ -414,3 +414,156 @@ func TestSceneLockStaticEdges(t *testing.T) {
 		t.Errorf("the motion should survive the lock")
 	}
 }
+
+// chainScene stores a scene whose motion layer has a reshoot -> scene-lock
+// generation queued on q, the way GenerateLayer leaves it.
+func chainScene(t *testing.T, q *jobqueue.Queue, id string) (dir string, gen, lock string) {
+	t.Helper()
+	withSceneRoot(t)
+	dir, _ = sceneDir(id)
+	gen, lock = "gen-"+id[len(id)-4:], "lock-"+id[len(id)-4:]
+	input := filepath.Join(dir, "motion-m-1.png")
+	if _, err := q.AddWorkflow(jobqueue.Workflow{Tasks: []jobqueue.WorkflowTask{
+		{ID: gen, Command: "reshoot", Input: input},
+		{ID: lock, Command: "scene-lock", Arguments: []string{"--still=" + input}, Dependencies: []string{gen}},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	writeTestScene(t, &Scene{ID: id, Width: 100, Height: 100, Layers: []*SceneLayer{{
+		ID: "m", Name: "Motion 1", Kind: SceneKindMotion, Versions: []SceneVersion{}, Active: -1,
+		Job: &SceneJob{ID: lock, Chain: []string{gen, lock}, State: "pending", Region: SceneRect{W: 50, H: 50}, Prompt: "p", Input: input},
+	}}})
+	return dir, gen, lock
+}
+
+func claim(t *testing.T, q *jobqueue.Queue, want string) {
+	t.Helper()
+	j, err := q.ClaimJob()
+	if err != nil || j == nil || j.ID != want {
+		t.Fatalf("claimed %+v (%v), want %s", j, err, want)
+	}
+}
+
+func finish(t *testing.T, q *jobqueue.Queue, id, out string) {
+	t.Helper()
+	if err := os.WriteFile(out, []byte("x"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	_ = q.RegisterOutputFile(id, out)
+	_ = q.CompleteJob(id)
+}
+
+func state(q *jobqueue.Queue, id string) jobqueue.JobState {
+	j, _, _ := q.JobSnapshot(id, 0)
+	return j.State
+}
+
+// The bug report: the lock step got cancelled before it ran while the engine
+// was still generating. The generation must not be dropped (and a second one
+// queued behind it); the engine keeps going and the lock is queued again.
+func TestSceneChainLockCancelledBeforeItRan(t *testing.T) {
+	q := jobqueue.NewQueue()
+	id := "0123abcd-0000-0000-0000-00000000c001"
+	dir, gen, lock := chainScene(t, q, id)
+	claim(t, q, gen)
+	_ = q.SetJobProgress(gen, 3, 10)
+	_ = q.CancelJob(lock)
+
+	s, err := GetScene(q, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := s.Layers[0]
+	if l.Job == nil || l.Error != "" || l.Job.State != "in_progress" || l.Job.Done != 3 || l.Job.Step != "reshoot" {
+		t.Fatalf("the running generation should still be followed: job %+v err %q", l.Job, l.Error)
+	}
+	if state(q, gen) != jobqueue.StateInProgress {
+		t.Fatal("the engine step must keep running")
+	}
+	if _, err := GenerateLayer(context.Background(), q, id, "m"); err != ErrSceneBusy {
+		t.Fatalf("a second generation must be refused while the first runs, got %v", err)
+	}
+
+	// The engine finishes: the lock is queued again on its output.
+	raw := filepath.Join(dir, ".loki-temp", "raw.mp4")
+	_ = os.MkdirAll(filepath.Dir(raw), 0755)
+	finish(t, q, gen, raw)
+	s, _ = GetScene(q, id)
+	l = s.Layers[0]
+	if l.Job == nil || l.Job.Requeued != 1 || l.Job.ID == lock || len(l.Job.Chain) != 2 || l.Job.Chain[0] != gen || l.Job.Step != "scene-lock" {
+		t.Fatalf("lock should be queued again: %+v", l.Job)
+	}
+	relock := l.Job.ID
+	claim(t, q, relock)
+	if j, _, _ := q.JobSnapshot(relock, 0); j.Input != raw {
+		t.Fatalf("re-queued lock input = %q, want the engine output", j.Input)
+	}
+	finish(t, q, relock, filepath.Join(dir, "motion-m-1_locked.mp4"))
+	s, _ = GetScene(q, id)
+	l = s.Layers[0]
+	if l.Job != nil || len(l.Versions) != 1 || !strings.HasSuffix(l.Versions[0].Path, "_locked.mp4") || l.Versions[0].Note != "" {
+		t.Fatalf("locked version expected: job %+v versions %+v", l.Job, l.Versions)
+	}
+}
+
+func TestSceneChainEngineCancelledCancelsTheRest(t *testing.T) {
+	q := jobqueue.NewQueue()
+	id := "0123abcd-0000-0000-0000-00000000c002"
+	_, gen, lock := chainScene(t, q, id)
+	claim(t, q, gen)
+	_ = q.CancelJob(gen)
+	s, _ := GetScene(q, id)
+	l := s.Layers[0]
+	if l.Job != nil || !strings.Contains(l.Error, "cancelled") {
+		t.Fatalf("layer: job %+v err %q", l.Job, l.Error)
+	}
+	if state(q, lock) != jobqueue.StateCancelled {
+		t.Fatal("the lock step must not be left pending")
+	}
+}
+
+func TestSceneChainLockFailedKeepsEngineResult(t *testing.T) {
+	q := jobqueue.NewQueue()
+	id := "0123abcd-0000-0000-0000-00000000c003"
+	dir, gen, lock := chainScene(t, q, id)
+	claim(t, q, gen)
+	finish(t, q, gen, filepath.Join(dir, "raw.mp4"))
+	claim(t, q, lock)
+	_ = q.ErrorJob(lock)
+	s, _ := GetScene(q, id)
+	l := s.Layers[0]
+	if l.Job != nil || len(l.Versions) != 1 || !strings.Contains(l.Versions[0].Note, "edges not locked") {
+		t.Fatalf("engine result should be kept: job %+v versions %+v err %q", l.Job, l.Versions, l.Error)
+	}
+}
+
+func TestSceneCancelLayerCancelsWholeChain(t *testing.T) {
+	q := jobqueue.NewQueue()
+	id := "0123abcd-0000-0000-0000-00000000c004"
+	_, gen, lock := chainScene(t, q, id)
+	claim(t, q, gen)
+	s, err := CancelLayer(q, id, "m")
+	if err != nil || s.Layers[0].Job != nil {
+		t.Fatalf("cancel: %v %+v", err, s.Layers[0].Job)
+	}
+	if state(q, gen) != jobqueue.StateCancelled || state(q, lock) != jobqueue.StateCancelled {
+		t.Fatalf("both steps cancelled? gen %v lock %v", state(q, gen), state(q, lock))
+	}
+	_, lines, _ := q.JobSnapshot(gen, 5)
+	if len(lines) == 0 || !strings.Contains(lines[len(lines)-1], "Cancel pressed on layer \"Motion 1\"") {
+		t.Fatalf("the job log should say why: %v", lines)
+	}
+}
+
+func TestSceneDeletingLayerCancelsWholeChain(t *testing.T) {
+	q := jobqueue.NewQueue()
+	id := "0123abcd-0000-0000-0000-00000000c005"
+	_, gen, lock := chainScene(t, q, id)
+	claim(t, q, gen)
+	if _, err := UpdateScene(q, id, &Scene{Layers: []*SceneLayer{}}); err != nil {
+		t.Fatal(err)
+	}
+	if state(q, gen) != jobqueue.StateCancelled || state(q, lock) != jobqueue.StateCancelled {
+		t.Fatalf("both steps cancelled? gen %v lock %v", state(q, gen), state(q, lock))
+	}
+}

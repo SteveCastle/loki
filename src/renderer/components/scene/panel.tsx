@@ -69,6 +69,7 @@ function Eye({ off }: { off?: boolean }) {
 
 function statusOf(l: SceneLayer): { text: string; tone: 'busy' | 'error' | 'ok' | 'idle' } {
   if (l.job) {
+    if (l.job.step === 'scene-lock') return { text: 'locking edges', tone: 'busy' };
     if (l.job.state === 'pending') return { text: 'queued', tone: 'busy' };
     if (l.job.state === 'paused') return { text: 'paused', tone: 'busy' };
     return { text: l.job.total ? `${Math.round((l.job.done / l.job.total) * 100)}%` : 'starting', tone: 'busy' };
@@ -307,7 +308,11 @@ export function Inspector(props: InspectorProps) {
             <div className="sc-progress">
               <div className="sc-progress-bar" style={{ width: `${l.job && l.job.total ? (l.job.done / l.job.total) * 100 : 3}%` }} />
             </div>
-            <div className="sc-job-line">{l.job?.state === 'pending' ? 'Waiting for the GPU (one diffusion job at a time)…' : l.job?.line || 'Starting…'}</div>
+            <div className="sc-job-line">{l.job?.step === 'scene-lock'
+                ? 'Locking the still parts to the picture so the edges stay static…'
+                : l.job?.state === 'pending'
+                ? 'Waiting for the GPU (one diffusion job at a time)…'
+                : l.job?.line || 'Starting…'}</div>
             <button type="button" className="sc-btn" onClick={props.onCancel}>
               Cancel
             </button>
