@@ -40,6 +40,58 @@ const (
 	LoopBoomerang = "boomerang"
 )
 
+// layerTiming is a motion layer's own timing: Speed (playback rate, 1 = as
+// generated), Offset (seconds of scene time its loop is shifted by, so
+// layers don't pulse together) and Volume (its soundtrack's gain).
+type layerTiming struct {
+	Speed, Offset, Volume float64
+}
+
+// sceneLayerTiming reads a layer's timing options (speed 0.25-4, offset
+// >= 0, volume 0-2; missing = 1, 0, 1).
+func sceneLayerTiming(opts map[string]any) layerTiming {
+	t := layerTiming{Speed: 1, Volume: 1}
+	if _, ok := opts["speed"]; ok {
+		if s := optFloat(opts, "speed"); s > 0 {
+			t.Speed = clampFloat(s, 0.25, 4)
+		}
+	}
+	t.Offset = math.Max(0, optFloat(opts, "offset"))
+	if _, ok := opts["volume"]; ok {
+		t.Volume = clampFloat(optFloat(opts, "volume"), 0, 2)
+	}
+	return t
+}
+
+// clipPhase is where (clip seconds) a looped motion clip starts so that it
+// is Offset scene-seconds into its loop at scene time 0: the clip plays at
+// PTS multiplier Speed, so scene time t shows clip time t/Speed.
+func clipPhase(l sceneGraphLayer) float64 {
+	if l.Offset <= 0 || l.Duration <= 0 {
+		return 0
+	}
+	m := l.Speed
+	if m <= 0 {
+		m = 1
+	}
+	return math.Mod(l.Offset/m, l.Duration)
+}
+
+// atempoChain changes audio speed by factor t (> 0); atempo takes 0.5-2 per
+// instance, so larger changes chain several.
+func atempoChain(t float64) []string {
+	var out []string
+	for t > 2 {
+		out = append(out, "atempo=2")
+		t /= 2
+	}
+	for t < 0.5 {
+		out = append(out, "atempo=0.5")
+		t /= 0.5
+	}
+	return append(out, fmt.Sprintf("atempo=%.6f", t))
+}
+
 // loopSpeed is the PTS multiplier that fits a d-second loop a whole number
 // of times into a scene of length L (1 = as generated; >1 slower).
 func loopSpeed(L, d float64) float64 {

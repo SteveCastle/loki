@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { mediaUrl } from '../../platform';
 import { maskBounds, rectContains, type ContextSize } from './mask';
-import type { LayerOptions, LoopKind, SceneLayer } from './scene-api';
+import { layerTiming, type LayerOptions, type LoopKind, type SceneLayer } from './scene-api';
 
 // The Scene editor's right-hand panel: the layer stack (top of the list = top
 // of the picture) and the selected layer's settings, generation and versions.
@@ -161,7 +161,7 @@ export interface InspectorProps {
   onShowMotion: () => void;
   onGrowToMotion: () => void;
   onClearProtect: () => void;
-  /** Synced loops: the active version's PTS multiplier in the scene (1 = as generated). */
+  /** The active version's PTS multiplier in the scene (layerRate: 1 = as generated, 2 = half speed). */
   loopSpeed: number;
 }
 
@@ -200,6 +200,9 @@ export function Inspector(props: InspectorProps) {
   const needPrompt = !motion && !l.prompt.trim();
   const outside = version && painted && !rectContains(version.region, painted);
   const ideas = motion ? MOTION_IDEAS : STILL_IDEAS;
+  const timing = layerTiming(o);
+  // An offset of one loop is no offset: the slider spans one loop as the layer plays it.
+  const offsetMax = Math.max(0.5, Math.round((version?.duration || o.duration || 5) * (props.loopSpeed || 1) * 20) / 20);
   const appendIdea = (idea: string) => {
     const p = l.prompt.trim();
     props.onPatch({ prompt: p ? `${p.replace(/[.,;]$/, '')}, ${idea}` : idea });
@@ -324,6 +327,56 @@ export function Inspector(props: InspectorProps) {
                 { value: 1, label: 'Generate', title: 'Generate ambient sound for this area; the export mixes every layer’s sound' },
               ]}
             />
+            {o.sound && (
+              <>
+                <span className="sc-label" title="This layer's level in the mix (the preview stops at 100%; the export goes to 200%)">
+                  Volume
+                </span>
+                <div className="sc-slider">
+                  <input
+                    type="range"
+                    min={0}
+                    max={200}
+                    step={5}
+                    value={Math.round(timing.volume * 100)}
+                    onChange={(e) => props.onOptions({ volume: Number(e.target.value) / 100 })}
+                    aria-label="Volume"
+                  />
+                  <span>{timing.volume === 0 ? 'muted' : `${Math.round(timing.volume * 100)}%`}</span>
+                </div>
+              </>
+            )}
+            <span className="sc-label" title="Play this layer's motion slower or faster">
+              Speed
+            </span>
+            <Seg
+              value={timing.speed}
+              onChange={(speed) => props.onOptions({ speed })}
+              options={[0.5, 0.75, 1, 1.25, 1.5, 2].map((v) => ({ value: v, label: `${v}×` }))}
+            />
+            <span className="sc-label" title="Start this layer's loop at a different point, so layers don't move in step">
+              Offset
+            </span>
+            <div className="sc-slider">
+              <input
+                type="range"
+                min={0}
+                max={offsetMax}
+                step={0.05}
+                value={Math.min(timing.offset, offsetMax)}
+                onChange={(e) => props.onOptions({ offset: Number(e.target.value) })}
+                aria-label="Loop offset"
+              />
+              <span>{timing.offset.toFixed(2)} s</span>
+              <button
+                type="button"
+                className="sc-btn sc-btn-quiet sc-btn-tiny"
+                title="A random offset"
+                onClick={() => props.onOptions({ offset: Math.round(Math.random() * offsetMax * 20) / 20 })}
+              >
+                ⚄
+              </button>
+            </div>
           </>
         ) : (
           <>

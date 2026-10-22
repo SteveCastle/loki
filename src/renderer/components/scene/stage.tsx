@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { mediaUrl } from '../../platform';
 import { pointInRect, simplifyPath, type MaskOp, type Rect } from './mask';
-import { loopSpeed, sceneLength, type Scene, type SceneLayer } from './scene-api';
+import { layerRate, layerTiming, type Scene, type SceneLayer } from './scene-api';
 
 // The canvas of the Scene editor: the base frame with every generated layer
 // composited live the way the export will be (each result placed over the
@@ -80,34 +80,40 @@ interface MotionMediaProps {
   muted: boolean;
   syncKey: number;
   style: React.CSSProperties;
-  /** Synced loops: PTS multiplier (loopSpeed) and the scene clock / length; null = loop freely. */
-  sync: { speed: number; clock: React.MutableRefObject<SceneClock>; length: number } | null;
+  /** PTS multiplier it plays at (layerRate: 2 = half speed), its loop offset (scene seconds) and the scene clock. */
+  rate: number;
+  offset: number;
+  clock: React.MutableRefObject<SceneClock>;
+  /** 0-1 (the browser can't preview gain above 100%; the export applies it). */
+  volume: number;
 }
 
-function MotionMedia({ src, playing, muted, syncKey, style, sync }: MotionMediaProps) {
+function MotionMedia({ src, playing, muted, syncKey, style, rate, offset, clock: clockRef, volume }: MotionMediaProps) {
   const ref = useRef<HTMLVideoElement>(null);
-  const speed = sync ? sync.speed : 1;
+  const speed = rate > 0 ? rate : 1;
   useEffect(() => {
     const v = ref.current;
     if (v) v.playbackRate = 1 / speed;
   }, [speed, src]);
-  // Hold the clip to its place in the scene's loop (it drifts, and seeks/restarts break step).
-  const clockRef = sync?.clock;
-  const syncLength = sync?.length ?? 0;
   useEffect(() => {
-    if (!clockRef || !playing || !(syncLength > 0)) return undefined;
+    const v = ref.current;
+    if (v) v.volume = Math.min(1, Math.max(0, volume));
+  }, [volume, src]);
+  // Hold the clip to its place in the scene: scene time t shows clip time (t + offset) / rate, looping. It
+  // drifts, and seeks/restarts/offset changes break step, so it is checked a few times a second.
+  useEffect(() => {
+    if (!playing) return undefined;
     const t = window.setInterval(() => {
       const v = ref.current;
       if (!v || !(v.duration > 0) || v.seeking) return;
-      const sceneT = clockSeconds(clockRef.current) % syncLength;
-      const want = (sceneT / speed) % v.duration;
+      const want = ((clockSeconds(clockRef.current) + offset) / speed) % v.duration;
       let drift = v.currentTime - want;
       if (drift > v.duration / 2) drift -= v.duration;
       if (drift < -v.duration / 2) drift += v.duration;
       if (Math.abs(drift) > 0.12) v.currentTime = want;
     }, 250);
     return () => window.clearInterval(t);
-  }, [clockRef, syncLength, speed, playing]);
+  }, [clockRef, offset, speed, playing]);
   useEffect(() => {
     const v = ref.current;
     if (!v) return;
@@ -156,8 +162,6 @@ export default function Stage(props: StageProps) {
     clock.current = { t0: performance.now(), pausedAt: playing ? null : performance.now() };
     // only an explicit restart resets the clock
   }, [syncKey]);
-  const length = sceneLength(scene);
-  const synced = !scene.freeLoops;
   const wrapRef = useRef<HTMLDivElement>(null);
   const draftRef = useRef<HTMLCanvasElement>(null);
   const [view, setView] = useState<View | null>(null);
@@ -420,7 +424,10 @@ export default function Stage(props: StageProps) {
                     muted={!soundOn || !l.options?.sound}
                     syncKey={syncKey}
                     style={style}
-                    sync={synced ? { speed: loopSpeed(length, v.duration || 0), clock, length } : null}
+                    rate={layerRate(scene, l)}
+                    offset={layerTiming(l.options).offset}
+                    clock={clock}
+                    volume={layerTiming(l.options).volume}
                   />
                 ) : (
                   <img className="sc-media" src={src} style={style} alt="" draggable={false} />

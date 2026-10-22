@@ -2,8 +2,10 @@ package tasks
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"image"
+	"image/color"
 	"image/draw"
 	"math"
 	"os"
@@ -234,5 +236,122 @@ func TestSceneLoops(t *testing.T) {
 	}
 	if _, err := LoopVersion(context.Background(), id, "m", 0, "spin"); err == nil {
 		t.Error("unknown loop kinds are refused")
+	}
+}
+
+func TestSceneLayerTiming(t *testing.T) {
+	if got := sceneLayerTiming(nil); got != (layerTiming{Speed: 1, Volume: 1}) {
+		t.Fatalf("defaults %+v", got)
+	}
+	got := sceneLayerTiming(map[string]any{"speed": 9.0, "offset": -2.0, "volume": 3.0})
+	if got != (layerTiming{Speed: 4, Offset: 0, Volume: 2}) {
+		t.Fatalf("clamped %+v", got)
+	}
+	if got := sceneLayerTiming(map[string]any{"volume": 0.0}); got.Volume != 0 {
+		t.Fatalf("volume 0 is a mute, not the default: %+v", got)
+	}
+	// A 4 s clip at PTS multiplier 2 (half speed) offset by 3 scene-seconds
+	// starts 1.5 s into the clip; offsets wrap at the clip's length.
+	if p := clipPhase(sceneGraphLayer{Duration: 4, Speed: 2, Offset: 3}); math.Abs(p-1.5) > 1e-9 {
+		t.Fatalf("phase %v", p)
+	}
+	if p := clipPhase(sceneGraphLayer{Duration: 4, Speed: 1, Offset: 9}); math.Abs(p-1) > 1e-9 {
+		t.Fatalf("wrapped phase %v", p)
+	}
+	if got := strings.Join(atempoChain(5), ","); got != "atempo=2,atempo=2,atempo=1.250000" {
+		t.Fatalf("atempo chain %s", got)
+	}
+	if got := strings.Join(atempoChain(0.3), ","); got != "atempo=0.5,atempo=0.600000" {
+		t.Fatalf("atempo chain %s", got)
+	}
+}
+
+func TestSceneGraphLayerTimingAndVolume(t *testing.T) {
+	layers := []sceneGraphLayer{{Media: "m.mp4", Motion: true, Audio: true, Duration: 4, Speed: 2, Offset: 3, Volume: 0.5, Region: SceneRect{W: 64, H: 64}, Mask: "k.png"}}
+	g := strings.Join(sceneGraphArgs("b.png", 100, 100, layers, true, 8, SceneRect{}), " ")
+	for _, want := range []string{"-stream_loop -1 -ss 1.5000 -i m.mp4", "setpts=PTS*2.000000", "[1:a]atempo=0.500000,volume=0.5000[at0]"} {
+		if !strings.Contains(g, want) {
+			t.Errorf("graph lacks %q:\n%s", want, g)
+		}
+	}
+}
+
+func TestSceneTimingInExportAndLength(t *testing.T) {
+	withSceneRoot(t)
+	id := "0123abcd-0000-0000-0000-00000000e001"
+	dir, _ := sceneDir(id)
+	_ = os.MkdirAll(dir, 0755)
+	clip := filepath.Join(dir, "c.mp4")
+	_ = os.WriteFile(clip, []byte("x"), 0644)
+	mask := maskDataURL(t, 10, 10, SceneRect{W: 5, H: 5})
+	layer := func(id string, opts map[string]any, d float64) *SceneLayer {
+		return &SceneLayer{ID: id, Kind: SceneKindMotion, Mask: mask, Options: opts,
+			Versions: []SceneVersion{{Path: clip, Duration: d, Audio: true, Region: SceneRect{W: 5, H: 5}}}, Active: 0}
+	}
+	s := &Scene{ID: id, Width: 10, Height: 10, Layers: []*SceneLayer{
+		layer("a", map[string]any{"speed": 2.0}, 6),                // 3 s at double speed
+		layer("b", map[string]any{"speed": 0.5, "sound": true}, 2), // 4 s at half speed: the longest
+		layer("c", map[string]any{"sound": true, "volume": 0.0}, 1),
+	}}
+	if d := sceneDuration(s); d != 4 {
+		t.Fatalf("scene length %v, want 4 (b's 2 s clip at half speed)", d)
+	}
+	gl, err := sceneGraphLayers(dir, s.Layers, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gl[0].Speed != 0.5 || gl[1].Speed != 2 || gl[2].Audio {
+		t.Fatalf("speeds %v %v, c audio %v (volume 0 mutes)", gl[0].Speed, gl[1].Speed, gl[2].Audio)
+	}
+}
+
+// An offset layer starts its loop part-way through (and keeps looping past
+// the clip's end); a half-speed layer takes twice as long per loop.
+func TestSceneExportOffsetAndSpeed(t *testing.T) {
+	ffmpegTest(t)
+	dir := t.TempDir()
+	clip := filepath.Join(dir, "c.mp4")
+	if err := runSceneFFmpeg(context.Background(), []string{"-f", "lavfi", "-i", "nullsrc=s=64x48:r=24,geq=lum=128+90*sin(X/6-PI*T):cb=128:cr=128",
+		"-t", "2", "-c:v", "libx264", "-crf", "8", "-pix_fmt", "yuv420p", clip}); err != nil {
+		t.Fatal(err)
+	}
+	base := filepath.Join(dir, "base.png")
+	solidPNG(t, base, 64, 48, color.RGBA{0, 0, 0, 255})
+	mask := filepath.Join(dir, "mask.png")
+	if err := os.WriteFile(mask, func() []byte {
+		b, _ := base64.StdEncoding.DecodeString(strings.TrimPrefix(maskDataURL(t, 64, 48, SceneRect{W: 64, H: 48}), "data:image/png;base64,"))
+		return b
+	}(), 0644); err != nil {
+		t.Fatal(err)
+	}
+	src := framesOf(t, clip)
+	nearest := func(f image.Image) int {
+		best, bd := -1, math.Inf(1)
+		for i, s := range src {
+			if d := meanAbs(f, s, s.Bounds()); d < bd {
+				best, bd = i, d
+			}
+		}
+		return best
+	}
+	render := func(g sceneGraphLayer, dur float64) []image.Image {
+		g.Media, g.Mask, g.Motion, g.Region, g.Duration = clip, mask, true, SceneRect{W: 64, H: 48}, 2
+		out := filepath.Join(dir, fmt.Sprintf("o%v_%v.mp4", g.Offset, g.Speed))
+		if err := runSceneFFmpeg(context.Background(), append(sceneGraphArgs(base, 64, 48, []sceneGraphLayer{g}, true, dur, SceneRect{}), out)); err != nil {
+			t.Fatal(err)
+		}
+		return framesOf(t, out)
+	}
+	off := render(sceneGraphLayer{Speed: 1, Offset: 0.5}, 3)
+	if n := nearest(off[0]); n < 11 || n > 13 {
+		t.Errorf("offset 0.5 s: first frame is clip frame %d, want ~12", n)
+	}
+	// 3 s of a 2 s clip from 0.5 s: frame 48 (2 s in) wrapped to clip 0.5 s.
+	if n := nearest(off[48]); n < 11 || n > 13 {
+		t.Errorf("offset loop: frame 48 is clip frame %d, want ~12", n)
+	}
+	slow := render(sceneGraphLayer{Speed: 2}, 4)
+	if n := nearest(slow[48]); n < 23 || n > 25 {
+		t.Errorf("half speed: 2 s in shows clip frame %d, want ~24", n)
 	}
 }

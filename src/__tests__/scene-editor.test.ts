@@ -135,3 +135,28 @@ describe('scene editor additions', () => {
     expect(sceneLength({ ...s, layers: [] })).toBe(5);
   });
 });
+
+describe('scene layer timing', () => {
+  // eslint-disable-next-line global-require
+  const { layerTiming, layerRate, sceneLength } = require('../renderer/components/scene/scene-api');
+  const v = (duration: number) => ({ path: 'p', region: { x: 0, y: 0, w: 1, h: 1 }, prompt: '', created: '', duration });
+  const motion = (id: string, d: number, options: Record<string, unknown>) => ({
+    id, name: id, kind: 'motion', region: { x: 0, y: 0, w: 1, h: 1 }, mask: '', feather: 0, prompt: '', versions: [v(d)], active: 0, options,
+  });
+  const scene = (layers: unknown[], extra = {}) => ({ id: 's', name: 's', source: 's', base: 'b', width: 1, height: 1, duration: 0, created: '', updated: '', layers, ...extra });
+
+  it('applies defaults and limits like the server', () => {
+    expect(layerTiming(undefined)).toEqual({ speed: 1, offset: 0, volume: 1 });
+    expect(layerTiming({ speed: 9, offset: -1, volume: 3 })).toEqual({ speed: 4, offset: 0, volume: 2 });
+    expect(layerTiming({ volume: 0 }).volume).toBe(0);
+  });
+
+  it('own speed first, then fitted to the scene (same cases as TestSceneTimingInExportAndLength)', () => {
+    const s = scene([motion('a', 6, { speed: 2 }), motion('b', 2, { speed: 0.5 })]);
+    expect(sceneLength(s)).toBe(4); // b: 2 s at half speed
+    expect(layerRate(s, s.layers[0])).toBeCloseTo(0.5 * (4 / 3)); // 3 s loops once in 4 s: slowed to fit
+    expect(layerRate(s, s.layers[1])).toBeCloseTo(2);
+    const free = scene(s.layers, { freeLoops: true });
+    expect(layerRate(free, free.layers[0])).toBe(0.5);
+  });
+});

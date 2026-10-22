@@ -796,6 +796,11 @@ body.sc-body {
   accent-color: var(--sc-accent);
 }
 
+.sc-btn-tiny {
+  height: 22px;
+  padding: 0 6px;
+}
+
 .sc-slider span {
   width: 48px;
   color: var(--sc-faint);

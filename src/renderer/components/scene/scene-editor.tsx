@@ -2,11 +2,10 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { isElectron, send } from '../../platform';
 import { imageOp, maskBounds, maskImagesReady, preloadMaskImages, rasterizeMask, rasterizeProtect, regionFor, type MaskOp, type Rect } from './mask';
 import {
-  loopSpeed,
+  layerRate,
   mergeServer,
   sceneApi,
   sceneBusy,
-  sceneLength,
   type LayerKind,
   type LayerOptions,
   type LoopKind,
@@ -755,7 +754,7 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
               motionShown={!!motionView && motionView.layerId === selected.id && motionView.n === selected.active}
               onShowMotion={() => toggleMotion(selected)}
               onGrowToMotion={() => growToMotion(selected)}
-              loopSpeed={doc.freeLoops ? 1 : loopSpeed(sceneLength(doc), selected.versions[selected.active]?.duration || 0)}
+              loopSpeed={layerRate(doc, selected)}
             />
           ) : (
             <section className="sc-section sc-help">

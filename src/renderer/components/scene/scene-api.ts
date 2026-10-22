@@ -41,6 +41,12 @@ export interface LayerOptions {
   sound?: boolean;
   megapixels?: number;
   describe?: string;
+  /** motion: playback rate (0.25-4, default 1) */
+  speed?: number;
+  /** motion: seconds of scene time its loop is shifted by, so layers don't pulse together (default 0) */
+  offset?: number;
+  /** motion: soundtrack gain (0-2, default 1; 0 mutes it) */
+  volume?: number;
   /** motion: lock the static parts to the still (default on; see media-server/tasks/scene_lock.go) */
   lock?: boolean;
   /** motion: output at the region's size with the still's fine detail (default on) */
@@ -180,9 +186,28 @@ export function sceneLength(s: Scene): number {
   let d = 0;
   s.layers.forEach((l) => {
     const v = l.versions[l.active];
-    if (l.kind === 'motion' && v && !l.hidden) d = Math.max(d, v.duration || 0);
+    // A layer played faster loops sooner.
+    if (l.kind === 'motion' && v && !l.hidden) d = Math.max(d, (v.duration || 0) / layerTiming(l.options).speed);
   });
   return d > 0 ? d : 5;
+}
+
+/** A motion layer's own timing with defaults and limits applied. Mirrors sceneLayerTiming in scene_loop.go. */
+export function layerTiming(o: LayerOptions | undefined): { speed: number; offset: number; volume: number } {
+  const speed = o && typeof o.speed === 'number' && o.speed > 0 ? Math.min(4, Math.max(0.25, o.speed)) : 1;
+  const offset = o && typeof o.offset === 'number' ? Math.max(0, o.offset) : 0;
+  const volume = o && typeof o.volume === 'number' ? Math.min(2, Math.max(0, o.volume)) : 1;
+  return { speed, offset, volume };
+}
+
+/**
+ * The PTS multiplier a motion layer plays at in the scene (1 = as generated, 2 = half speed): its own speed, then
+ * (synced loops) fitted so whole loops fill the scene length. Mirrors the export (sceneRenderTask).
+ */
+export function layerRate(s: Scene, l: SceneLayer): number {
+  const own = 1 / layerTiming(l.options).speed;
+  const d = l.versions[l.active]?.duration || 0;
+  return s.freeLoops ? own : own * loopSpeed(sceneLength(s), d * own);
 }
 
 /**

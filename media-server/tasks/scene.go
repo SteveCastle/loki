@@ -825,6 +825,11 @@ type sceneGraphLayer struct {
 	// 0 or 1 = as generated).
 	Duration float64
 	Speed    float64
+	// Offset (scene seconds) starts the loop at a different point; Volume
+	// scales its soundtrack, 0 = as generated (motion only; see
+	// sceneLayerTiming, which mutes a layer by leaving Audio off).
+	Offset float64
+	Volume float64
 }
 
 // sceneGraphArgs builds the ffmpeg inputs + filter graph compositing layers
@@ -849,6 +854,11 @@ func sceneGraphArgs(base string, w, h int, layers []sceneGraphLayer, video bool,
 		if l.Motion {
 			if video {
 				args = append(args, "-stream_loop", "-1")
+				// The offset is a phase: where in its loop the clip is at
+				// scene time 0, in the clip's own time.
+				if ss := clipPhase(l); ss > 0.001 {
+					args = append(args, "-ss", strconv.FormatFloat(ss, 'f', 4, 64))
+				}
 			}
 			args = append(args, "-i", l.Media)
 		} else {
@@ -869,8 +879,15 @@ func sceneGraphArgs(base string, w, h int, layers []sceneGraphLayer, video bool,
 			fmt.Sprintf("[b%d][l%d]overlay=%d:%d:format=auto:eof_action=repeat[b%d]", i, i, r.X, r.Y, i+1),
 		)
 		if video && l.Motion && l.Audio {
+			var chain []string
 			if retime != "" {
-				f = append(f, fmt.Sprintf("[%d:a]atempo=%.6f[at%d]", mi, 1/l.Speed, i))
+				chain = append(chain, atempoChain(1/l.Speed)...)
+			}
+			if l.Volume > 0 && math.Abs(l.Volume-1) > 1e-3 {
+				chain = append(chain, fmt.Sprintf("volume=%.4f", l.Volume))
+			}
+			if len(chain) > 0 {
+				f = append(f, fmt.Sprintf("[%d:a]%s[at%d]", mi, strings.Join(chain, ","), i))
 				audio = append(audio, fmt.Sprintf("[at%d]", i))
 			} else {
 				audio = append(audio, fmt.Sprintf("[%d:a]", mi))
@@ -924,9 +941,13 @@ func sceneGraphLayers(dir string, layers []*SceneLayer, stillsOnly bool) ([]scen
 		if err != nil {
 			return nil, err
 		}
-		g := sceneGraphLayer{Media: v.Path, Motion: l.Kind == SceneKindMotion, Region: v.Region, Mask: mask, Duration: v.Duration}
+		g := sceneGraphLayer{Media: v.Path, Motion: l.Kind == SceneKindMotion, Region: v.Region, Mask: mask, Duration: v.Duration, Speed: 1}
 		if g.Motion {
 			g.Audio = v.Audio && optBool(l.Options, "sound")
+			t := sceneLayerTiming(l.Options)
+			g.Speed, g.Offset, g.Volume = 1/t.Speed, t.Offset, t.Volume
+			// Volume 0 mutes it (in the graph, 0 means "as generated").
+			g.Audio = g.Audio && t.Volume > 0.001
 		}
 		out = append(out, g)
 	}
@@ -1263,8 +1284,11 @@ func sceneDuration(s *Scene) float64 {
 	}
 	d := 0.0
 	for _, l := range s.Layers {
-		if v := l.active(); v != nil && !l.Hidden && l.Kind == SceneKindMotion && v.Duration > d {
-			d = v.Duration
+		if v := l.active(); v != nil && !l.Hidden && l.Kind == SceneKindMotion {
+			// A layer played faster loops sooner.
+			if ld := v.Duration / sceneLayerTiming(l.Options).Speed; ld > d {
+				d = ld
+			}
 		}
 	}
 	if d <= 0 {
@@ -1364,8 +1388,10 @@ func sceneRenderTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 	dur := sceneDuration(s)
 	if !s.FreeLoops {
 		for i := range layers {
-			if layers[i].Motion {
-				layers[i].Speed = loopSpeed(dur, layers[i].Duration)
+			if g := &layers[i]; g.Motion {
+				// The layer's own speed first, then synced to the scene.
+				own := g.Speed
+				g.Speed = own * loopSpeed(dur, g.Duration*own)
 			}
 		}
 	}
