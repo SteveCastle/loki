@@ -180,10 +180,14 @@ type Scene struct {
 	Height     int           `json:"height"`
 	Layers     []*SceneLayer `json:"layers"` // bottom to top
 	// Duration of an export in seconds; 0 = the longest motion layer.
-	Duration float64      `json:"duration"`
-	Render   *SceneRender `json:"render,omitempty"`
-	Created  time.Time    `json:"created"`
-	Updated  time.Time    `json:"updated"`
+	Duration float64 `json:"duration"`
+	// FreeLoops: each motion layer loops at its own length. Off (the
+	// default), every layer is retimed to fit a whole number of its loops into
+	// the scene length (loopSpeed), so the export itself loops seamlessly.
+	FreeLoops bool         `json:"freeLoops,omitempty"`
+	Render    *SceneRender `json:"render,omitempty"`
+	Created   time.Time    `json:"created"`
+	Updated   time.Time    `json:"updated"`
 }
 
 // SceneSummary is a scene in a list (no masks).
@@ -473,6 +477,7 @@ func UpdateScene(q *jobqueue.Queue, id string, in *Scene) (*Scene, error) {
 		s.Name = name
 	}
 	s.Duration = clampFloat(in.Duration, 0, 60)
+	s.FreeLoops = in.FreeLoops
 
 	old := map[string]*SceneLayer{}
 	for _, l := range s.Layers {
@@ -816,6 +821,10 @@ type sceneGraphLayer struct {
 	Audio  bool // mix its soundtrack (motion only)
 	Region SceneRect
 	Mask   string // mask PNG, full frame at any resolution; alpha = coverage
+	// Duration of a motion clip, and Speed: its PTS multiplier (loopSpeed;
+	// 0 or 1 = as generated).
+	Duration float64
+	Speed    float64
 }
 
 // sceneGraphArgs builds the ffmpeg inputs + filter graph compositing layers
@@ -849,14 +858,23 @@ func sceneGraphArgs(base string, w, h int, layers []sceneGraphLayer, video bool,
 		still(l.Mask)
 		in += 2
 		r := l.Region
+		retime := ""
+		if l.Motion && video && l.Speed > 0 && math.Abs(l.Speed-1) > 1e-4 {
+			retime = fmt.Sprintf("setpts=PTS*%.6f,", l.Speed)
+		}
 		f = append(f,
-			fmt.Sprintf("[%d:v]scale=%d:%d,setsar=1,format=rgba[c%d]", mi, r.W, r.H, i),
+			fmt.Sprintf("[%d:v]%sscale=%d:%d:flags=lanczos,setsar=1,format=rgba[c%d]", mi, retime, r.W, r.H, i),
 			fmt.Sprintf("[%d:v]format=rgba,alphaextract,scale=%d:%d,crop=%d:%d:%d:%d,setsar=1[a%d]", ki, w, h, r.W, r.H, r.X, r.Y, i),
 			fmt.Sprintf("[c%d][a%d]alphamerge[l%d]", i, i, i),
 			fmt.Sprintf("[b%d][l%d]overlay=%d:%d:format=auto:eof_action=repeat[b%d]", i, i, r.X, r.Y, i+1),
 		)
 		if video && l.Motion && l.Audio {
-			audio = append(audio, fmt.Sprintf("[%d:a]", mi))
+			if retime != "" {
+				f = append(f, fmt.Sprintf("[%d:a]atempo=%.6f[at%d]", mi, 1/l.Speed, i))
+				audio = append(audio, fmt.Sprintf("[at%d]", i))
+			} else {
+				audio = append(audio, fmt.Sprintf("[%d:a]", mi))
+			}
 		}
 	}
 	last := fmt.Sprintf("[b%d]", len(layers))
@@ -906,7 +924,7 @@ func sceneGraphLayers(dir string, layers []*SceneLayer, stillsOnly bool) ([]scen
 		if err != nil {
 			return nil, err
 		}
-		g := sceneGraphLayer{Media: v.Path, Motion: l.Kind == SceneKindMotion, Region: v.Region, Mask: mask}
+		g := sceneGraphLayer{Media: v.Path, Motion: l.Kind == SceneKindMotion, Region: v.Region, Mask: mask, Duration: v.Duration}
 		if g.Motion {
 			g.Audio = v.Audio && optBool(l.Options, "sound")
 		}
@@ -1095,9 +1113,13 @@ func GenerateLayer(ctx context.Context, q *jobqueue.Queue, id, lid string) (*Sce
 	steps := []jobqueue.WorkflowTask{gen}
 	// Motion: lock the static parts to the still (scene_lock.go) unless the
 	// layer opts out; that is what keeps the region's edges static.
-	if l.Kind == SceneKindMotion && l.Options["lock"] != false {
+	// Detail (default on) brings it out at the region's own size with the
+	// still's fine detail (scene_lock.go).
+	freeze, detail := l.Options["lock"] != false, l.Options["detail"] != false
+	if l.Kind == SceneKindMotion && (freeze || detail) {
 		steps = append(steps, jobqueue.WorkflowTask{ID: uuid.NewString(), Command: "scene-lock",
-			Arguments: []string{"--still=" + input}, Dependencies: []string{gen.ID}})
+			Arguments: []string{"--still=" + input, "--freeze=" + strconv.FormatBool(freeze), "--detail=" + strconv.FormatBool(detail),
+				fmt.Sprintf("--size=%dx%d", region.W, region.H)}, Dependencies: []string{gen.ID}})
 	}
 	ids, err := q.AddWorkflow(jobqueue.Workflow{Tasks: steps})
 	if err != nil || len(ids) == 0 {
@@ -1137,6 +1159,48 @@ func CancelLayer(q *jobqueue.Queue, id, lid string) (*Scene, error) {
 	return s, nil
 }
 
+// KeepOnlyVersion discards every version of a layer but n (and their files).
+func KeepOnlyVersion(id, lid string, n int) (*Scene, error) {
+	sceneMu.Lock()
+	defer sceneMu.Unlock()
+	s, err := loadSceneLocked(id)
+	if err != nil {
+		return nil, err
+	}
+	for _, l := range s.Layers {
+		if l.ID != lid {
+			continue
+		}
+		if n < 0 || n >= len(l.Versions) {
+			return nil, fmt.Errorf("no version %d", n+1)
+		}
+		keep := l.Versions[n]
+		for i, v := range l.Versions {
+			if i != n && v.Path != keep.Path && inSceneDir(id, v.Path) {
+				os.Remove(v.Path)
+				os.Remove(motionMapPath(v.Path))
+			}
+		}
+		l.Versions = []SceneVersion{keep}
+		l.Active = 0
+		if err := saveSceneLocked(s); err != nil {
+			return nil, err
+		}
+		return s, nil
+	}
+	return nil, ErrLayerNotFound
+}
+
+// versionPathShared reports whether another remaining version uses path.
+func versionPathShared(vs []SceneVersion, path string) bool {
+	for _, v := range vs {
+		if v.Path == path {
+			return true
+		}
+	}
+	return false
+}
+
 // DeleteVersion drops version n of a layer (and its file).
 func DeleteVersion(id, lid string, n int) (*Scene, error) {
 	sceneMu.Lock()
@@ -1160,8 +1224,9 @@ func DeleteVersion(id, lid string, n int) (*Scene, error) {
 		case l.Active > n:
 			l.Active--
 		}
-		if inSceneDir(id, p) {
+		if inSceneDir(id, p) && !versionPathShared(l.Versions, p) {
 			os.Remove(p)
+			os.Remove(motionMapPath(p))
 		}
 		if err := saveSceneLocked(s); err != nil {
 			return nil, err
@@ -1171,64 +1236,23 @@ func DeleteVersion(id, lid string, n int) (*Scene, error) {
 	return nil, ErrLayerNotFound
 }
 
-// BoomerangVersion adds a seamless-loop version of a motion layer's version
-// n: the clip followed by itself reversed, so looping it never jumps.
-func BoomerangVersion(ctx context.Context, id, lid string, n int) (*Scene, error) {
+// VersionMotionMap returns where version n of motion layer lid moves (a PNG
+// data URL, alpha = motion, covering the version's region) and that region.
+func VersionMotionMap(ctx context.Context, id, lid string, n int) (string, SceneRect, error) {
 	sceneMu.Lock()
 	s, err := loadSceneLocked(id)
 	sceneMu.Unlock()
 	if err != nil {
-		return nil, err
+		return "", SceneRect{}, err
 	}
-	var src SceneVersion
-	found := false
 	for _, l := range s.Layers {
 		if l.ID == lid && l.Kind == SceneKindMotion && n >= 0 && n < len(l.Versions) {
-			src, found = l.Versions[n], true
+			v := l.Versions[n]
+			url, err := MotionMapDataURL(ctx, v.Path)
+			return url, v.Region, err
 		}
 	}
-	if !found {
-		return nil, ErrLayerNotFound
-	}
-	out := strings.TrimSuffix(src.Path, filepath.Ext(src.Path)) + "_loop.mp4"
-	if _, err := os.Stat(out); err == nil {
-		out = resolveConflict(out)
-	}
-	filter := "[0:v]split[f][r0];[r0]reverse[r];[f][r]concat=n=2:v=1:a=0[v]"
-	args := []string{"-i", src.Path}
-	maps := []string{"-map", "[v]"}
-	if src.Audio {
-		filter += ";[0:a]asplit[af][ar0];[ar0]areverse[ar];[af][ar]concat=n=2:v=0:a=1[a]"
-		maps = append(maps, "-map", "[a]", "-c:a", "aac", "-b:a", "192k")
-	}
-	args = append(args, "-filter_complex", filter)
-	args = append(args, maps...)
-	args = append(args, "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p", out)
-	if err := runSceneFFmpeg(ctx, args); err != nil {
-		return nil, err
-	}
-
-	sceneMu.Lock()
-	defer sceneMu.Unlock()
-	s, err = loadSceneLocked(id)
-	if err != nil {
-		os.Remove(out)
-		return nil, err
-	}
-	for _, l := range s.Layers {
-		if l.ID == lid {
-			v := src
-			v.Path, v.JobID, v.Created = out, "", time.Now().UTC()
-			v.Duration = src.Duration * 2
-			v.Note = fmt.Sprintf("boomerang of v%d", n+1)
-			l.Versions = append(l.Versions, v)
-			l.Active = len(l.Versions) - 1
-		}
-	}
-	if err := saveSceneLocked(s); err != nil {
-		return nil, err
-	}
-	return s, nil
+	return "", SceneRect{}, ErrLayerNotFound
 }
 
 // sceneDuration is an export's length: the scene's own, else the longest
@@ -1338,6 +1362,13 @@ func sceneRenderTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 	}
 
 	dur := sceneDuration(s)
+	if !s.FreeLoops {
+		for i := range layers {
+			if layers[i].Motion {
+				layers[i].Speed = loopSpeed(dur, layers[i].Duration)
+			}
+		}
+	}
 	args := sceneGraphArgs(s.Base, s.Width, s.Height, layers, video, dur, SceneRect{})
 	if video {
 		q.PushJobStdout(j.ID, fmt.Sprintf("%s: %d layer(s), %.2fs at %d fps -> %s", tag, len(layers), dur, sceneFPS, filepath.Base(output)))

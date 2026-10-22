@@ -90,3 +90,48 @@ describe('scene documents', () => {
     expect(canStartScene(undefined)).toBe(false);
   });
 });
+
+describe('scene editor additions', () => {
+  // eslint-disable-next-line global-require
+  const { alphaBox } = require('../renderer/components/scene/mask');
+  // eslint-disable-next-line global-require
+  const { loopSpeed, sceneLength } = require('../renderer/components/scene/scene-api');
+
+  it('protect paint and erasing never grow the region; image pieces count by what they cover', () => {
+    const ops: MaskOp[] = [
+      { t: 'rect', x: 100, y: 100, w: 50, h: 50 },
+      { t: 'stroke', pts: [900, 900, 950, 950], r: 20, keep: true },
+      { t: 'image', src: 'data:x', x: 0, y: 0, w: 2000, h: 1000, bx: 400, by: 300, bw: 100, bh: 60 },
+    ];
+    expect(maskBounds(ops)).toEqual({ x: 100, y: 100, w: 400, h: 260 });
+  });
+
+  it('finds the covered box of an alpha buffer', () => {
+    const w = 8;
+    const h = 4;
+    const data = new Uint8ClampedArray(w * h * 4);
+    data[(1 * w + 2) * 4 + 3] = 200;
+    data[(2 * w + 5) * 4 + 3] = 90;
+    data[(3 * w + 7) * 4 + 3] = 10; // below threshold
+    expect(alphaBox(data, w, h, 32)).toEqual({ x: 2, y: 1, w: 4, h: 2 });
+    expect(alphaBox(new Uint8ClampedArray(w * h * 4), w, h, 32)).toBeNull();
+  });
+
+  it('synced loops: a whole number of loops per scene length, like the server', () => {
+    expect(loopSpeed(10, 5)).toBe(1);
+    expect(loopSpeed(12, 5)).toBeCloseTo(1.2);
+    expect(loopSpeed(10, 4.8)).toBeCloseTo(10 / 9.6);
+    expect(loopSpeed(0, 5)).toBe(1);
+    const v = (duration: number) => ({ path: 'p', region: { x: 0, y: 0, w: 1, h: 1 }, prompt: '', created: '', duration });
+    const s = {
+      id: 's', name: 's', source: 's', base: 'b', width: 1, height: 1, duration: 0, created: '', updated: '',
+      layers: [
+        { id: 'a', name: 'a', kind: 'motion', region: { x: 0, y: 0, w: 1, h: 1 }, mask: '', feather: 0, prompt: '', versions: [v(5.2)], active: 0 },
+        { id: 'b', name: 'b', kind: 'motion', hidden: true, region: { x: 0, y: 0, w: 1, h: 1 }, mask: '', feather: 0, prompt: '', versions: [v(9)], active: 0 },
+      ],
+    };
+    expect(sceneLength(s)).toBe(5.2); // hidden layers don't count
+    expect(sceneLength({ ...s, duration: 8 })).toBe(8);
+    expect(sceneLength({ ...s, layers: [] })).toBe(5);
+  });
+});

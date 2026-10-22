@@ -14,8 +14,11 @@ package main
 //   DELETE /api/scenes/{id}                          delete the scene and its files
 //   POST   /api/scenes/{id}/layers/{lid}/generate    queue the layer's next generation
 //   POST   /api/scenes/{id}/layers/{lid}/cancel      cancel it
-//   POST   /api/scenes/{id}/layers/{lid}/versions/{n}/boomerang  seamless-loop copy of a motion version
+//   POST   /api/scenes/{id}/layers/{lid}/versions/{n}/loop {kind}  seamless-loop copy of a motion version
+//                                                               (crossfade | natural | boomerang)
+//   POST   /api/scenes/{id}/layers/{lid}/versions/{n}/motion    where a motion version moves {dataUrl, region}
 //   DELETE /api/scenes/{id}/layers/{lid}/versions/{n}            drop a version
+//   DELETE /api/scenes/{id}/layers/{lid}/versions?keep=N         drop every version but N
 //   POST   /api/scenes/{id}/render {format}          export video | still beside the source
 
 import (
@@ -32,8 +35,9 @@ func RegisterSceneRoutes(mux *http.ServeMux, deps *Dependencies) {
 	mux.HandleFunc("/api/scenes/{id}", renderer.ApplyMiddlewares(sceneHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/scenes/{id}/render", renderer.ApplyMiddlewares(sceneRenderHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/scenes/{id}/layers/{lid}/{action}", renderer.ApplyMiddlewares(sceneLayerActionHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/scenes/{id}/layers/{lid}/versions", renderer.ApplyMiddlewares(sceneKeepOnlyHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/scenes/{id}/layers/{lid}/versions/{n}", renderer.ApplyMiddlewares(sceneVersionHandler(deps), renderer.RoleAdmin))
-	mux.HandleFunc("/api/scenes/{id}/layers/{lid}/versions/{n}/boomerang", renderer.ApplyMiddlewares(sceneBoomerangHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/scenes/{id}/layers/{lid}/versions/{n}/{action}", renderer.ApplyMiddlewares(sceneVersionActionHandler(deps), renderer.RoleAdmin))
 }
 
 func sceneError(w http.ResponseWriter, err error) {
@@ -172,7 +176,23 @@ func sceneVersionHandler(deps *Dependencies) http.HandlerFunc {
 	}
 }
 
-func sceneBoomerangHandler(deps *Dependencies) http.HandlerFunc {
+func sceneKeepOnlyHandler(deps *Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete {
+			http.Error(w, "Use DELETE", http.StatusMethodNotAllowed)
+			return
+		}
+		n, err := strconv.Atoi(r.URL.Query().Get("keep"))
+		if err != nil {
+			sceneError(w, errors.New("needs ?keep=<version index>"))
+			return
+		}
+		s, err := tasks.KeepOnlyVersion(r.PathValue("id"), r.PathValue("lid"), n)
+		sceneReply(w, s, err)
+	}
+}
+
+func sceneVersionActionHandler(deps *Dependencies) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Use POST", http.StatusMethodNotAllowed)
@@ -182,7 +202,27 @@ func sceneBoomerangHandler(deps *Dependencies) http.HandlerFunc {
 		if !ok {
 			return
 		}
-		s, err := tasks.BoomerangVersion(r.Context(), r.PathValue("id"), r.PathValue("lid"), n)
-		sceneReply(w, s, err)
+		id, lid := r.PathValue("id"), r.PathValue("lid")
+		switch r.PathValue("action") {
+		case "loop":
+			var req struct {
+				Kind string `json:"kind"`
+			}
+			_ = readJSONBody(r, &req)
+			s, err := tasks.LoopVersion(r.Context(), id, lid, n, req.Kind)
+			sceneReply(w, s, err)
+		case "boomerang":
+			s, err := tasks.LoopVersion(r.Context(), id, lid, n, tasks.LoopBoomerang)
+			sceneReply(w, s, err)
+		case "motion":
+			url, region, err := tasks.VersionMotionMap(r.Context(), id, lid, n)
+			if err != nil {
+				sceneError(w, err)
+				return
+			}
+			writeJSON(w, map[string]any{"dataUrl": url, "region": region})
+		default:
+			http.NotFound(w, r)
+		}
 	}
 }

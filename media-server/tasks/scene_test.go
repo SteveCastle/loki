@@ -7,6 +7,7 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -329,7 +330,7 @@ func TestSceneFlattenWithFFmpeg(t *testing.T) {
 		t.Fatal(err)
 	}
 	b := s2.Layers[1]
-	if len(b.Versions) != 2 || b.Active != 1 || b.Versions[1].Duration != 2 {
+	if len(b.Versions) != 2 || b.Active != 1 || math.Abs(b.Versions[1].Duration-2) > 0.1 {
 		t.Fatalf("boomerang version: %+v", b.Versions)
 	}
 	if d := probeVideoDuration(context.Background(), b.Versions[1].Path); d < 1.9 || d > 2.2 {

@@ -8,10 +8,31 @@
 // context around it, and the feathered mask must fade out inside the region
 // (the crop's own edges must never show).
 
+// An op adds to the mask, or with `erase` takes away from it. `keep` ops are
+// the Protect brush: areas the layer must leave as the picture below. They
+// cut the mask like an erase but are their own paint (shown in their own
+// colour, cleared on their own) and never grow the region the engine sees.
+// An `image` op is a raster piece of mask (alpha = coverage) placed over a
+// rectangle, e.g. a version's motion map ("Grow mask to motion"); b* is the
+// bounding box of what it actually covers.
 export type MaskOp =
-  | { t: 'rect'; x: number; y: number; w: number; h: number; erase?: boolean }
-  | { t: 'lasso'; pts: number[]; erase?: boolean }
-  | { t: 'stroke'; pts: number[]; r: number; erase?: boolean };
+  | { t: 'rect'; x: number; y: number; w: number; h: number; erase?: boolean; keep?: boolean }
+  | { t: 'lasso'; pts: number[]; erase?: boolean; keep?: boolean }
+  | { t: 'stroke'; pts: number[]; r: number; erase?: boolean; keep?: boolean }
+  | {
+      t: 'image';
+      src: string;
+      x: number;
+      y: number;
+      w: number;
+      h: number;
+      bx: number;
+      by: number;
+      bw: number;
+      bh: number;
+      erase?: boolean;
+      keep?: boolean;
+    };
 
 export interface Rect {
   x: number;
@@ -45,10 +66,13 @@ export function maskBounds(ops: MaskOp[]): Rect | null {
     y1 = Math.max(y1, y + pad);
   };
   ops.forEach((op) => {
-    if (op.erase) return;
+    if (op.erase || op.keep) return;
     if (op.t === 'rect') {
       add(op.x, op.y);
       add(op.x + op.w, op.y + op.h);
+    } else if (op.t === 'image') {
+      add(op.bx, op.by);
+      add(op.bx + op.bw, op.by + op.bh);
     } else {
       const pad = op.t === 'stroke' ? op.r : 0;
       for (let i = 0; i + 1 < op.pts.length; i += 2) add(op.pts[i], op.pts[i + 1], pad);
@@ -122,17 +146,56 @@ export function maskSize(frameW: number, frameH: number): { w: number; h: number
   return { w: Math.max(1, Math.round(frameW * scale)), h: Math.max(1, Math.round(frameH * scale)), scale };
 }
 
-/** Draw ops (white, alpha = coverage) onto ctx, whose pixels are frame pixels × scale. */
-export function drawOps(ctx: CanvasRenderingContext2D, ops: MaskOp[], scale: number): void {
+// Decoded images of `image` ops, by src (data URLs). Rasterizing is
+// synchronous, so they are decoded ahead (preloadMaskImages).
+const maskImages = new Map<string, HTMLImageElement>();
+
+function maskImage(src: string): HTMLImageElement | null {
+  const img = maskImages.get(src);
+  return img && img.complete && img.naturalWidth > 0 ? img : null;
+}
+
+/** Decode the images of every `image` op (resolves when all are ready or failed). */
+export function preloadMaskImages(ops: MaskOp[]): Promise<void> {
+  const waits: Array<Promise<void>> = [];
+  ops.forEach((op) => {
+    if (op.t !== 'image' || maskImage(op.src)) return;
+    let img = maskImages.get(op.src);
+    if (!img) {
+      img = new Image();
+      img.src = op.src;
+      maskImages.set(op.src, img);
+    }
+    waits.push(img.decode().catch(() => undefined));
+  });
+  return Promise.all(waits).then(() => undefined);
+}
+
+/** Whether every `image` op can be drawn now. */
+export function maskImagesReady(ops: MaskOp[]): boolean {
+  return ops.every((op) => op.t !== 'image' || !!maskImage(op.src));
+}
+
+/**
+ * Draw ops (white, alpha = coverage) onto ctx, whose pixels are frame pixels × scale. `erase` and `keep` ops cut
+ * what is under them; with `keepAsPaint` only the keep ops are drawn, as paint (the Protect overlay).
+ */
+export function drawOps(ctx: CanvasRenderingContext2D, ops: MaskOp[], scale: number, keepAsPaint = false): void {
   ctx.save();
   ctx.fillStyle = '#fff';
   ctx.strokeStyle = '#fff';
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
   ops.forEach((op) => {
-    ctx.globalCompositeOperation = op.erase ? 'destination-out' : 'source-over';
+    if (keepAsPaint && !op.keep) return;
+    ctx.globalCompositeOperation = !keepAsPaint && (op.erase || op.keep) ? 'destination-out' : 'source-over';
     if (op.t === 'rect') {
       ctx.fillRect(op.x * scale, op.y * scale, op.w * scale, op.h * scale);
+      return;
+    }
+    if (op.t === 'image') {
+      const img = maskImage(op.src);
+      if (img) ctx.drawImage(img, op.x * scale, op.y * scale, op.w * scale, op.h * scale);
       return;
     }
     const p = op.pts;
@@ -165,8 +228,10 @@ export function drawOps(ctx: CanvasRenderingContext2D, ops: MaskOp[], scale: num
  * The mask the server composites through: a full-frame PNG (long edge <= MASK_MAX) whose alpha is the layer's
  * coverage, with the feather (frame pixels) as a blur. '' when nothing is painted.
  */
-export function rasterizeMask(ops: MaskOp[], frameW: number, frameH: number, feather: number): string {
+export function rasterizeMask(ops: MaskOp[], frameW: number, frameH: number, feather: number): string | null {
   if (!maskBounds(ops)) return '';
+  // An image piece not decoded yet would silently drop out of the mask: null = try again once preloaded.
+  if (!maskImagesReady(ops)) return null;
   const { w, h, scale } = maskSize(frameW, frameH);
   const hard = document.createElement('canvas');
   hard.width = w;
@@ -184,6 +249,68 @@ export function rasterizeMask(ops: MaskOp[], frameW: number, frameH: number, fea
   sctx.filter = `blur(${Math.max(0.5, (feather * scale) / 2)}px)`;
   sctx.drawImage(hard, 0, 0);
   return soft.toDataURL('image/png');
+}
+
+/** The Protect paint alone, for its overlay (same raster size and feather as the mask); '' when there is none. */
+export function rasterizeProtect(ops: MaskOp[], frameW: number, frameH: number, feather: number): string {
+  if (!ops.some((op) => op.keep)) return '';
+  const { w, h, scale } = maskSize(frameW, frameH);
+  const hard = document.createElement('canvas');
+  hard.width = w;
+  hard.height = h;
+  const hctx = hard.getContext('2d');
+  if (!hctx) return '';
+  drawOps(hctx, ops, scale, true);
+  if (feather <= 0) return hard.toDataURL('image/png');
+  const soft = document.createElement('canvas');
+  soft.width = w;
+  soft.height = h;
+  const sctx = soft.getContext('2d');
+  if (!sctx) return hard.toDataURL('image/png');
+  sctx.filter = `blur(${Math.max(0.5, (feather * scale) / 2)}px)`;
+  sctx.drawImage(hard, 0, 0);
+  return soft.toDataURL('image/png');
+}
+
+/** Bounding box of the pixels whose alpha is at least `threshold` in an RGBA buffer, or null. */
+export function alphaBox(data: Uint8ClampedArray, width: number, height: number, threshold: number): Rect | null {
+  let x0 = width;
+  let y0 = height;
+  let x1 = -1;
+  let y1 = -1;
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      if (data[(y * width + x) * 4 + 3] >= threshold) {
+        if (x < x0) x0 = x;
+        if (x > x1) x1 = x;
+        if (y < y0) y0 = y;
+        if (y > y1) y1 = y;
+      }
+    }
+  }
+  return x1 < 0 ? null : { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 };
+}
+
+/**
+ * A mask piece from an alpha image (a data URL, so never tainted) placed over `rect`, covering where its alpha is
+ * at least `threshold`; null when it covers nothing.
+ */
+export async function imageOp(src: string, rect: Rect, threshold = 32): Promise<MaskOp | null> {
+  const img = new Image();
+  img.src = src;
+  await img.decode();
+  const c = document.createElement('canvas');
+  c.width = img.naturalWidth;
+  c.height = img.naturalHeight;
+  const ctx = c.getContext('2d');
+  if (!ctx) return null;
+  ctx.drawImage(img, 0, 0);
+  const box = alphaBox(ctx.getImageData(0, 0, c.width, c.height).data, c.width, c.height, threshold);
+  if (!box) return null;
+  const sx = rect.w / c.width;
+  const sy = rect.h / c.height;
+  maskImages.set(src, img);
+  return { t: 'image', src, x: rect.x, y: rect.y, w: rect.w, h: rect.h, bx: rect.x + box.x * sx, by: rect.y + box.y * sy, bw: box.w * sx, bh: box.h * sy };
 }
 
 /** Ramer–Douglas–Peucker: thin a freehand path to the points that matter (tol in frame px). */

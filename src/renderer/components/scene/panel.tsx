@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { mediaUrl } from '../../platform';
 import { maskBounds, rectContains, type ContextSize } from './mask';
-import type { LayerOptions, SceneLayer } from './scene-api';
+import type { LayerOptions, LoopKind, SceneLayer } from './scene-api';
 
 // The Scene editor's right-hand panel: the layer stack (top of the list = top
 // of the picture) and the selected layer's settings, generation and versions.
@@ -153,7 +153,40 @@ export interface InspectorProps {
   onDelete: () => void;
   onClearMask: () => void;
   onDeleteVersion: (n: number) => void;
-  onBoomerang: (n: number) => void;
+  /** Discard every version but n. */
+  onKeepOnly: (n: number) => void;
+  onLoop: (n: number, kind: LoopKind) => void;
+  /** Whether the active version's motion map is shown; toggled by onShowMotion. */
+  motionShown: boolean;
+  onShowMotion: () => void;
+  onGrowToMotion: () => void;
+  onClearProtect: () => void;
+  /** Synced loops: the active version's PTS multiplier in the scene (1 = as generated). */
+  loopSpeed: number;
+}
+
+/** A version chip's discard button: the first click arms it, the second (within 3 s) discards. */
+function DiscardButton({ label, onDiscard }: { label: string; onDiscard: () => void }) {
+  const [armed, setArmed] = useState(false);
+  useEffect(() => {
+    if (!armed) return undefined;
+    const t = window.setTimeout(() => setArmed(false), 3000);
+    return () => window.clearTimeout(t);
+  }, [armed]);
+  return (
+    <button
+      type="button"
+      className={`sc-version-x${armed ? ' armed' : ''}`}
+      title={armed ? `Click again to discard ${label} (deletes its file)` : `Discard ${label}`}
+      onClick={(e) => {
+        e.stopPropagation();
+        if (armed) onDiscard();
+        else setArmed(true);
+      }}
+    >
+      {armed ? 'discard?' : '×'}
+    </button>
+  );
 }
 
 export function Inspector(props: InspectorProps) {
@@ -241,7 +274,9 @@ export function Inspector(props: InspectorProps) {
                 { value: 'fast', label: 'Fast', title: 'FastH3 Omni, 8 steps: about 2.5× faster, may lose some quality' },
               ]}
             />
-            <span className="sc-label">Detail</span>
+            <span className="sc-label" title="How many pixels the engine renders the area at">
+              Resolution
+            </span>
             <Seg
               value={o.megapixels || 0.5}
               onChange={(megapixels) => props.onOptions({ megapixels })}
@@ -263,6 +298,21 @@ export function Inspector(props: InspectorProps) {
                   title: 'Wherever the generated video does not really move, it becomes the still itself, and the moving part takes the still’s tones: the edges blend back into the picture with no shimmer, drift or halo',
                 },
                 { value: 0, label: 'Free', title: 'Use the engine’s video as it is (it may shimmer or shift in tone against the still)' },
+              ]}
+            />
+            <span className="sc-label" title="Bring the motion out at the area's own resolution, with the still's fine detail">
+              Detail
+            </span>
+            <Seg
+              value={o.detail === false ? 0 : 1}
+              onChange={(v) => props.onOptions({ detail: v === 1 })}
+              options={[
+                {
+                  value: 1,
+                  label: 'Match still',
+                  title: 'The engine renders about 1 MP; the video is brought up to the area’s own size and the still’s fine detail is added back where things move gently',
+                },
+                { value: 0, label: 'Engine', title: 'The engine’s own resolution, scaled up to fit the area' },
               ]}
             />
             <span className="sc-label">Sound</span>
@@ -337,46 +387,78 @@ export function Inspector(props: InspectorProps) {
           <div className="sc-label">Versions</div>
           <div className="sc-version-chips">
             {l.versions.map((v, i) => (
-              <button
-                // eslint-disable-next-line react/no-array-index-key
-                key={`${v.path}-${i}`}
-                type="button"
-                className={`sc-version${i === l.active ? ' on' : ''}`}
-                title={`${v.note ? `${v.note} · ` : ''}${v.prompt || '(ambient motion)'}`}
-                onClick={() => props.onPatch({ active: i })}
-              >
-                {motion ? (
-                  <video src={mediaUrl(v.path)} muted preload="metadata" />
-                ) : (
-                  <img src={mediaUrl(v.path)} alt="" loading="lazy" />
-                )}
-                <span>v{i + 1}</span>
-              </button>
+              // eslint-disable-next-line react/no-array-index-key
+              <div key={`${v.path}-${i}`} className={`sc-version${i === l.active ? ' on' : ''}`}>
+                <button
+                  type="button"
+                  className="sc-version-pick"
+                  title={`${v.note ? `${v.note} · ` : ''}${v.prompt || '(ambient motion)'}`}
+                  onClick={() => props.onPatch({ active: i })}
+                >
+                  {motion ? <video src={mediaUrl(v.path)} muted preload="metadata" /> : <img src={mediaUrl(v.path)} alt="" loading="lazy" />}
+                  <span>v{i + 1}</span>
+                </button>
+                <DiscardButton label={`v${i + 1}`} onDiscard={() => props.onDeleteVersion(i)} />
+              </div>
             ))}
             <button type="button" className={`sc-version none${l.active < 0 ? ' on' : ''}`} onClick={() => props.onPatch({ active: -1 })} title="Show no version (the picture below)">
               <span>off</span>
             </button>
           </div>
           {version && (
-            <div className="sc-version-actions">
-              <span className="sc-faint sc-version-prompt">{version.note || version.prompt || 'ambient motion'}</span>
+            <>
+              <div className="sc-version-actions">
+                <span className="sc-faint sc-version-prompt">
+                  {version.note || version.prompt || 'ambient motion'}
+                  {motion && Math.abs(props.loopSpeed - 1) > 0.005 ? ` · plays at ${(100 / props.loopSpeed).toFixed(0)}% speed to loop with the scene` : ''}
+                </span>
+                {l.versions.length > 1 && (
+                  <button type="button" className="sc-btn sc-btn-quiet" disabled={busy} onClick={() => props.onKeepOnly(l.active)} title="Discard every other version (deletes their files)">
+                    Keep only v{l.active + 1}
+                  </button>
+                )}
+              </div>
               {motion && (
-                <button type="button" className="sc-btn" disabled={busy} onClick={() => props.onBoomerang(l.active)} title="Add a version that plays forward then backward, so the loop never jumps">
-                  Seamless loop
-                </button>
+                <>
+                  <div className="sc-version-actions">
+                    <span className="sc-label">Loop</span>
+                    <button type="button" className="sc-btn" disabled={busy} onClick={() => props.onLoop(l.active, 'crossfade')} title="The end dissolves into the start: for things that move one way (water, smoke, fire, clouds)">
+                      Crossfade
+                    </button>
+                    <button type="button" className="sc-btn" disabled={busy} onClick={() => props.onLoop(l.active, 'natural')} title="Find the two moments that look most alike and loop between them">
+                      Natural
+                    </button>
+                    <button type="button" className="sc-btn" disabled={busy} onClick={() => props.onLoop(l.active, 'boomerang')} title="Forward then backward: for back-and-forth motion (swaying, breathing, flicker)">
+                      Boomerang
+                    </button>
+                  </div>
+                  <div className="sc-version-actions">
+                    <span className="sc-label">Motion</span>
+                    <button type="button" className={`sc-btn${props.motionShown ? ' on' : ''}`} disabled={busy} onClick={props.onShowMotion} title="Tint where this version actually moves">
+                      Show
+                    </button>
+                    <button type="button" className="sc-btn" disabled={busy} onClick={props.onGrowToMotion} title="Add everywhere this version moves to the mask, so no motion is cut off at its edge">
+                      Grow mask to motion
+                    </button>
+                  </div>
+                </>
               )}
-              <button type="button" className="sc-btn sc-btn-quiet" onClick={() => props.onDeleteVersion(l.active)}>
-                Delete v{l.active + 1}
-              </button>
-            </div>
+            </>
           )}
         </div>
       )}
 
       <div className="sc-layer-foot">
-        <button type="button" className="sc-btn sc-btn-quiet" disabled={!painted} onClick={props.onClearMask}>
-          Clear mask
-        </button>
+        <span>
+          <button type="button" className="sc-btn sc-btn-quiet" disabled={!painted} onClick={props.onClearMask}>
+            Clear mask
+          </button>
+          {(l.shapes || []).some((op) => op.keep) && (
+            <button type="button" className="sc-btn sc-btn-quiet" onClick={props.onClearProtect}>
+              Clear protect
+            </button>
+          )}
+        </span>
         {confirmDelete ? (
           <span className="sc-confirm">
             Delete layer{l.versions.length ? ` and ${l.versions.length} version${l.versions.length > 1 ? 's' : ''}` : ''}?

@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { mediaUrl } from '../../platform';
 import { pointInRect, simplifyPath, type MaskOp, type Rect } from './mask';
-import type { Scene, SceneLayer } from './scene-api';
+import { loopSpeed, sceneLength, type Scene, type SceneLayer } from './scene-api';
 
 // The canvas of the Scene editor: the base frame with every generated layer
 // composited live the way the export will be (each result placed over the
@@ -9,7 +9,7 @@ import type { Scene, SceneLayer } from './scene-api';
 // same PNG the server composites with), plus the drawing tools for the
 // selected layer's mask. Coordinates handed out are base-frame pixels.
 
-export type Tool = 'select' | 'box' | 'brush' | 'lasso' | 'erase' | 'hand';
+export type Tool = 'select' | 'box' | 'brush' | 'lasso' | 'erase' | 'protect' | 'hand';
 
 interface View {
   zoom: number;
@@ -18,9 +18,22 @@ interface View {
 }
 
 type Draft =
-  | { t: 'rect'; x0: number; y0: number; x1: number; y1: number; erase: boolean }
-  | { t: 'lasso' | 'stroke'; pts: number[]; erase: boolean }
+  | { t: 'rect'; x0: number; y0: number; x1: number; y1: number; erase: boolean; keep?: boolean }
+  | { t: 'lasso' | 'stroke'; pts: number[]; erase: boolean; keep?: boolean }
   | null;
+
+/**
+ * One clock for every motion layer, so the preview plays the way the export renders: with synced loops each layer
+ * runs at 1/loopSpeed and is held to its place in the scene's loop.
+ */
+interface SceneClock {
+  t0: number;
+  pausedAt: number | null;
+}
+
+function clockSeconds(c: SceneClock): number {
+  return ((c.pausedAt ?? performance.now()) - c.t0) / 1000;
+}
 
 export interface StageProps {
   scene: Scene;
@@ -35,6 +48,10 @@ export interface StageProps {
   /** Bumped to restart every motion layer from its first frame together. */
   syncKey: number;
   fitKey: number;
+  /** The selected layer's Protect paint (a full-frame alpha PNG), tinted on its own. */
+  protectMask: string;
+  /** Where a version moves (alpha PNG over `region`), tinted while shown. */
+  motionOverlay: { dataUrl: string; region: Rect } | null;
   onCommit: (op: MaskOp) => void;
   onSelect: (id: string | null) => void;
 }
@@ -57,8 +74,40 @@ function maskStyle(mask: string): React.CSSProperties {
   } as React.CSSProperties;
 }
 
-function MotionMedia({ src, playing, muted, syncKey, style }: { src: string; playing: boolean; muted: boolean; syncKey: number; style: React.CSSProperties }) {
+interface MotionMediaProps {
+  src: string;
+  playing: boolean;
+  muted: boolean;
+  syncKey: number;
+  style: React.CSSProperties;
+  /** Synced loops: PTS multiplier (loopSpeed) and the scene clock / length; null = loop freely. */
+  sync: { speed: number; clock: React.MutableRefObject<SceneClock>; length: number } | null;
+}
+
+function MotionMedia({ src, playing, muted, syncKey, style, sync }: MotionMediaProps) {
   const ref = useRef<HTMLVideoElement>(null);
+  const speed = sync ? sync.speed : 1;
+  useEffect(() => {
+    const v = ref.current;
+    if (v) v.playbackRate = 1 / speed;
+  }, [speed, src]);
+  // Hold the clip to its place in the scene's loop (it drifts, and seeks/restarts break step).
+  const clockRef = sync?.clock;
+  const syncLength = sync?.length ?? 0;
+  useEffect(() => {
+    if (!clockRef || !playing || !(syncLength > 0)) return undefined;
+    const t = window.setInterval(() => {
+      const v = ref.current;
+      if (!v || !(v.duration > 0) || v.seeking) return;
+      const sceneT = clockSeconds(clockRef.current) % syncLength;
+      const want = (sceneT / speed) % v.duration;
+      let drift = v.currentTime - want;
+      if (drift > v.duration / 2) drift -= v.duration;
+      if (drift < -v.duration / 2) drift += v.duration;
+      if (Math.abs(drift) > 0.12) v.currentTime = want;
+    }, 250);
+    return () => window.clearInterval(t);
+  }, [clockRef, syncLength, speed, playing]);
   useEffect(() => {
     const v = ref.current;
     if (!v) return;
@@ -72,11 +121,43 @@ function MotionMedia({ src, playing, muted, syncKey, style }: { src: string; pla
       if (playing) v.play().catch(() => undefined);
     }
   }, [syncKey]);
-  return <video ref={ref} className="sc-media" src={src} style={style} muted={muted} loop playsInline autoPlay={playing} preload="auto" />;
+  return (
+    <video
+      ref={ref}
+      className="sc-media"
+      src={src}
+      style={style}
+      muted={muted}
+      loop
+      playsInline
+      autoPlay={playing}
+      preload="auto"
+      onLoadedMetadata={(e) => {
+        e.currentTarget.playbackRate = 1 / speed;
+      }}
+    />
+  );
 }
 
 export default function Stage(props: StageProps) {
-  const { scene, selected, tool, brush, showMask, compare, playing, soundOn, syncKey, fitKey, onCommit, onSelect } = props;
+  const { scene, selected, tool, brush, showMask, compare, playing, soundOn, syncKey, fitKey, protectMask, motionOverlay, onCommit, onSelect } = props;
+  const clock = useRef<SceneClock>({ t0: performance.now(), pausedAt: null });
+  useEffect(() => {
+    const c = clock.current;
+    const now = performance.now();
+    if (!playing && c.pausedAt === null) c.pausedAt = now;
+    if (playing && c.pausedAt !== null) {
+      c.t0 += now - c.pausedAt;
+      c.pausedAt = null;
+    }
+  }, [playing]);
+  useEffect(() => {
+    if (!syncKey) return;
+    clock.current = { t0: performance.now(), pausedAt: playing ? null : performance.now() };
+    // only an explicit restart resets the clock
+  }, [syncKey]);
+  const length = sceneLength(scene);
+  const synced = !scene.freeLoops;
   const wrapRef = useRef<HTMLDivElement>(null);
   const draftRef = useRef<HTMLCanvasElement>(null);
   const [view, setView] = useState<View | null>(null);
@@ -158,8 +239,15 @@ export default function Stage(props: StageProps) {
     if (!d) return;
     const X = (v: number) => view.x + v * view.zoom;
     const Y = (v: number) => view.y + v * view.zoom;
-    const fill = d.erase ? 'rgba(255, 90, 120, 0.35)' : 'rgba(0, 200, 150, 0.35)';
-    const line = d.erase ? 'rgb(255, 120, 160)' : '#00c896';
+    let fill = 'rgba(0, 200, 150, 0.35)';
+    let line = '#00c896';
+    if (d.erase) {
+      fill = 'rgba(255, 90, 120, 0.35)';
+      line = 'rgb(255, 120, 160)';
+    } else if (d.keep) {
+      fill = 'rgba(80, 160, 255, 0.4)';
+      line = '#50a0ff';
+    }
     ctx.fillStyle = fill;
     ctx.strokeStyle = line;
     ctx.lineWidth = 1.5;
@@ -193,7 +281,7 @@ export default function Stage(props: StageProps) {
 
   useEffect(() => paintDraft(), [paintDraft]);
 
-  const drawTool = tool === 'box' || tool === 'brush' || tool === 'lasso' || tool === 'erase';
+  const drawTool = tool === 'box' || tool === 'brush' || tool === 'lasso' || tool === 'erase' || tool === 'protect';
   const panning = spaceDown || tool === 'hand';
 
   const onPointerDown = (e: React.PointerEvent) => {
@@ -218,10 +306,11 @@ export default function Stage(props: StageProps) {
       return;
     }
     if (!selected || !drawTool) return;
-    const erase = tool === 'erase' || e.altKey;
+    const keep = tool === 'protect';
+    const erase = !keep && (tool === 'erase' || e.altKey);
     drag.current = { kind: 'draw' };
     if (tool === 'box') draft.current = { t: 'rect', x0: p.x, y0: p.y, x1: p.x, y1: p.y, erase };
-    else draft.current = { t: tool === 'lasso' ? 'lasso' : 'stroke', pts: [p.x, p.y], erase };
+    else draft.current = { t: tool === 'lasso' ? 'lasso' : 'stroke', pts: [p.x, p.y], erase, keep };
     paintDraft();
   };
 
@@ -277,7 +366,7 @@ export default function Stage(props: StageProps) {
       if (pts.length >= 6) onCommit({ t: 'lasso', pts, erase: dr.erase || undefined });
       return;
     }
-    onCommit({ t: 'stroke', pts, r: brush, erase: dr.erase || undefined });
+    onCommit({ t: 'stroke', pts, r: brush, erase: dr.erase || undefined, keep: dr.keep || undefined });
   };
 
   const onWheel = (e: React.WheelEvent) => {
@@ -325,7 +414,14 @@ export default function Stage(props: StageProps) {
             return (
               <div key={l.id} className="sc-layer" style={maskStyle(l.mask)}>
                 {l.kind === 'motion' ? (
-                  <MotionMedia src={src} playing={playing} muted={!soundOn || !l.options?.sound} syncKey={syncKey} style={style} />
+                  <MotionMedia
+                    src={src}
+                    playing={playing}
+                    muted={!soundOn || !l.options?.sound}
+                    syncKey={syncKey}
+                    style={style}
+                    sync={synced ? { speed: loopSpeed(length, v.duration || 0), clock, length } : null}
+                  />
                 ) : (
                   <img className="sc-media" src={src} style={style} alt="" draggable={false} />
                 )}
@@ -333,6 +429,10 @@ export default function Stage(props: StageProps) {
             );
           })}
         {sel && showMask && sel.mask && !compare && <div className={`sc-mask-tint${sel.kind === 'motion' ? ' motion' : ''}`} style={maskStyle(sel.mask)} />}
+        {sel && showMask && protectMask && !compare && <div className="sc-mask-tint protect" style={maskStyle(protectMask)} />}
+        {motionOverlay && !compare && (
+          <div className="sc-motion-tint" style={{ ...regionStyle(motionOverlay.region, scene), ...maskStyle(motionOverlay.dataUrl) }} />
+        )}
         {sel && sel.region.w > 0 && !compare && (
           <div className={`sc-region${sel.kind === 'motion' ? ' motion' : ''}`} style={regionStyle(sel.region, scene)}>
             <span className="sc-region-label">{selVersion && !sameRect(selVersion.region, sel.region) ? 'next generation sees this' : 'the engine sees this'}</span>
@@ -352,9 +452,9 @@ export default function Stage(props: StageProps) {
         )}
       </div>
       <canvas ref={draftRef} className="sc-draft" style={{ width: size.w, height: size.h }} />
-      {cursor && view && sel && (tool === 'brush' || tool === 'erase') && !panning && (
+      {cursor && view && sel && (tool === 'brush' || tool === 'erase' || tool === 'protect') && !panning && (
         <div
-          className={`sc-brush-cursor${tool === 'erase' ? ' erase' : ''}`}
+          className={`sc-brush-cursor${tool === 'erase' ? ' erase' : ''}${tool === 'protect' ? ' protect' : ''}`}
           style={{ left: view.x + cursor.x * view.zoom, top: view.y + cursor.y * view.zoom, width: brush * 2 * view.zoom, height: brush * 2 * view.zoom }}
         />
       )}

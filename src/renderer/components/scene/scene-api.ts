@@ -43,6 +43,8 @@ export interface LayerOptions {
   describe?: string;
   /** motion: lock the static parts to the still (default on; see media-server/tasks/scene_lock.go) */
   lock?: boolean;
+  /** motion: output at the region's size with the still's fine detail (default on) */
+  detail?: boolean;
   seed?: number;
 }
 
@@ -83,6 +85,8 @@ export interface Scene {
   height: number;
   layers: SceneLayer[];
   duration: number;
+  /** Each motion layer loops at its own length (default false: retimed to fit the scene length, see loopSpeed). */
+  freeLoops?: boolean;
   render?: SceneRender | null;
   created: string;
   updated: string;
@@ -148,6 +152,8 @@ async function call<T>(method: string, path: string, body?: unknown, timeoutMs =
 
 const enc = encodeURIComponent;
 
+export type LoopKind = 'crossfade' | 'natural' | 'boomerang';
+
 export const sceneApi = {
   list: (source?: string) => call<SceneSummary[]>('GET', `/api/scenes${source ? `?source=${enc(source)}` : ''}`),
   // Starting a scene normalises the base frame with ffmpeg: allow it longer.
@@ -158,9 +164,36 @@ export const sceneApi = {
   generate: (id: string, layer: string) => call<Scene>('POST', `/api/scenes/${enc(id)}/layers/${enc(layer)}/generate`, {}, 60000),
   cancel: (id: string, layer: string) => call<Scene>('POST', `/api/scenes/${enc(id)}/layers/${enc(layer)}/cancel`, {}),
   deleteVersion: (id: string, layer: string, n: number) => call<Scene>('DELETE', `/api/scenes/${enc(id)}/layers/${enc(layer)}/versions/${n}`),
-  boomerang: (id: string, layer: string, n: number) => call<Scene>('POST', `/api/scenes/${enc(id)}/layers/${enc(layer)}/versions/${n}/boomerang`, {}, 120000),
+  /** Discard every version of a layer but n. */
+  keepOnly: (id: string, layer: string, n: number) => call<Scene>('DELETE', `/api/scenes/${enc(id)}/layers/${enc(layer)}/versions?keep=${n}`),
+  loop: (id: string, layer: string, n: number, kind: LoopKind) =>
+    call<Scene>('POST', `/api/scenes/${enc(id)}/layers/${enc(layer)}/versions/${n}/loop`, { kind }, 180000),
+  /** Where version n moves: a PNG data URL (alpha = motion) covering `region`. */
+  motionMap: (id: string, layer: string, n: number) =>
+    call<{ dataUrl: string; region: Rect }>('POST', `/api/scenes/${enc(id)}/layers/${enc(layer)}/versions/${n}/motion`, {}, 120000),
   render: (id: string, format: 'video' | 'still') => call<Scene>('POST', `/api/scenes/${enc(id)}/render`, { format }),
 };
+
+/** The length a scene exports at (seconds): its own, else the longest visible motion clip, else 5. Mirrors sceneDuration. */
+export function sceneLength(s: Scene): number {
+  if (s.duration > 0) return s.duration;
+  let d = 0;
+  s.layers.forEach((l) => {
+    const v = l.versions[l.active];
+    if (l.kind === 'motion' && v && !l.hidden) d = Math.max(d, v.duration || 0);
+  });
+  return d > 0 ? d : 5;
+}
+
+/**
+ * Synced loops: the PTS multiplier that fits a whole number of a d-second clip's loops into a scene of length L
+ * (1 = as generated, > 1 = slower). Mirrors loopSpeed in media-server/tasks/scene_loop.go.
+ */
+export function loopSpeed(L: number, d: number): number {
+  if (!(L > 0) || !(d > 0)) return 1;
+  const n = Math.max(1, Math.round(L / d));
+  return L / (n * d);
+}
 
 /** Whether a layer (or the scene's export) has server work in flight. */
 export function sceneBusy(s: Scene): boolean {

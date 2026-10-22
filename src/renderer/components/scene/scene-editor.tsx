@@ -1,7 +1,19 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { isElectron, send } from '../../platform';
-import { maskBounds, rasterizeMask, regionFor, type MaskOp } from './mask';
-import { mergeServer, sceneApi, sceneBusy, type LayerOptions, type Scene, type SceneLayer, type SceneSummary } from './scene-api';
+import { imageOp, maskBounds, maskImagesReady, preloadMaskImages, rasterizeMask, rasterizeProtect, regionFor, type MaskOp, type Rect } from './mask';
+import {
+  loopSpeed,
+  mergeServer,
+  sceneApi,
+  sceneBusy,
+  sceneLength,
+  type LayerKind,
+  type LayerOptions,
+  type LoopKind,
+  type Scene,
+  type SceneLayer,
+  type SceneSummary,
+} from './scene-api';
 import Stage, { type Tool } from './stage';
 import { Inspector, LayerList } from './panel';
 
@@ -21,6 +33,7 @@ const TOOLS: Array<{ id: Tool; key: string; label: string; title: string }> = [
   { id: 'brush', key: 'P', label: 'Brush', title: 'Paint an area ([ and ] change the size, Alt = erase)' },
   { id: 'lasso', key: 'L', label: 'Lasso', title: 'Draw around an area (Alt = subtract)' },
   { id: 'erase', key: 'E', label: 'Erase', title: 'Erase from the mask' },
+  { id: 'protect', key: 'S', label: 'Protect', title: 'Paint areas this layer must leave untouched: they stay exactly the picture below (blue)' },
   { id: 'hand', key: 'H', label: 'Pan', title: 'Pan (or hold Space); scroll to zoom, F to fit' },
 ];
 
@@ -57,6 +70,12 @@ function ToolIcon({ id }: { id: Tool }) {
           <path d="M3.5 11.5l6.8-6.8 4 4-5 5H6.5zM7 14.7h8" {...p} />
         </svg>
       );
+    case 'protect':
+      return (
+        <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden>
+          <path d="M9 2.5l5.5 2v4.2c0 3.3-2.3 5.7-5.5 6.8-3.2-1.1-5.5-3.5-5.5-6.8V4.5z" {...p} />
+        </svg>
+      );
     default:
       return (
         <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden>
@@ -74,7 +93,10 @@ function defaultFeather(s: Scene): number {
   return Math.round(Math.min(64, Math.max(4, Math.min(s.width, s.height) * 0.02)));
 }
 
-/** The layer with its mask raster and next-generation region recomputed from its strokes. */
+/**
+ * The layer with its mask raster and next-generation region recomputed from its strokes. While an image piece of
+ * the mask is still decoding the old raster stays (patchLayer re-rasterizes once it is ready).
+ */
 function withMask(s: Scene, l: SceneLayer): SceneLayer {
   const shapes = l.shapes || [];
   const region = regionFor(shapes, s.width, s.height, {
@@ -82,7 +104,42 @@ function withMask(s: Scene, l: SceneLayer): SceneLayer {
     feather: l.feather,
     minSide: l.kind === 'motion' ? 320 : 96,
   });
-  return { ...l, mask: rasterizeMask(shapes, s.width, s.height, l.feather), region: region || { x: 0, y: 0, w: 0, h: 0 } };
+  const mask = rasterizeMask(shapes, s.width, s.height, l.feather);
+  return { ...l, mask: mask === null ? l.mask : mask, region: region || { x: 0, y: 0, w: 0, h: 0 } };
+}
+
+// New layers start from the settings last used for their kind (never the text: prompt, subject, seed).
+const DEFAULTS_KEY = 'loki.scene.layerDefaults.v1';
+const REMEMBERED: Record<LayerKind, Array<keyof LayerOptions>> = {
+  still: ['steps', 'context'],
+  motion: ['duration', 'model', 'megapixels', 'sound', 'lock', 'detail', 'context'],
+};
+const BASE_OPTIONS: Record<LayerKind, LayerOptions> = {
+  still: { context: 'normal', steps: 25 },
+  motion: { context: 'normal', duration: 5, model: 'h3', sound: false, megapixels: 0.5 },
+};
+
+function layerDefaults(kind: LayerKind): LayerOptions {
+  try {
+    const all = JSON.parse(window.localStorage.getItem(DEFAULTS_KEY) || '{}');
+    return { ...BASE_OPTIONS[kind], ...(all[kind] || {}) };
+  } catch {
+    return { ...BASE_OPTIONS[kind] };
+  }
+}
+
+function rememberLayerDefaults(kind: LayerKind, options: LayerOptions): void {
+  try {
+    const all = JSON.parse(window.localStorage.getItem(DEFAULTS_KEY) || '{}');
+    const picked: Record<string, unknown> = {};
+    REMEMBERED[kind].forEach((k) => {
+      if (options[k] !== undefined) picked[k] = options[k];
+    });
+    all[kind] = picked;
+    window.localStorage.setItem(DEFAULTS_KEY, JSON.stringify(all));
+  } catch {
+    // storage unavailable: defaults just don't stick
+  }
 }
 
 const basename = (p: string) => p.split(/[\\/]/).pop() || p;
@@ -184,10 +241,24 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
   );
 
   const patchLayer = useCallback(
-    (id: string, patch: Partial<SceneLayer>, remask = false) =>
-      mutate((s) => ({ ...s, layers: s.layers.map((l) => (l.id === id ? (remask ? withMask(s, { ...l, ...patch }) : { ...l, ...patch }) : l)) })),
+    (id: string, patch: Partial<SceneLayer>, remask = false): void => {
+      mutate((s) => ({ ...s, layers: s.layers.map((l) => (l.id === id ? (remask ? withMask(s, { ...l, ...patch }) : { ...l, ...patch }) : l)) }));
+      // An image piece still decoding kept the old raster: redo it once the piece is ready.
+      const shapes = patch.shapes;
+      if (remask && shapes && !maskImagesReady(shapes)) {
+        preloadMaskImages(shapes).then(() => {
+          const l = docRef.current.layers.find((x) => x.id === id);
+          if (l && l.shapes === shapes) patchLayer(id, {}, true);
+        });
+      }
+    },
     [mutate]
   );
+
+  // Decode every image piece of every mask up front, so later edits re-rasterize synchronously.
+  useEffect(() => {
+    preloadMaskImages(initial.layers.flatMap((l) => l.shapes || []));
+  }, [initial]);
 
   // ---- polling while the server works ------------------------------------------
 
@@ -232,7 +303,7 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
     (kind: 'still' | 'motion') => {
       const s = docRef.current;
       const n = s.layers.filter((l) => l.kind === kind).length + 1;
-      const options: LayerOptions = kind === 'motion' ? { context: 'normal', duration: 5, model: 'h3', sound: false, megapixels: 0.5 } : { context: 'normal', steps: 25 };
+      const options = layerDefaults(kind);
       const layer: SceneLayer = {
         id: newId(),
         name: kind === 'motion' ? `Motion ${n}` : `Edit ${n}`,
@@ -330,6 +401,79 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
     }
     serverAction(() => sceneApi.generate(doc.id, l.id), 'Could not start the generation');
   }, [selected, doc.id, serverAction, flash]);
+
+  // ---- versions: loops, motion maps ---------------------------------------------------
+
+  const loopVersion = useCallback(
+    (layerId: string, n: number, kind: LoopKind) => {
+      const label = kind === 'natural' ? 'Looking for a natural loop…' : 'Making the loop…';
+      flash('info', label);
+      serverAction(() => sceneApi.loop(doc.id, layerId, n, kind), 'Could not make the loop');
+    },
+    [doc.id, serverAction, flash]
+  );
+
+  const [motionView, setMotionView] = useState<{ layerId: string; n: number; path: string; dataUrl: string; region: Rect } | null>(null);
+  const motionMap = useCallback(
+    async (l: SceneLayer) => {
+      const v = l.versions[l.active];
+      if (!v) return null;
+      if (motionView && motionView.layerId === l.id && motionView.path === v.path) return motionView;
+      const m = await sceneApi.motionMap(doc.id, l.id, l.active);
+      const view = { layerId: l.id, n: l.active, path: v.path, dataUrl: m.dataUrl, region: m.region };
+      setMotionView(view);
+      return view;
+    },
+    [doc.id, motionView]
+  );
+
+  const toggleMotion = useCallback(
+    async (l: SceneLayer) => {
+      if (motionView && motionView.layerId === l.id && motionView.n === l.active) {
+        setMotionView(null);
+        return;
+      }
+      setBusy(true);
+      try {
+        await motionMap(l);
+      } catch (e) {
+        flash('error', `Could not measure the motion: ${e instanceof Error ? e.message : e}`);
+      } finally {
+        setBusy(false);
+      }
+    },
+    [motionView, motionMap, flash]
+  );
+
+  const growToMotion = useCallback(
+    async (l: SceneLayer) => {
+      setBusy(true);
+      try {
+        const view = await motionMap(l);
+        if (!view) return;
+        const op = await imageOp(view.dataUrl, view.region, 48);
+        if (!op) {
+          flash('info', 'This version barely moves: nothing to add.');
+          return;
+        }
+        const before = l.shapes || [];
+        undo.current.push({ id: l.id, shapes: before });
+        redo.current = [];
+        patchLayer(l.id, { shapes: [...before, op] }, true);
+        flash('info', 'Added where it moves to the mask (Ctrl+Z to undo).');
+      } catch (e) {
+        flash('error', `Could not grow the mask: ${e instanceof Error ? e.message : e}`);
+      } finally {
+        setBusy(false);
+      }
+    },
+    [motionMap, patchLayer, flash]
+  );
+
+  const protectMask = useMemo(
+    () => (selected ? rasterizeProtect(selected.shapes || [], doc.width, doc.height, selected.feather) : ''),
+    [selected, doc.width, doc.height]
+  );
 
   const exportAs = useCallback(
     (format: 'video' | 'still') => serverAction(() => sceneApi.render(doc.id, format), 'Could not start the export'),
@@ -480,6 +624,18 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
           <button type="button" className={`sc-btn${showMask ? ' on' : ''}`} onClick={() => setShowMask((v) => !v)} title="Tint the selected layer's mask (M)">
             Mask
           </button>
+          <button
+            type="button"
+            className={`sc-btn${doc.freeLoops ? '' : ' on'}`}
+            onClick={() => mutate((s) => ({ ...s, freeLoops: !s.freeLoops }))}
+            title={
+              doc.freeLoops
+                ? 'Loops: free. Every motion layer loops at its own length (the export may jump where they do). Click to sync them.'
+                : 'Loops: synced. Every motion layer plays at the speed that fits a whole number of its loops into the scene length, so the export loops as one. Click to let them loop freely.'
+            }
+          >
+            {doc.freeLoops ? 'Loops: free' : 'Loops: synced'}
+          </button>
         </div>
         <div className="sc-header-right">
           <label className="sc-length" title="Length of the exported video; auto = the longest motion layer">
@@ -541,6 +697,8 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
             soundOn={soundOn}
             syncKey={syncKey}
             fitKey={fitKey}
+            protectMask={protectMask}
+            motionOverlay={motionView && selected && motionView.layerId === selected.id && motionView.n === selected.active ? motionView : null}
             onCommit={commitOp}
             onSelect={setSelectedId}
           />
@@ -576,16 +734,28 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
               onOptions={(o) => {
                 const next = { ...(selected.options || {}), ...o };
                 patchLayer(selected.id, { options: next }, 'context' in o);
+                rememberLayerDefaults(selected.kind, next);
               }}
               onGenerate={generate}
               onCancel={() => serverAction(() => sceneApi.cancel(doc.id, selected.id), 'Could not cancel')}
               onDelete={() => deleteLayer(selected.id)}
               onClearMask={() => {
-                undo.current.push({ id: selected.id, shapes: selected.shapes || [] });
-                patchLayer(selected.id, { shapes: [] }, true);
+                const before = selected.shapes || [];
+                undo.current.push({ id: selected.id, shapes: before });
+                patchLayer(selected.id, { shapes: before.filter((op) => op.keep) }, true);
               }}
-              onDeleteVersion={(n) => serverAction(() => sceneApi.deleteVersion(doc.id, selected.id, n), 'Could not delete the version')}
-              onBoomerang={(n) => serverAction(() => sceneApi.boomerang(doc.id, selected.id, n), 'Could not make the loop')}
+              onClearProtect={() => {
+                const before = selected.shapes || [];
+                undo.current.push({ id: selected.id, shapes: before });
+                patchLayer(selected.id, { shapes: before.filter((op) => !op.keep) }, true);
+              }}
+              onDeleteVersion={(n) => serverAction(() => sceneApi.deleteVersion(doc.id, selected.id, n), 'Could not discard the version')}
+              onKeepOnly={(n) => serverAction(() => sceneApi.keepOnly(doc.id, selected.id, n), 'Could not discard the other versions')}
+              onLoop={(n, kind) => loopVersion(selected.id, n, kind)}
+              motionShown={!!motionView && motionView.layerId === selected.id && motionView.n === selected.active}
+              onShowMotion={() => toggleMotion(selected)}
+              onGrowToMotion={() => growToMotion(selected)}
+              loopSpeed={doc.freeLoops ? 1 : loopSpeed(sceneLength(doc), selected.versions[selected.active]?.duration || 0)}
             />
           ) : (
             <section className="sc-section sc-help">
@@ -613,7 +783,7 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
           {saveState === 'saving' ? 'Saving…' : saveState === 'dirty' ? 'Unsaved changes' : saveState === 'error' ? 'Not saved (retrying on the next change)' : 'Saved'}
         </span>
         {generating > 0 && <span>{generating} generating</span>}
-        <span className="sc-keys">V select · B box · P brush · L lasso · E erase · [ ] size · Alt subtract · Space pan · F fit · \ compare · K play · ⌃Z undo · ⌃↵ generate</span>
+        <span className="sc-keys">V select · B box · P brush · L lasso · E erase · S protect · [ ] size · Alt subtract · Space pan · F fit · \ compare · K play · ⌃Z undo · ⌃↵ generate</span>
       </footer>
     </div>
   );

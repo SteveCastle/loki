@@ -399,6 +399,20 @@ body.sc-body {
   background: var(--sc-motion);
 }
 
+.sc-mask-tint.protect {
+  background: #50a0ff;
+  opacity: 0.45;
+  mix-blend-mode: normal;
+}
+
+/* Where a version moves: a warm tint over the area that really changes. */
+.sc-motion-tint {
+  position: absolute;
+  background: #ff7a3c;
+  opacity: 0.55;
+  pointer-events: none;
+}
+
 .sc-region {
   position: absolute;
   border: 1px dashed rgba(0, 200, 150, 0.9);
@@ -480,6 +494,10 @@ body.sc-body {
 
 .sc-brush-cursor.erase {
   border-color: var(--sc-danger);
+}
+
+.sc-brush-cursor.protect {
+  border-color: #50a0ff;
 }
 
 .sc-zoom-badge {
@@ -863,6 +881,49 @@ body.sc-body {
   cursor: pointer;
 }
 
+.sc-version-pick {
+  display: block;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  color: inherit;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.sc-version-x {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  color: #fff;
+  font: inherit;
+  font-size: 11px;
+  line-height: 14px;
+  background: rgba(0, 0, 0, 0.7);
+  border: 1px solid transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  opacity: 0;
+}
+
+.sc-version:hover .sc-version-x,
+.sc-version-x.armed {
+  opacity: 1;
+}
+
+.sc-version-x:hover {
+  border-color: var(--sc-danger);
+}
+
+.sc-version-x.armed {
+  color: var(--sc-danger);
+  border-color: var(--sc-danger);
+}
+
 .sc-version.on {
   border-color: var(--sc-accent);
   box-shadow: 0 0 0 1px var(--sc-accent);
@@ -893,8 +954,13 @@ body.sc-body {
 
 .sc-version-actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
+}
+
+.sc-version-actions > .sc-label {
+  width: 46px;
 }
 
 .sc-version-prompt {

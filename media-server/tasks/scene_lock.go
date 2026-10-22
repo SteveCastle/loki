@@ -3,9 +3,11 @@ package tasks
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"fmt"
 	"image"
 	"image/draw"
+	"image/png"
 	"io"
 	"math"
 	"os"
@@ -23,28 +25,48 @@ import (
 	"github.com/stevecastle/shrike/platform"
 )
 
-// --- scene-lock: static edges for a Scene editor motion layer ---
+// --- scene-lock: finishing a Scene editor motion layer ---
 //
 // A motion layer is a video of one region composited back into a still
 // through a feathered mask. The engine's video never matches the still
-// exactly: tone drifts, detail is resampled, static parts shimmer. In the
-// mask's soft edge that shows as a halo or a crawling seam, so the edge would
-// not be static. This pass fixes the video against the still it was made
-// from (the crop that was its first frame):
+// exactly, and it is small: ~1 MP however big the region is. This pass
+// finishes it against the still it was made from (the crop that was its
+// first frame):
 //
-//   - wherever the video does not really move, every frame IS the still,
-//     pixel for pixel (a motion-adaptive freeze: no shimmer, no flicker);
-//   - where it moves, it keeps the motion but takes the still's
-//     low-frequency tone (frame 0 vs the still), so it can't drift in
-//     colour or exposure against its surroundings;
-//   - a smooth ramp between the two (motion energy, blurred).
+//   - freeze (Edges: Locked): wherever the video does not really move, every
+//     frame IS the still, pixel for pixel (a motion-adaptive freeze: no
+//     shimmer, no flicker), and where it moves it takes the still's
+//     low-frequency tone, so it can't drift against its surroundings. With
+//     the mask, the region's boundary is the still itself on every frame.
+//   - detail (Detail: Match still): the video comes out at the region's own
+//     size (up to sceneFinishMaxLong), Lanczos-upscaled, with the still's
+//     fine detail added back into the moving parts, fading out where the
+//     motion is large (static detail on fast-moving content would "stick").
 //
-// Together with the mask, the region's boundary is the still itself on every
-// frame, whatever the engine did. Runs as its own CPU job chained after the
-// reshoot job, so the GPU is free the moment generation ends.
+// It also writes the video's motion map (<out>_motion.png: alpha = how much
+// each pixel moves), which the editor shows and can grow a mask to. Runs as
+// its own CPU job chained after the reshoot job, so the GPU is free the
+// moment generation ends.
+
+// sceneFinishMaxLong caps the finished video's long edge (memory: the pass
+// holds a few float copies of one frame).
+const sceneFinishMaxLong = 2560
+
+// sceneMotionMapLong is the long edge of a motion map PNG.
+const sceneMotionMapLong = 512
 
 var sceneLockOptions = []TaskOption{
-	{Name: "still", Label: "Still Frame", Type: "string", Default: "", Description: "The still the video was generated from (its first frame); static parts of the video are locked to it"},
+	{Name: "still", Label: "Still Frame", Type: "string", Default: "", Description: "The still the video was generated from (its first frame)"},
+	{Name: "freeze", Label: "Lock Static Parts", Type: "bool", Default: true, Description: "Parts of the video that don't move become the still exactly; moving parts take its tone"},
+	{Name: "detail", Label: "Match Still Detail", Type: "bool", Default: false, Description: "Output at the region's size with the still's fine detail added back into the motion"},
+	{Name: "size", Label: "Region Size", Type: "string", Default: "", Description: "WxH of the region the video fills (with detail: the output size, capped)"},
+}
+
+type finishOptions struct {
+	Freeze bool
+	Detail bool
+	// RegionW/H: the size the video is shown at (0 = the video's own).
+	RegionW, RegionH int
 }
 
 func sceneLockTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
@@ -61,9 +83,14 @@ func sceneLockTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 		}
 		return err
 	}
-	still := strings.TrimSpace(optString(ParseOptions(j, sceneLockOptions), "still"))
+	opts := ParseOptions(j, sceneLockOptions)
+	still := strings.TrimSpace(optString(opts, "still"))
 	if still == "" {
 		return fail("needs the still frame (--still)", nil)
+	}
+	fo := finishOptions{Freeze: optBool(opts, "freeze"), Detail: optBool(opts, "detail")}
+	if w, h, ok := parseWxH(optString(opts, "size")); ok {
+		fo.RegionW, fo.RegionH = w, h
 	}
 	video := ""
 	for _, line := range strings.Split(j.Input, "\n") {
@@ -75,9 +102,9 @@ func sceneLockTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 		return fail("no video in the input", nil)
 	}
 	out := strings.TrimSuffix(still, filepath.Ext(still)) + "_locked.mp4"
-	q.PushJobStdout(j.ID, fmt.Sprintf("%s: locking the static parts of %s to %s", tag, filepath.Base(video), filepath.Base(still)))
+	q.PushJobStdout(j.ID, fmt.Sprintf("%s: finishing %s against %s (lock %v, detail %v)", tag, filepath.Base(video), filepath.Base(still), fo.Freeze, fo.Detail))
 	_ = q.SetJobProgress(j.ID, 0, 2)
-	stats, err := lockMotionEdges(ctx, video, still, out, func(pass int) { _ = q.SetJobProgress(j.ID, pass, 2) })
+	stats, err := finishMotion(ctx, video, still, out, fo, func(pass int) { _ = q.SetJobProgress(j.ID, pass, 2) })
 	if err != nil {
 		os.Remove(out)
 		if ctx.Err() != nil {
@@ -85,15 +112,29 @@ func sceneLockTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 		}
 		return fail(err.Error(), err)
 	}
-	q.PushJobStdout(j.ID, fmt.Sprintf("%s: %d frames, %.0f%% of the area locked to the still -> %s", tag, stats.Frames, stats.Locked*100, out))
+	q.PushJobStdout(j.ID, fmt.Sprintf("%s: %d frames at %dx%d, %.0f%% of the area locked to the still -> %s", tag, stats.Frames, stats.W, stats.H, stats.Locked*100, out))
 	q.RegisterOutputFile(j.ID, out, video)
 	_ = q.SetJobProgress(j.ID, 2, 2)
 	q.CompleteJob(j.ID)
 	return nil
 }
 
+func parseWxH(s string) (int, int, bool) {
+	parts := strings.Split(strings.ToLower(strings.TrimSpace(s)), "x")
+	if len(parts) != 2 {
+		return 0, 0, false
+	}
+	w, err1 := strconv.Atoi(parts[0])
+	h, err2 := strconv.Atoi(parts[1])
+	if err1 != nil || err2 != nil || w <= 0 || h <= 0 {
+		return 0, 0, false
+	}
+	return w, h, true
+}
+
 type lockStats struct {
 	Frames int
+	W, H   int
 	Locked float64 // share of pixels fully frozen to the still
 }
 
@@ -123,10 +164,11 @@ func probeVideoInfo(ctx context.Context, path string) (videoInfo, error) {
 	return videoInfo{W: w, H: h, FPS: parts[2], Audio: probeHasAudio(path)}, nil
 }
 
-// decodeFrames streams the video's frames as packed RGB24 to fn.
+// decodeFrames streams the video's frames, scaled to w×h (Lanczos), as packed
+// RGB24 to fn.
 func decodeFrames(ctx context.Context, path string, w, h int, fn func(i int, rgb []byte) error) (int, error) {
 	cmd := exec.CommandContext(ctx, deps.MustBundled("ffmpeg"), "-hide_banner", "-loglevel", "error", "-i", path,
-		"-f", "rawvideo", "-pix_fmt", "rgb24", "-")
+		"-vf", fmt.Sprintf("scale=%d:%d:flags=lanczos", w, h), "-f", "rawvideo", "-pix_fmt", "rgb24", "-")
 	platform.HideSubprocessWindow(cmd)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -222,10 +264,13 @@ func boxBlur(buf []float32, w, h, stride, ch, r int) {
 }
 
 // Motion energy (max luma change from frame 0, blurred) below lockStill is
-// frozen to the still; above lockMove it is all video.
+// frozen to the still; above lockMove it is all video. Detail fades from full
+// at lockMove to detailFloor of it at detailFade.
 const (
-	lockStill = 4.0
-	lockMove  = 18.0
+	lockStill   = 4.0
+	lockMove    = 18.0
+	detailFade  = 72.0
+	detailFloor = 0.3
 )
 
 func smoothstep(a, b, x float64) float64 {
@@ -233,27 +278,18 @@ func smoothstep(a, b, x float64) float64 {
 	return t * t * (3 - 2*t)
 }
 
-// lockMotionEdges writes out = the video with its static parts locked to the
-// still (see the file comment). onPass reports the two decoding passes.
-func lockMotionEdges(ctx context.Context, video, still, out string, onPass func(int)) (lockStats, error) {
-	info, err := probeVideoInfo(ctx, video)
-	if err != nil {
-		return lockStats{}, err
-	}
-	w, h := info.W, info.H
-	S, err := loadStillRGB(still, w, h)
-	if err != nil {
-		return lockStats{}, err
-	}
+func luma(p []byte, i int) float32 {
+	return 0.299*float32(p[i*3]) + 0.587*float32(p[i*3+1]) + 0.114*float32(p[i*3+2])
+}
 
-	// Pass 1: frame 0 and the motion energy.
-	f0 := make([]float32, w*h*3)
-	motion := make([]float32, w*h)
-	luma := func(p []byte, i int) float32 {
-		return 0.299*float32(p[i*3]) + 0.587*float32(p[i*3+1]) + 0.114*float32(p[i*3+2])
-	}
+// measureMotion decodes the video at w×h and returns frame 0 (RGB) and each
+// pixel's motion energy: its largest luma change from frame 0, blurred so
+// moving things keep a margin of motion around them.
+func measureMotion(ctx context.Context, video string, w, h int) (f0, motion []float32, frames int, err error) {
+	f0 = make([]float32, w*h*3)
+	motion = make([]float32, w*h)
 	var l0 []float32
-	frames, err := decodeFrames(ctx, video, w, h, func(n int, rgb []byte) error {
+	frames, err = decodeFrames(ctx, video, w, h, func(n int, rgb []byte) error {
 		if n == 0 {
 			l0 = make([]float32, w*h)
 			for i := range f0 {
@@ -272,33 +308,155 @@ func lockMotionEdges(ctx context.Context, video, still, out string, onPass func(
 		return nil
 	})
 	if err != nil {
-		return lockStats{}, err
+		return nil, nil, 0, err
 	}
 	if frames == 0 {
-		return lockStats{}, fmt.Errorf("%s has no frames", filepath.Base(video))
+		return nil, nil, 0, fmt.Errorf("%s has no frames", filepath.Base(video))
+	}
+	boxBlur(motion, w, h, 1, 0, max(2, min(w, h)/96))
+	return f0, motion, frames, nil
+}
+
+// finishSize is the output size: the video's own, or with detail the region's
+// (capped at sceneFinishMaxLong, never smaller than the video), even.
+func finishSize(info videoInfo, o finishOptions) (int, int) {
+	w, h := info.W, info.H
+	if o.Detail && o.RegionW > 0 && o.RegionH > 0 {
+		rw, rh := float64(o.RegionW), float64(o.RegionH)
+		if long := math.Max(rw, rh); long > sceneFinishMaxLong {
+			rw, rh = rw*sceneFinishMaxLong/long, rh*sceneFinishMaxLong/long
+		}
+		if int(rw)*int(rh) > w*h {
+			w, h = int(rw), int(rh)
+		}
+	}
+	return w &^ 1, h &^ 1
+}
+
+// motionMapPath is where a video's motion map lives.
+func motionMapPath(video string) string {
+	return strings.TrimSuffix(video, filepath.Ext(video)) + "_motion.png"
+}
+
+// writeMotionMap stores a motion energy field as a white PNG whose alpha is
+// how much each pixel moves (0 = still, 255 = clearly moving), long edge
+// sceneMotionMapLong.
+func writeMotionMap(path string, motion []float32, w, h int) error {
+	full := image.NewNRGBA(image.Rect(0, 0, w, h))
+	for i, m := range motion {
+		a := uint8(math.Round(255 * smoothstep(lockStill, lockMove, float64(m))))
+		full.Pix[i*4], full.Pix[i*4+1], full.Pix[i*4+2], full.Pix[i*4+3] = 255, 255, 255, a
+	}
+	var img image.Image = full
+	if long := max(w, h); long > sceneMotionMapLong {
+		sw, sh := max(1, w*sceneMotionMapLong/long), max(1, h*sceneMotionMapLong/long)
+		small := image.NewNRGBA(image.Rect(0, 0, sw, sh))
+		xdraw.ApproxBiLinear.Scale(small, small.Bounds(), full, full.Bounds(), draw.Src, nil)
+		img = small
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	if err := png.Encode(f, img); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
+}
+
+// MotionMapDataURL returns the motion map of a video as a PNG data URL,
+// computing (and caching beside the video) it when missing.
+func MotionMapDataURL(ctx context.Context, video string) (string, error) {
+	p := motionMapPath(video)
+	if _, err := os.Stat(p); err != nil {
+		info, err := probeVideoInfo(ctx, video)
+		if err != nil {
+			return "", err
+		}
+		w, h := info.W, info.H
+		if long := max(w, h); long > sceneMotionMapLong {
+			w, h = max(2, w*sceneMotionMapLong/long), max(2, h*sceneMotionMapLong/long)
+		}
+		_, motion, _, err := measureMotion(ctx, video, w, h)
+		if err != nil {
+			return "", err
+		}
+		if err := writeMotionMap(p, motion, w, h); err != nil {
+			return "", err
+		}
+	}
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return "", err
+	}
+	return "data:image/png;base64," + base64.StdEncoding.EncodeToString(b), nil
+}
+
+// finishMotion writes out = the video finished against the still (see the
+// file comment), plus its motion map. onPass reports the two decoding passes.
+func finishMotion(ctx context.Context, video, still, out string, o finishOptions, onPass func(int)) (lockStats, error) {
+	info, err := probeVideoInfo(ctx, video)
+	if err != nil {
+		return lockStats{}, err
+	}
+	w, h := finishSize(info, o)
+	S, err := loadStillRGB(still, w, h)
+	if err != nil {
+		return lockStats{}, err
+	}
+
+	// Pass 1: frame 0 and the motion energy.
+	f0, motion, frames, err := measureMotion(ctx, video, w, h)
+	if err != nil {
+		return lockStats{}, err
+	}
+	if err := writeMotionMap(motionMapPath(out), motion, w, h); err != nil {
+		return lockStats{}, err
 	}
 	onPass(1)
 
 	short := min(w, h)
-	// Spread the motion a little so moving things keep a margin of motion
-	// around them, then map it to the freeze weight E (1 = the still).
-	boxBlur(motion, w, h, 1, 0, max(2, short/96))
+	// E: 1 = the still. Without freeze nothing is frozen.
 	E := make([]float32, w*h)
 	locked := 0
-	for i, m := range motion {
-		e := float32(1 - smoothstep(lockStill, lockMove, float64(m)))
-		E[i] = e
-		if e > 0.999 {
-			locked++
+	if o.Freeze {
+		for i, m := range motion {
+			e := float32(1 - smoothstep(lockStill, lockMove, float64(m)))
+			E[i] = e
+			if e > 0.999 {
+				locked++
+			}
 		}
 	}
-	// Low-frequency tone correction: blur(still - frame 0).
-	corr := make([]float32, w*h*3)
-	for i := range corr {
-		corr[i] = S[i] - f0[i]
+	// Low-frequency tone correction (freeze only): blur(still - frame 0).
+	var corr []float32
+	if o.Freeze {
+		corr = make([]float32, w*h*3)
+		for i := range corr {
+			corr[i] = S[i] - f0[i]
+		}
+		for c := 0; c < 3; c++ {
+			boxBlur(corr, w, h, 3, c, max(4, short/20))
+		}
 	}
-	for c := 0; c < 3; c++ {
-		boxBlur(corr, w, h, 3, c, max(4, short/20))
+	// The still's fine detail (detail only): still - blur(still), at the
+	// scale the upscale lost, weighted down where motion is large.
+	var hf, K []float32
+	if o.Detail {
+		hf = make([]float32, w*h*3)
+		copy(hf, S)
+		r := max(1, int(math.Round(1.5*float64(w)/float64(info.W))))
+		for c := 0; c < 3; c++ {
+			boxBlur(hf, w, h, 3, c, r)
+		}
+		for i := range hf {
+			hf[i] = S[i] - hf[i]
+		}
+		K = make([]float32, w*h)
+		for i, m := range motion {
+			K[i] = float32(1 - (1-detailFloor)*smoothstep(lockMove, detailFade, float64(m)))
+		}
 	}
 
 	// Pass 2: blend and encode.
@@ -326,7 +484,14 @@ func lockMotionEdges(ctx context.Context, video, still, out string, onPass func(
 			e := E[i]
 			for c := 0; c < 3; c++ {
 				k := i*3 + c
-				v := e*S[k] + (1-e)*(float32(rgb[k])+corr[k])
+				moving := float32(rgb[k])
+				if corr != nil {
+					moving += corr[k]
+				}
+				if hf != nil {
+					moving += K[i] * hf[k]
+				}
+				v := e*S[k] + (1-e)*moving
 				switch {
 				case v <= 0:
 					buf[k] = 0
@@ -350,5 +515,10 @@ func lockMotionEdges(ctx context.Context, video, still, out string, onPass func(
 		return lockStats{}, fmt.Errorf("encoding: %v %v: %s", ferr, werr, strings.TrimSpace(encErr.String()))
 	}
 	onPass(2)
-	return lockStats{Frames: frames, Locked: float64(locked) / float64(w*h)}, nil
+	return lockStats{Frames: frames, W: w, H: h, Locked: float64(locked) / float64(w*h)}, nil
+}
+
+// lockMotionEdges is finishMotion with only the freeze (the original pass).
+func lockMotionEdges(ctx context.Context, video, still, out string, onPass func(int)) (lockStats, error) {
+	return finishMotion(ctx, video, still, out, finishOptions{Freeze: true}, onPass)
 }
