@@ -57,6 +57,7 @@ var retouchOptions = []TaskOption{
 	{Name: "combine", Label: "Combine Inputs", Type: "bool", Default: false, Description: "With several input images: the first is <image1>, the rest become references, one output"},
 	{Name: "time", Label: "Video Time", Type: "number", Default: 0.0, Description: "Seconds into a video input to sample the frame from (images ignore it)"},
 	{Name: "meta", Label: "Recipe (JSON)", Type: "string", Default: "", Description: "A JSON object stamped verbatim into the result's generation record as `meta` (the Transform flow's intent + settings, to rebuild a saved task from a result); dropped for engines too old to take it"},
+	{Name: "nolibrary", Label: "Keep Out of Library", Type: "bool", Default: false, Description: "Scratch output (the Scene editor's layers): write the result beside the input but don't add it to the library or jump the viewer to it"},
 	{Name: "seq", Label: "Sequence Mode", Type: "bool", Default: false, Description: "Frames of a clip: stricter faithful prompt, framing pinned, one seed for all inputs"},
 }
 
@@ -76,6 +77,8 @@ type retouchParams struct {
 	Combine  bool
 	Time     float64
 	Seq      bool
+	// NoLibrary keeps a finished result out of the library (scratch work).
+	NoLibrary bool
 	// Meta is the caller's recipe (JSON object) for the generation record;
 	// MetaFile, when set by the task, carries a long one instead.
 	Meta     string
@@ -133,16 +136,17 @@ func splitPathList(raw string) []string {
 // retouchParamsFromOptions normalizes ParseOptions output for retouch.
 func retouchParamsFromOptions(opts map[string]any) retouchParams {
 	p := retouchParams{
-		Preset:  strings.ToLower(strings.TrimSpace(optString(opts, "preset"))),
-		Prompt:  strings.TrimSpace(optString(opts, "prompt")),
-		Append:  strings.TrimSpace(optString(opts, "append")),
-		Scale:   optFloat(opts, "scale"),
-		Size:    strings.TrimSpace(optString(opts, "size")),
-		Snap:    optBool(opts, "snap"),
-		Combine: optBool(opts, "combine"),
-		Seq:     optBool(opts, "seq"),
-		Refs:    splitPathList(optString(opts, "refs")),
-		Meta:    strings.TrimSpace(optString(opts, "meta")),
+		Preset:    strings.ToLower(strings.TrimSpace(optString(opts, "preset"))),
+		Prompt:    strings.TrimSpace(optString(opts, "prompt")),
+		Append:    strings.TrimSpace(optString(opts, "append")),
+		Scale:     optFloat(opts, "scale"),
+		Size:      strings.TrimSpace(optString(opts, "size")),
+		Snap:      optBool(opts, "snap"),
+		Combine:   optBool(opts, "combine"),
+		Seq:       optBool(opts, "seq"),
+		NoLibrary: optBool(opts, "nolibrary"),
+		Refs:      splitPathList(optString(opts, "refs")),
+		Meta:      strings.TrimSpace(optString(opts, "meta")),
 	}
 	if p.Preset == "none" {
 		p.Preset = ""
@@ -530,7 +534,7 @@ func runRetouchJob(j *jobqueue.Job, q *jobqueue.Queue, tag string, p retouchPara
 	terminal := !q.HasDependents(j.ID)
 	var created []string
 	defer func() {
-		if terminal {
+		if terminal && !p.NoLibrary {
 			broadcastMediaCreated(created)
 		}
 	}()
@@ -629,7 +633,7 @@ func runRetouchJob(j *jobqueue.Job, q *jobqueue.Queue, tag string, p retouchPara
 		// without a media row it is invisible to path/tag queries until
 		// someone re-ingests the folder. Intermediate (.loki-temp) output is
 		// never added — the step that places it owns that.
-		if terminal {
+		if terminal && !p.NoLibrary {
 			if err := insertMediaRecord(q.Db, output, info.Size()); err != nil {
 				q.PushJobStdout(j.ID, tag+": failed to add to library: "+err.Error())
 			}

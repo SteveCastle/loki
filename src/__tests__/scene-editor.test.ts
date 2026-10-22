@@ -1,0 +1,92 @@
+import { maskBounds, regionFor, rectContains, simplifyPath, maskSize, type MaskOp } from '../renderer/components/scene/mask';
+import { mergeServer, sceneBusy, type Scene, type SceneLayer } from '../renderer/components/scene/scene-api';
+import { canStartScene } from '../renderer/components/scene/launch';
+
+const W = 2000;
+const H = 1000;
+
+describe('scene masks', () => {
+  it('bounds cover additive ops only, strokes by their radius', () => {
+    const ops: MaskOp[] = [
+      { t: 'rect', x: 100, y: 100, w: 50, h: 40 },
+      { t: 'stroke', pts: [300, 300, 320, 310], r: 10 },
+      { t: 'rect', x: 0, y: 0, w: 1999, h: 999, erase: true },
+    ];
+    expect(maskBounds(ops)).toEqual({ x: 100, y: 100, w: 230, h: 220 });
+    expect(maskBounds([])).toBeNull();
+    expect(maskBounds([{ t: 'rect', x: 5, y: 5, w: 400, h: 400, erase: true }])).toBeNull();
+  });
+
+  it('region pads the mask by the context and keeps the feather inside the crop', () => {
+    const ops: MaskOp[] = [{ t: 'rect', x: 900, y: 400, w: 200, h: 200 }];
+    const tight = regionFor(ops, W, H, { context: 'tight', feather: 0 }) as NonNullable<ReturnType<typeof regionFor>>;
+    const wide = regionFor(ops, W, H, { context: 'wide', feather: 0 }) as NonNullable<ReturnType<typeof regionFor>>;
+    expect(rectContains(tight, { x: 900, y: 400, w: 200, h: 200 })).toBe(true);
+    expect(wide.w).toBeGreaterThan(tight.w);
+    // A big feather needs at least 1.5× its width of margin, whatever the context.
+    const soft = regionFor(ops, W, H, { context: 'tight', feather: 100 }) as NonNullable<ReturnType<typeof regionFor>>;
+    expect(soft.x).toBeLessThanOrEqual(900 - 150);
+    expect(regionFor(ops, W, H, { context: 'full', feather: 10 })).toEqual({ x: 0, y: 0, w: W, h: H });
+  });
+
+  it('region stays in the frame, grows to the minimum side and a sane aspect', () => {
+    const corner = regionFor([{ t: 'rect', x: 0, y: 0, w: 20, h: 20 }], W, H, { context: 'normal', feather: 4, minSide: 320 });
+    expect(corner).toEqual({ x: 0, y: 0, w: 320, h: 320 });
+    const sliver = regionFor([{ t: 'rect', x: 100, y: 500, w: 1600, h: 10 }], W, H, { context: 'tight', feather: 0, maxAspect: 2.5 });
+    expect(sliver).not.toBeNull();
+    const s = sliver as NonNullable<typeof sliver>;
+    expect(s.w / s.h).toBeLessThanOrEqual(2.51);
+    expect(s.x).toBeGreaterThanOrEqual(0);
+    expect(s.y + s.h).toBeLessThanOrEqual(H);
+  });
+
+  it('mask raster is capped at 2048 on the long edge', () => {
+    expect(maskSize(4000, 3000)).toEqual({ w: 2048, h: 1536, scale: 0.512 });
+    expect(maskSize(800, 600)).toEqual({ w: 800, h: 600, scale: 1 });
+  });
+
+  it('simplifies freehand paths but keeps corners', () => {
+    const line: number[] = [];
+    for (let i = 0; i <= 100; i += 1) line.push(i, 0);
+    line.push(100, 100);
+    const out = simplifyPath(line, 0.5);
+    expect(out).toEqual([0, 0, 100, 0, 100, 100]);
+  });
+});
+
+function layer(id: string, extra: Partial<SceneLayer> = {}): SceneLayer {
+  return { id, name: id, kind: 'still', region: { x: 0, y: 0, w: 10, h: 10 }, mask: '', feather: 4, prompt: '', versions: [], active: -1, ...extra };
+}
+
+function scene(layers: SceneLayer[], extra: Partial<Scene> = {}): Scene {
+  return { id: 's', name: 's', source: 'C:\\a.png', base: 'b.png', width: 100, height: 100, layers, duration: 0, created: '', updated: '', ...extra };
+}
+
+describe('scene documents', () => {
+  const v = (path: string) => ({ path, region: { x: 0, y: 0, w: 10, h: 10 }, prompt: '', created: '' });
+
+  it('merging keeps local edits and takes the server’s generations', () => {
+    const local = scene([layer('a', { prompt: 'typed since', active: 0, versions: [v('1.png')] }), layer('new')]);
+    const server = scene([layer('a', { prompt: 'old', versions: [v('1.png'), v('2.png')], active: 1, job: null })], { render: { jobId: 'r', format: 'video', state: 'pending', done: 0, total: 1 } });
+    const m = mergeServer(local, server);
+    expect(m.layers.map((l) => l.id)).toEqual(['a', 'new']);
+    expect(m.layers[0].prompt).toBe('typed since');
+    expect(m.layers[0].versions).toHaveLength(2);
+    expect(m.layers[0].active).toBe(1); // a new version arrived: show it
+    expect(m.render?.state).toBe('pending');
+    expect(sceneBusy(m)).toBe(true);
+  });
+
+  it('merging keeps a locally picked version when nothing new arrived', () => {
+    const local = scene([layer('a', { active: 0, versions: [v('1.png'), v('2.png')] })]);
+    const server = scene([layer('a', { active: 1, versions: [v('1.png'), v('2.png')] })]);
+    expect(mergeServer(local, server).layers[0].active).toBe(0);
+  });
+
+  it('a scene starts from an image or a video frame', () => {
+    expect(canStartScene('C:\\x\\photo.JPG')).toBe(true);
+    expect(canStartScene('/x/clip.mp4')).toBe(true);
+    expect(canStartScene('/x/song.mp3')).toBe(false);
+    expect(canStartScene(undefined)).toBe(false);
+  });
+});

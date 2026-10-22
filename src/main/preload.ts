@@ -80,6 +80,7 @@ export type Channels =
   | 'log-event'
   | 'find-subtitle'
   | 'open-studio'
+  | 'open-scene-editor'
   | 'list-monitors'
   | 'set-wallpaper'
   | 'studio-media-saved'

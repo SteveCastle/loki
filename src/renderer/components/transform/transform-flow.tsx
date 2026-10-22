@@ -31,6 +31,7 @@ import {
 import { EngineSetupDeferred } from './engine-setup';
 import { markUsed, savedTransformKey } from '../../saved-recent';
 import { TransformFlowView, validateForRun, validateShape, type PromptPreviewState } from './flow-view';
+import { canStartScene, openSceneEditor } from '../scene/launch';
 
 // ---------------------------------------------------------------------------
 // Host (container): owns phase/intent/settings state, talks to the server
@@ -293,6 +294,14 @@ function FlowSession({ req }: { req: NonNullable<ReturnType<typeof useFlowReques
       onIntent={chooseIntent}
       onTemplate={chooseTemplate}
       onLoadRun={loadRun}
+      onOpenScene={
+        paths.length === 1 && canStartScene(paths[0])
+          ? () => {
+              openSceneEditor(paths[0], req.videoTime);
+              closeTransformFlow();
+            }
+          : undefined
+      }
       onPhase={(p) => {
         setError(undefined);
         setPhase(p);

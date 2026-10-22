@@ -25,6 +25,7 @@ import { logEvent, installGlobalErrorHandlers } from './errorLog';
 import { withTimeout } from './async-timeout';
 import { isValidFilePath, filePathFromArgv } from './file-handling';
 import { registerStudioProtocol, openStudioWindow } from './studio-window';
+import { openSceneWindow } from './scene-window';
 import { registerWallpaperHandlers } from './wallpaper';
 import { heicDisplayFile, isHeicPath } from './heic';
 import {
@@ -285,6 +286,28 @@ ipcMain.on('show-item-in-folder', async (event, args) => {
 // Launch Lowkey Studio in its own window with the given media auto-imported.
 ipcMain.on('open-studio', async (_event, args) => {
   openStudioWindow(Array.isArray(args) ? args.filter((p) => typeof p === 'string') : []);
+});
+
+// Open the Scene editor (mask regions of a still, edit and animate them) in
+// its own window: args = [mediaPath, videoTimeSeconds].
+ipcMain.on('open-scene-editor', async (_event, args) => {
+  const [mediaPath, time] = Array.isArray(args) ? args : [];
+  if (typeof mediaPath !== 'string' || !mediaPath) return;
+  openSceneWindow(mediaPath, Number(time) || 0, {
+    preload: app.isPackaged
+      ? path.join(__dirname, 'preload.js')
+      : path.join(__dirname, '../../.erb/dll/preload.js'),
+    icon: app.isPackaged
+      ? path.join(process.resourcesPath, 'assets', 'icon-window.png')
+      : path.join(__dirname, '../../assets', 'icon-window.png'),
+    // Not the primary window: get-boot-args must not hand it the launch file
+    // (or let its marks join the launch trace).
+    onCreate: (win) => {
+      const id = win.webContents.id;
+      windowLaunchFiles.set(id, '');
+      win.on('closed', () => windowLaunchFiles.delete(id));
+    },
+  });
 });
 
 ipcMain.on('toggle-fullscreen', async (event) => {

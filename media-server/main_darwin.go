@@ -2549,6 +2549,7 @@ func main() {
 	RegisterVizRoutes(mux, deps)
 	RegisterFacesRoutes(mux, deps)
 	RegisterDuplicatesRoutes(mux, deps)
+	RegisterSceneRoutes(mux, deps)
 	mux.HandleFunc("/open", renderer.ApplyMiddlewares(openPathHandler(), renderer.RoleAdmin))
 	mux.HandleFunc("/editor", renderer.ApplyMiddlewares(editorHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/workflow", renderer.ApplyMiddlewares(workflowHandler(deps), renderer.RoleAdmin))

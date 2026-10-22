@@ -121,3 +121,14 @@ export function GlyphReplay({ size = 13 }: { size?: number }) {
     </svg>
   );
 }
+
+/** The Scene editor: a picture with a masked region and a motion wave. */
+export function GlyphScene({ size = 22 }: { size?: number }) {
+  return (
+    <svg className="ts-icon" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d="M7 9.5c1.5-2 3-2 4.5 0s3 2 4.5 0" />
+      <rect x="6" y="12.5" width="7" height="5" rx="1" strokeDasharray="2 1.6" />
+    </svg>
+  );
+}

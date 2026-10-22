@@ -22,7 +22,8 @@ import {
   useLastRun,
 } from './store';
 import { validateForRun } from './flow-view';
-import { GlyphReplay, IntentIcon } from './icons';
+import { GlyphReplay, GlyphScene, IntentIcon } from './icons';
+import { canStartScene, openSceneEditor } from '../scene/launch';
 import './transform-section.css';
 
 // The palette's "Transform" row: one-click presets (run with the settings you
@@ -142,6 +143,21 @@ export default function TransformSection(props: TransformSectionProps) {
             {busy === c.id ? 'Queuing…' : chipLabel(c.id, hasVideoOnly)}
           </button>
         ))}
+        {paths.length === 1 && canStartScene(paths[0]) && (
+          <button
+            type="button"
+            className="type-chip transform-chip"
+            disabled={busy !== null}
+            onClick={() => {
+              openSceneEditor(paths[0], getVideoTime());
+              onDone();
+            }}
+            title="Scene editor (opens a window): mask parts of the picture, edit them, then animate them one by one"
+          >
+            <GlyphScene size={13} />
+            Scene…
+          </button>
+        )}
       </div>
       <span className="merge-selection-note">
         {hasVideoOnly ? 'acts on the frame you are looking at · ' : ''}

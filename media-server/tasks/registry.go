@@ -148,6 +148,8 @@ func init() {
 	RegisterTask("retouch", "Retouch (AI image edit)", retouchOptions, retouchTask)
 	RegisterTask("reshoot", "Reshoot (AI video)", reshootOptions, reshootTask)
 	RegisterTask("splat", "Gaussian Splat (3D scene)", splatOptions, splatTask)
+	RegisterTask("scene-render", "Render Scene", sceneRenderOptions, sceneRenderTask)
+	RegisterTask("scene-lock", "Lock Scene Motion Edges", sceneLockOptions, sceneLockTask)
 	// Deprecated alias of retouch --preset 4kify|4kify-phone (saved workflows).
 	RegisterTask("4kify", "4K Upscale + Outpaint", fourKifyOptions, fourKifyTask)
 	RegisterTask("ffmpeg-caption","FFmpeg Caption", ffmpegCaptionOptions, ffmpegCaptionTask)

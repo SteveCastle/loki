@@ -35,7 +35,7 @@ import {
   type TransformSettings,
 } from './intents';
 import { deleteTemplate, saveTemplate, templateSettings, templateSummary, useAllTemplates, useLastRun, useTemplates, type FlowPhase, type LastRun, type PromptTemplate } from './store';
-import { GlyphCheck, GlyphDie, GlyphMusic, GlyphPin, IntentIcon } from './icons';
+import { GlyphCheck, GlyphDie, GlyphMusic, GlyphPin, GlyphScene, IntentIcon } from './icons';
 import { markUsed, savedTransformKey } from '../../saved-recent';
 import CameraRig from './camera-rig';
 import './transform-flow.css';
@@ -599,6 +599,8 @@ export interface FlowViewProps {
   onTemplate?: (id: IntentId, t: PromptTemplate) => void;
   /** Load the last run (its intent and every setting) to adjust and run again. */
   onLoadRun?: (run: LastRun) => void;
+  /** Open the Scene editor on the single image / video (absent when the selection can't start a scene). */
+  onOpenScene?: () => void;
   onPhase: (p: FlowPhase) => void;
   onRun: () => void;
   onClose: () => void;
@@ -799,6 +801,25 @@ function ChooseView(props: FlowViewProps & { inputs: ReturnType<typeof classify>
           </div>
         </section>
       ))}
+      {props.onOpenScene && (
+        <section className="ts-group">
+          <div className="ts-group-head">
+            <h3>Scene</h3>
+            <span>opens in its own window · both engines, one region at a time</span>
+          </div>
+          <div className="ts-cards">
+            <button type="button" className="ts-card ts-card-scene" onClick={props.onOpenScene} data-intent="scene">
+              <span className="ts-card-icon">
+                <GlyphScene />
+              </span>
+              <span className="ts-card-text">
+                <strong>Scene editor</strong>
+                <small>Mask parts of the picture, edit them, then animate them one by one into a living scene</small>
+              </span>
+            </button>
+          </div>
+        </section>
+      )}
       {saved.length > 0 && (
         <section className="ts-group">
           <div className="ts-group-head">

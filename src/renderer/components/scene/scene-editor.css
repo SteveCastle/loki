@@ -1,0 +1,953 @@
+/* Scene editor window — same visual language as the Transform flow:
+   flat black surfaces, hairline borders, 5-6px radii, the #00c896 accent. */
+
+body.sc-body {
+  margin: 0;
+  overflow: hidden;
+  background: #0b0b0b;
+}
+
+.sc-app {
+  --sc-accent: #00c896;
+  --sc-accent-soft: rgba(0, 200, 150, 0.15);
+  --sc-accent-strong: rgba(0, 200, 150, 0.3);
+  --sc-motion: #8a7dff;
+  --sc-motion-soft: rgba(138, 125, 255, 0.18);
+  --sc-caution: #e6a23c;
+  --sc-danger: rgb(255, 120, 160);
+  --sc-hairline: rgba(255, 255, 255, 0.1);
+  --sc-field: rgba(255, 255, 255, 0.05);
+  --sc-dim: rgba(255, 255, 255, 0.7);
+  --sc-faint: rgba(255, 255, 255, 0.45);
+  --sc-surface: #000;
+
+  position: fixed;
+  inset: 0;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  background: #0b0b0b;
+  color: #fff;
+  font: 13px/1.4 system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  user-select: none;
+}
+
+.sc-app *,
+.sc-app *::before,
+.sc-app *::after {
+  box-sizing: border-box;
+}
+
+.sc-faint {
+  color: var(--sc-faint);
+}
+
+/* ---- boot ---- */
+
+.sc-boot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.sc-boot-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  max-width: 420px;
+  padding: 24px;
+  text-align: center;
+  background: var(--sc-surface);
+  border: 1px solid var(--sc-hairline);
+  border-radius: 6px;
+}
+
+.sc-boot-card p {
+  margin: 0;
+  color: var(--sc-dim);
+}
+
+.sc-spinner {
+  width: 22px;
+  height: 22px;
+  border: 2px solid var(--sc-hairline);
+  border-top-color: var(--sc-accent);
+  border-radius: 50%;
+  animation: sc-spin 0.8s linear infinite;
+}
+
+@keyframes sc-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ---- buttons & fields ---- */
+
+.sc-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  color: inherit;
+  font: inherit;
+  white-space: nowrap;
+  background: var(--sc-field);
+  border: 1px solid var(--sc-hairline);
+  border-radius: 5px;
+  cursor: pointer;
+  transition: background-color 0.1s, border-color 0.1s;
+}
+
+.sc-btn:hover:not(:disabled) {
+  background: var(--sc-accent-soft);
+  border-color: var(--sc-accent);
+}
+
+.sc-btn.on {
+  background: var(--sc-accent-soft);
+  border-color: var(--sc-accent-strong);
+}
+
+.sc-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.sc-btn-primary {
+  color: #001a12;
+  font-weight: 600;
+  background: var(--sc-accent);
+  border-color: var(--sc-accent);
+}
+
+.sc-btn-primary:hover:not(:disabled) {
+  background: #19dba9;
+  border-color: #19dba9;
+}
+
+.sc-btn-quiet {
+  background: transparent;
+  border-color: transparent;
+  color: var(--sc-dim);
+}
+
+.sc-btn-danger {
+  color: var(--sc-danger);
+  border-color: rgba(255, 120, 160, 0.4);
+}
+
+.sc-btn-wide {
+  width: 100%;
+  height: 34px;
+}
+
+.sc-input,
+.sc-select,
+.sc-name,
+.sc-prompt,
+.sc-scene-name {
+  color: inherit;
+  font: inherit;
+  background: var(--sc-field);
+  border: 1px solid var(--sc-hairline);
+  border-radius: 5px;
+  outline: none;
+  user-select: text;
+}
+
+.sc-input:focus,
+.sc-select:focus,
+.sc-name:focus,
+.sc-prompt:focus,
+.sc-scene-name:focus {
+  border-color: var(--sc-accent);
+}
+
+.sc-input,
+.sc-select,
+.sc-name {
+  height: 28px;
+  padding: 0 8px;
+}
+
+.sc-select option {
+  background: #111;
+}
+
+.sc-seg {
+  display: inline-flex;
+  padding: 2px;
+  gap: 2px;
+  background: var(--sc-field);
+  border: 1px solid var(--sc-hairline);
+  border-radius: 5px;
+}
+
+.sc-seg button {
+  height: 22px;
+  padding: 0 8px;
+  color: var(--sc-dim);
+  font: inherit;
+  font-size: 12px;
+  background: transparent;
+  border: 0;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.sc-seg button.on {
+  color: #fff;
+  background: var(--sc-accent-strong);
+}
+
+.sc-seg button:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+/* ---- header ---- */
+
+.sc-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 8px 12px;
+  background: var(--sc-surface);
+  border-bottom: 1px solid var(--sc-hairline);
+}
+
+.sc-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.sc-title .sc-faint {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.sc-scene-name {
+  width: 200px;
+  height: 30px;
+  padding: 0 8px;
+  font-size: 15px;
+  font-weight: 600;
+  background: transparent;
+  border-color: transparent;
+}
+
+.sc-scene-name:hover {
+  border-color: var(--sc-hairline);
+}
+
+.sc-select {
+  max-width: 220px;
+}
+
+.sc-header-mid,
+.sc-header-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sc-length {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--sc-dim);
+}
+
+.sc-length .sc-input {
+  width: 92px;
+}
+
+/* ---- body ---- */
+
+.sc-body {
+  display: grid;
+  grid-template-columns: 52px 1fr 360px;
+  min-height: 0;
+}
+
+.sc-tools {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 0;
+  background: var(--sc-surface);
+  border-right: 1px solid var(--sc-hairline);
+}
+
+.sc-tools > button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  color: var(--sc-dim);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.sc-tools > button:hover {
+  color: #fff;
+  background: var(--sc-field);
+}
+
+.sc-tools > button.on {
+  color: #fff;
+  background: var(--sc-accent-soft);
+  border-color: var(--sc-accent-strong);
+}
+
+.sc-tools-sep {
+  width: 28px;
+  height: 1px;
+  margin: 6px 0;
+  background: var(--sc-hairline);
+}
+
+.sc-brush-size {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  color: var(--sc-faint);
+  font-size: 11px;
+}
+
+.sc-brush-size input {
+  width: 110px;
+  margin: 50px 0;
+  transform: rotate(-90deg);
+  accent-color: var(--sc-accent);
+}
+
+.sc-main {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* ---- stage ---- */
+
+.sc-stage-wrap {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background:
+    repeating-conic-gradient(#121212 0% 25%, #0e0e0e 0% 50%) 50% / 24px 24px;
+  touch-action: none;
+}
+
+.sc-stage-wrap.cursor-crosshair {
+  cursor: crosshair;
+}
+
+.sc-stage-wrap.cursor-grab {
+  cursor: grab;
+}
+
+.sc-stage-wrap.cursor-grabbing {
+  cursor: grabbing;
+}
+
+.sc-stage {
+  position: absolute;
+  box-shadow: 0 6px 30px rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+}
+
+.sc-base,
+.sc-layer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.sc-base {
+  display: block;
+}
+
+.sc-media {
+  position: absolute;
+  display: block;
+  object-fit: fill;
+}
+
+.sc-mask-tint {
+  position: absolute;
+  inset: 0;
+  background: var(--sc-accent);
+  opacity: 0.38;
+  mix-blend-mode: screen;
+}
+
+.sc-mask-tint.motion {
+  background: var(--sc-motion);
+}
+
+.sc-region {
+  position: absolute;
+  border: 1px dashed rgba(0, 200, 150, 0.9);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5);
+}
+
+.sc-region.motion {
+  border-color: rgba(138, 125, 255, 0.95);
+}
+
+.sc-region-label {
+  position: absolute;
+  left: -1px;
+  bottom: 100%;
+  padding: 1px 6px;
+  font-size: 11px;
+  white-space: nowrap;
+  color: #001a12;
+  background: var(--sc-accent);
+  border-radius: 3px 3px 0 0;
+}
+
+.sc-region.motion .sc-region-label {
+  color: #fff;
+  background: var(--sc-motion);
+}
+
+.sc-job {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  overflow: hidden;
+}
+
+.sc-job::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(100deg, transparent 30%, rgba(255, 255, 255, 0.14) 50%, transparent 70%);
+  background-size: 200% 100%;
+  animation: sc-shimmer 1.6s linear infinite;
+}
+
+@keyframes sc-shimmer {
+  from {
+    background-position: 150% 0;
+  }
+  to {
+    background-position: -50% 0;
+  }
+}
+
+.sc-job span {
+  position: relative;
+  padding: 3px 8px;
+  font-size: 12px;
+  background: rgba(0, 0, 0, 0.7);
+  border-radius: 4px;
+}
+
+.sc-draft {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+}
+
+.sc-brush-cursor {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  border: 1px solid #fff;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+}
+
+.sc-brush-cursor.erase {
+  border-color: var(--sc-danger);
+}
+
+.sc-zoom-badge {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  padding: 2px 8px;
+  font-size: 11px;
+  color: var(--sc-dim);
+  background: rgba(0, 0, 0, 0.6);
+  border-radius: 4px;
+  pointer-events: none;
+}
+
+.sc-empty-hint {
+  position: absolute;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  max-width: 520px;
+  padding: 8px 14px;
+  text-align: center;
+  color: var(--sc-dim);
+  background: rgba(0, 0, 0, 0.75);
+  border: 1px solid var(--sc-hairline);
+  border-radius: 6px;
+  pointer-events: none;
+}
+
+.sc-notice {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 80%;
+  padding: 8px 8px 8px 14px;
+  background: rgba(0, 0, 0, 0.88);
+  border: 1px solid var(--sc-hairline);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+
+.sc-notice.error {
+  border-color: rgba(255, 120, 160, 0.5);
+}
+
+.sc-notice button {
+  color: var(--sc-dim);
+  font-size: 16px;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+/* ---- right panel ---- */
+
+.sc-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+  background: var(--sc-surface);
+  border-left: 1px solid var(--sc-hairline);
+}
+
+.sc-section {
+  padding: 12px;
+  border-bottom: 1px solid var(--sc-hairline);
+}
+
+.sc-section h3 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--sc-dim);
+}
+
+.sc-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.sc-add {
+  display: flex;
+  gap: 6px;
+}
+
+.sc-layer-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sc-layer-row {
+  display: flex;
+  align-items: center;
+  border: 1px solid transparent;
+  border-radius: 5px;
+}
+
+.sc-layer-row + .sc-layer-row {
+  margin-top: 2px;
+}
+
+.sc-layer-row:hover {
+  background: var(--sc-field);
+}
+
+.sc-layer-row.selected {
+  background: var(--sc-accent-soft);
+  border-color: var(--sc-accent-strong);
+}
+
+.sc-layer-row.hidden .sc-layer-name {
+  opacity: 0.45;
+}
+
+.sc-layer-main {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  height: 32px;
+  padding: 0 8px;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.sc-kind {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  color: var(--sc-accent);
+  background: var(--sc-accent-soft);
+}
+
+.sc-kind.motion {
+  color: var(--sc-motion);
+  background: var(--sc-motion-soft);
+}
+
+.sc-kind.base {
+  color: var(--sc-dim);
+  background: var(--sc-field);
+  font-size: 12px;
+}
+
+.sc-layer-name {
+  flex: 1 1 auto;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.sc-status {
+  font-size: 11px;
+  color: var(--sc-faint);
+}
+
+.sc-status.busy {
+  color: var(--sc-caution);
+}
+
+.sc-status.error {
+  color: var(--sc-danger);
+}
+
+.sc-status.ok {
+  color: var(--sc-accent);
+}
+
+.sc-row-tools {
+  display: flex;
+  padding-right: 4px;
+  opacity: 0;
+}
+
+.sc-layer-row:hover .sc-row-tools,
+.sc-layer-row.selected .sc-row-tools,
+.sc-layer-row.hidden .sc-row-tools {
+  opacity: 1;
+}
+
+.sc-row-tools button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  color: var(--sc-dim);
+  font-size: 9px;
+  background: transparent;
+  border: 0;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.sc-row-tools button:hover:not(:disabled) {
+  color: #fff;
+  background: var(--sc-field);
+}
+
+.sc-row-tools button:disabled {
+  opacity: 0.25;
+  cursor: default;
+}
+
+/* inspector */
+
+.sc-inspector {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sc-field-row {
+  display: flex;
+  gap: 8px;
+}
+
+.sc-name {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.sc-label {
+  color: var(--sc-dim);
+  font-size: 12px;
+}
+
+.sc-prompt {
+  width: 100%;
+  min-height: 76px;
+  padding: 7px 8px;
+  resize: vertical;
+  line-height: 1.45;
+}
+
+.sc-ideas {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.sc-chip {
+  padding: 2px 8px;
+  color: var(--sc-dim);
+  font: inherit;
+  font-size: 11px;
+  background: transparent;
+  border: 1px solid var(--sc-hairline);
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.sc-chip:hover {
+  color: #fff;
+  border-color: var(--sc-accent);
+}
+
+.sc-grid {
+  display: grid;
+  grid-template-columns: 74px 1fr;
+  align-items: center;
+  gap: 8px 10px;
+  margin-top: 4px;
+}
+
+.sc-grid .sc-seg {
+  justify-self: start;
+}
+
+.sc-slider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sc-slider input {
+  flex: 1 1 auto;
+  accent-color: var(--sc-accent);
+}
+
+.sc-slider span {
+  width: 48px;
+  color: var(--sc-faint);
+  font-size: 12px;
+  text-align: right;
+}
+
+.sc-seed {
+  width: 120px;
+}
+
+.sc-generate {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.sc-progress {
+  height: 4px;
+  background: var(--sc-field);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.sc-progress-bar {
+  height: 100%;
+  background: var(--sc-accent);
+  transition: width 0.4s;
+}
+
+.sc-job-line {
+  overflow: hidden;
+  color: var(--sc-faint);
+  font-size: 12px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.sc-error,
+.sc-warn {
+  padding: 6px 8px;
+  font-size: 12px;
+  border-radius: 5px;
+  user-select: text;
+}
+
+.sc-error {
+  color: var(--sc-danger);
+  background: rgba(255, 120, 160, 0.08);
+  border: 1px solid rgba(255, 120, 160, 0.3);
+}
+
+.sc-warn {
+  color: var(--sc-caution);
+  background: rgba(230, 162, 60, 0.08);
+  border: 1px solid rgba(230, 162, 60, 0.3);
+}
+
+.sc-versions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.sc-version-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.sc-version {
+  position: relative;
+  width: 58px;
+  height: 44px;
+  padding: 0;
+  overflow: hidden;
+  color: #fff;
+  background: var(--sc-field);
+  border: 1px solid var(--sc-hairline);
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.sc-version.on {
+  border-color: var(--sc-accent);
+  box-shadow: 0 0 0 1px var(--sc-accent);
+}
+
+.sc-version img,
+.sc-version video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.sc-version span {
+  position: absolute;
+  left: 3px;
+  bottom: 2px;
+  padding: 0 4px;
+  font-size: 10px;
+  background: rgba(0, 0, 0, 0.7);
+  border-radius: 3px;
+}
+
+.sc-version.none span {
+  position: static;
+  background: none;
+  color: var(--sc-dim);
+}
+
+.sc-version-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sc-version-prompt {
+  flex: 1 1 auto;
+  overflow: hidden;
+  font-size: 12px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.sc-layer-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--sc-hairline);
+}
+
+.sc-confirm {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.sc-help ol {
+  margin: 10px 0 0;
+  padding-left: 18px;
+  color: var(--sc-dim);
+}
+
+.sc-help li + li {
+  margin-top: 6px;
+}
+
+/* ---- footer ---- */
+
+.sc-footer {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  height: 26px;
+  padding: 0 12px;
+  font-size: 11px;
+  color: var(--sc-faint);
+  background: var(--sc-surface);
+  border-top: 1px solid var(--sc-hairline);
+}
+
+.sc-keys {
+  margin-left: auto;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
