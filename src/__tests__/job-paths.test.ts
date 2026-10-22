@@ -35,7 +35,7 @@ describe('navigateToMedia', () => {
   test('in the library: move the cursor to it', () => {
     const s = service(['C:/a.png', 'C:/b.png']);
     navigateToMedia(s, 'C:/b.png');
-    expect(s.sent).toEqual([['RESET_CURSOR', { currentItem: { path: 'C:/b.png' } }]]);
+    expect(s.sent).toEqual([['RESET_CURSOR', { currentItem: { path: 'C:/b.png' }, reveal: true }]]);
   });
 
   test('elsewhere: open it from disk', () => {

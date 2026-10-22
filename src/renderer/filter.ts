@@ -9,6 +9,17 @@ import { seededShuffle } from './seeded-random';
 let lastCacheKey: string | null = null;
 let lastResult: Item[] | null = null;
 
+/** Whether the media-type filter setting lets `itemPath` into the view. */
+export function passesTypeFilter(filters: FilterOption, itemPath: string) {
+  if (filters === 'all') return true;
+  const mediaType = getMediaType(itemPath);
+  return (
+    (filters === 'static' && mediaType === 'static') ||
+    (filters === 'video' && mediaType === 'motion') ||
+    (filters === 'audio' && mediaType === 'audio')
+  );
+}
+
 function filter(
   libraryLoadId: string,
   textFilter: string,
@@ -26,22 +37,9 @@ function filter(
     lastResult = library;
     return library;
   }
-  const filtered = library.filter((item) => {
-    const mediaType = getMediaType(item.path);
-    if (filters === 'all') {
-      return true;
-    }
-    if (filters === 'static' && mediaType === 'static') {
-      return true;
-    }
-    if (filters === 'video' && mediaType === 'motion') {
-      return true;
-    }
-    if (filters === 'audio' && mediaType === 'audio') {
-      return true;
-    }
-    return false;
-  });
+  const filtered = library.filter((item) =>
+    passesTypeFilter(filters, item.path)
+  );
 
   if (sortBy === 'stream') {
     // Preserve insertion order during streaming

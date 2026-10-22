@@ -40,7 +40,7 @@ import { markStartup } from './startup-marks';
 import { cursorAfterRemoval, libraryWithout } from './library-cursor';
 import { extendSelection } from './context-selection';
 import { movedPath, moveRange } from './media-path';
-import filter from './filter';
+import filter, { passesTypeFilter } from './filter';
 import {
   initSessionStore,
   getSessionValue,
@@ -328,6 +328,43 @@ function finishFsScan(
     savedSortByDuringStreaming: null,
   };
 }
+
+// Navigating to a specific item must land on it. When the media-type filter
+// (Images / Videos / Audio) hides that item, the jump would silently land on
+// some other item instead — so clear the filter and say so. Only for explicit
+// navigation: reloads and the filter dropdown's own cursor reset keep the
+// user's filter.
+function revealPastTypeFilter(
+  context: LibraryState,
+  itemPath: string | undefined
+): Partial<LibraryState> {
+  if (
+    !itemPath ||
+    !isMediaPath(itemPath) ||
+    passesTypeFilter(context.settings.filters, itemPath)
+  ) {
+    return {};
+  }
+  const filename = itemPath.split(/[\\/]/).pop() || itemPath;
+  return {
+    settings: { ...context.settings, filters: 'all' },
+    toasts: [
+      ...context.toasts,
+      {
+        id: uniqueId(),
+        type: 'info' as const,
+        title: 'Filter cleared',
+        message: `Showing all media types to open ${filename}`,
+        timestamp: Date.now(),
+      },
+    ],
+  };
+}
+
+// For SET_FILE: the path being opened is on the event.
+const revealOpenedFile = assign<LibraryState, AnyEventObject>(
+  (context, event) => revealPastTypeFilter(context, event.path)
+);
 
 // Abandon an in-flight folder scan, keeping the partial library. Runs as the
 // transition action on every way out of loadingFromFS except completion
@@ -1608,80 +1645,101 @@ export const libraryMachine = createMachine(
             }),
           },
           RESET_CURSOR: {
-            actions: assign<LibraryState, AnyEventObject>({
-              cursor: (context, event) => {
-                console.log('RESET_CURSOR', context, event);
-                const cursor = filter(
-                  context.libraryLoadId,
-                  context.textFilter,
-                  context.library,
-                  context.settings.filters,
-                  context.settings.sortBy
-                ).findIndex(
-                  (item: Item) =>
-                    item?.path &&
-                    event.currentItem?.path &&
-                    path.normalize(item?.path).toLowerCase() ===
-                      path.normalize(event.currentItem?.path).toLowerCase()
-                );
-                console.log('index of current item', event.currentItem, cursor);
-                const finalCursor = cursor > -1 ? cursor : 0;
-                updatePersistedCursor(context, finalCursor);
-                return finalCursor;
-              },
-            }),
+            actions: [
+              // `reveal` marks a jump to a specific item (job/toast links);
+              // without it this is the settings menu keeping the current item
+              // in view after a filter/sort change, which must not undo the
+              // filter the user just picked.
+              assign<LibraryState, AnyEventObject>((context, event) =>
+                event.reveal
+                  ? revealPastTypeFilter(context, event.currentItem?.path)
+                  : {}
+              ),
+              assign<LibraryState, AnyEventObject>({
+                cursor: (context, event) => {
+                  console.log('RESET_CURSOR', context, event);
+                  const cursor = filter(
+                    context.libraryLoadId,
+                    context.textFilter,
+                    context.library,
+                    context.settings.filters,
+                    context.settings.sortBy
+                  ).findIndex(
+                    (item: Item) =>
+                      item?.path &&
+                      event.currentItem?.path &&
+                      path.normalize(item?.path).toLowerCase() ===
+                        path.normalize(event.currentItem?.path).toLowerCase()
+                  );
+                  console.log('index of current item', event.currentItem, cursor);
+                  const finalCursor = cursor > -1 ? cursor : 0;
+                  updatePersistedCursor(context, finalCursor);
+                  return finalCursor;
+                },
+              }),
+            ],
           },
           // A file just created by a job (e.g. 4kify output) that the active
           // search/filter/query doesn't include. Add it to the in-memory library
-          // PROVISIONALLY — without touching the query, filters, or history — and
-          // jump the cursor to it so the user can act on it. It is not persisted
-          // anywhere: any reload or re-query drops it if it doesn't match, which
-          // is intended. Items already in the library are just navigated to.
+          // PROVISIONALLY — without touching the query or history — and jump
+          // the cursor to it so the user can act on it. It is not persisted
+          // anywhere: any reload or re-query drops it if it doesn't match,
+          // which is intended. Items already in the library are just
+          // navigated to. A media-type filter that would hide it outright is
+          // cleared (revealPastTypeFilter), or the jump couldn't land.
           ADD_PROVISIONAL_ITEMS: {
-            actions: assign<LibraryState, AnyEventObject>((context, event) => {
-              const paths: string[] = (event.paths || []).filter(Boolean);
-              if (paths.length === 0) return {};
-              const norm = (p: string) => path.normalize(p).toLowerCase();
-              const known = new Set(
-                context.library.map((item) => item?.path && norm(item.path))
-              );
-              const added: Item[] = [];
-              for (const p of paths) {
-                if (known.has(norm(p))) continue;
-                known.add(norm(p));
-                added.push({ path: p, mtimeMs: Date.now() });
-              }
-              const library = added.length
-                ? [...added, ...context.library]
-                : context.library;
-              const loadId = added.length ? newLoadId() : context.libraryLoadId;
-              const view = filter(
-                loadId,
-                context.textFilter,
-                library,
-                context.settings.filters,
-                context.settings.sortBy
-              );
-              const target = norm(paths[0]);
-              const idx = view.findIndex(
-                (item: Item) => item?.path && norm(item.path) === target
-              );
-              if (idx < 0 && !added.length) return {};
-              const cursor = idx > -1 ? idx : context.cursor;
-              updatePersistedCursor(context, cursor);
-              return {
-                library,
-                libraryLoadId: loadId,
-                // In-place edit of the current view, not a navigation: keep
-                // the list's scroll position (same contract as DELETE_FILE).
-                preserveScrollFromLoadId: added.length
-                  ? context.libraryLoadId
-                  : context.preserveScrollFromLoadId,
-                cursor,
-                scrollToCursorEventId: uniqueId(),
-                videoPlayer: { ...context.videoPlayer, loopCount: 0 },
-              };
-            }),
+            actions: [
+              assign<LibraryState, AnyEventObject>((context, event) =>
+                revealPastTypeFilter(
+                  context,
+                  (event.paths || []).filter(Boolean)[0]
+                )
+              ),
+              assign<LibraryState, AnyEventObject>((context, event) => {
+                const paths: string[] = (event.paths || []).filter(Boolean);
+                if (paths.length === 0) return {};
+                const norm = (p: string) => path.normalize(p).toLowerCase();
+                const known = new Set(
+                  context.library.map((item) => item?.path && norm(item.path))
+                );
+                const added: Item[] = [];
+                for (const p of paths) {
+                  if (known.has(norm(p))) continue;
+                  known.add(norm(p));
+                  added.push({ path: p, mtimeMs: Date.now() });
+                }
+                const library = added.length
+                  ? [...added, ...context.library]
+                  : context.library;
+                const loadId = added.length ? newLoadId() : context.libraryLoadId;
+                const view = filter(
+                  loadId,
+                  context.textFilter,
+                  library,
+                  context.settings.filters,
+                  context.settings.sortBy
+                );
+                const target = norm(paths[0]);
+                const idx = view.findIndex(
+                  (item: Item) => item?.path && norm(item.path) === target
+                );
+                if (idx < 0 && !added.length) return {};
+                const cursor = idx > -1 ? idx : context.cursor;
+                updatePersistedCursor(context, cursor);
+                return {
+                  library,
+                  libraryLoadId: loadId,
+                  // In-place edit of the current view, not a navigation: keep
+                  // the list's scroll position (same contract as DELETE_FILE).
+                  preserveScrollFromLoadId: added.length
+                    ? context.libraryLoadId
+                    : context.preserveScrollFromLoadId,
+                  cursor,
+                  scrollToCursorEventId: uniqueId(),
+                  videoPlayer: { ...context.videoPlayer, loopCount: 0 },
+                };
+              }),
+            ],
           },
           INCREMENT_CURSOR: {
             actions: assign<LibraryState, AnyEventObject>((context, event) => {
@@ -2037,6 +2095,7 @@ export const libraryMachine = createMachine(
                 target: 'loadingFromFS',
                 actions: [
                   finishInterruptedFsScan,
+                  revealOpenedFile,
                   assign<LibraryState, AnyEventObject>({
                     textFilter: () => '',
                     initialFile: (context, event) => event.path,
@@ -2340,6 +2399,7 @@ export const libraryMachine = createMachine(
               SET_FILE: {
                 target: 'loadingFromFS',
                 actions: [
+                  revealOpenedFile,
                   assign<LibraryState, AnyEventObject>({
                     textFilter: () => '',
                     initialFile: (context, event) => event.path,
@@ -2932,6 +2992,7 @@ export const libraryMachine = createMachine(
                 // new folder scan starts a fresh base era (loadingFromFS
                 // clears the old snapshot).
                 actions: [
+                  revealOpenedFile,
                   assign<LibraryState, AnyEventObject>({
                     textFilter: () => '',
                     initialFile: (context, event) => event.path,
