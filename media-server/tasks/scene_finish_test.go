@@ -16,6 +16,7 @@ import (
 	xdraw "golang.org/x/image/draw"
 
 	"github.com/stevecastle/shrike/deps"
+	"github.com/stevecastle/shrike/jobqueue"
 )
 
 func TestLoopSpeed(t *testing.T) {
@@ -372,5 +373,203 @@ func TestSceneMotionPromptSound(t *testing.T) {
 	// Without sound the description is ignored.
 	if p := sceneMotionPrompt(sceneMotionPromptInput{SoundDesc: "thunder"}); strings.Contains(p, "thunder") || !strings.Contains(p, "Silent.") {
 		t.Errorf("silent layer:\n%s", p)
+	}
+}
+
+func TestSceneDialogue(t *testing.T) {
+	opts := map[string]any{"dialogue": []any{
+		map[string]any{"text": "Hello there"},
+		map[string]any{"text": "  "}, // empty: skipped
+		map[string]any{"speaker": "the man on the left", "lang": "Spanish", "text": "¿Qué tal?"},
+		map[string]any{"text": "Not bad!"},
+	}}
+	lines := sceneDialogue(opts)
+	if len(lines) != 3 {
+		t.Fatalf("lines %+v", lines)
+	}
+	if !sceneLayerSound(opts) || sceneLayerSound(map[string]any{}) {
+		t.Fatal("dialogue implies sound")
+	}
+	got := dialogueText(lines)
+	want := "<Subject 1> (S1) says, <d>[English] Hello there.</d> the man on the left (S2) then says, <d>[Spanish] ¿Qué tal?</d> <Subject 1> (S1) then says, <d>[English] Not bad!</d>"
+	if got != want {
+		t.Fatalf("dialogue:\n got %s\nwant %s", got, want)
+	}
+
+	p := sceneMotionPrompt(sceneMotionPromptInput{Lines: lines[:1], VoiceRef: true, LockEdges: true})
+	for _, w := range []string{
+		"<Audio 1> is the voice-timbre reference for the first speaker (S1).",
+		"[keyframe completion + audio reference]",
+		"<Audio 1>: reference - the first speaker (S1) follows <Audio 1>'s voice timbre",
+		"<Subject 1> (S1) says, <d>[English] Hello there.</d>",
+		"lips, jaw and face move naturally and in sync",
+		"no other voices and no music.",
+	} {
+		if !strings.Contains(p, w) {
+			t.Errorf("prompt lacks %q:\n%s", w, p)
+		}
+	}
+	if strings.Contains(p, "nobody speaks") || strings.Contains(p, "Silent.") {
+		t.Errorf("a talking layer is neither silent nor speechless:\n%s", p)
+	}
+	if p := sceneMotionPrompt(sceneMotionPromptInput{Lines: lines[:1]}); strings.Contains(p, "<Audio 1>") || !strings.Contains(p, "[keyframe completion] ") {
+		t.Errorf("no voice reference, no <Audio 1>:\n%s", p)
+	}
+}
+
+func TestSceneVoiceClip(t *testing.T) {
+	ffmpegTest(t)
+	dir := t.TempDir()
+	// A 20 s video with a tone: the clip keeps 15 s of its sound, no picture.
+	src := filepath.Join(dir, "talk.mp4")
+	if err := runSceneFFmpeg(context.Background(), []string{"-f", "lavfi", "-i", "color=gray:s=64x48:r=24", "-f", "lavfi", "-i", "sine=frequency=220",
+		"-t", "20", "-c:v", "libx264", "-c:a", "aac", "-shortest", src}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := sceneVoiceClip(context.Background(), dir, "l1", src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Base(out) != "voice-l1.wav" {
+		t.Fatalf("clip %s", out)
+	}
+	if d := probeVideoDuration(context.Background(), out); math.Abs(d-15) > 0.2 {
+		t.Fatalf("clip duration %.2f, want 15", d)
+	}
+	if _, err := sceneVoiceClip(context.Background(), dir, "l1", filepath.Join(dir, "nope.wav")); err == nil {
+		t.Fatal("a missing reference is an error")
+	}
+	silent := filepath.Join(dir, "silent.mp4")
+	if err := runSceneFFmpeg(context.Background(), []string{"-f", "lavfi", "-i", "color=gray:s=64x48:r=24", "-t", "1", "-c:v", "libx264", silent}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sceneVoiceClip(context.Background(), dir, "l2", silent); err == nil {
+		t.Fatal("a video without sound can't be a voice")
+	}
+}
+
+// The ghost bug: detail match added the still's fine detail onto content
+// that moves, where it stays put while the content moves under it (a static
+// shadow of the picture). Moving areas must take no still detail at all.
+func TestSceneFinishNoStillDetailOnMotion(t *testing.T) {
+	ffmpegTest(t)
+	dir := t.TempDir()
+	still := filepath.Join(dir, "crop.png")
+	video := filepath.Join(dir, "crop_reshoot.mp4")
+	if err := runSceneFFmpeg(context.Background(), []string{"-f", "lavfi", "-i",
+		"nullsrc=s=384x256,geq=lum=128+60*sin(X*1.4)*sin(Y*1.4):cb=128:cr=128", "-frames:v", "1", still}); err != nil {
+		t.Fatal(err)
+	}
+	// The engine's quarter-size video: the still, except its left half is a
+	// coarse pattern sweeping sideways (clearly moving content).
+	if err := runSceneFFmpeg(context.Background(), []string{"-loop", "1", "-i", still, "-f", "lavfi", "-i",
+		"nullsrc=s=48x64:r=24,geq=lum=128+80*sin(X/3-6*T):cb=128:cr=128",
+		"-filter_complex", "[0:v]scale=96:64[s];[s][1:v]overlay=0:0:shortest=1,format=yuv420p",
+		"-t", "2", "-r", "24", "-c:v", "libx264", "-crf", "10", video}); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, "sharp.mp4")
+	if _, err := finishMotion(context.Background(), video, still, out, finishOptions{Freeze: true, Detail: true, RegionW: 384, RegionH: 256}, func(int) {}); err != nil {
+		t.Fatal(err)
+	}
+	s := readPNG(t, still)
+	lum := func(img image.Image, x, y int) float64 {
+		r, g, b, _ := img.At(x, y).RGBA()
+		return 0.299*float64(r>>8) + 0.587*float64(g>>8) + 0.114*float64(b>>8)
+	}
+	// High-frequency of an image: pixel minus its 5x5 mean.
+	hf := func(img image.Image, x, y int) float64 {
+		sum := 0.0
+		for dy := -2; dy <= 2; dy++ {
+			for dx := -2; dx <= 2; dx++ {
+				sum += lum(img, x+dx, y+dy)
+			}
+		}
+		return lum(img, x, y) - sum/25
+	}
+	corr := func(img image.Image, r image.Rectangle) float64 {
+		var a, b []float64
+		for y := r.Min.Y; y < r.Max.Y; y += 2 {
+			for x := r.Min.X; x < r.Max.X; x += 2 {
+				a, b = append(a, hf(img, x, y)), append(b, hf(s, x, y))
+			}
+		}
+		var ma, mb float64
+		for i := range a {
+			ma += a[i] / float64(len(a))
+			mb += b[i] / float64(len(b))
+		}
+		var sab, saa, sbb float64
+		for i := range a {
+			sab += (a[i] - ma) * (b[i] - mb)
+			saa += (a[i] - ma) * (a[i] - ma)
+			sbb += (b[i] - mb) * (b[i] - mb)
+		}
+		return sab / math.Sqrt(saa*sbb+1e-9)
+	}
+	for _, at := range []float64{0.5, 1.5} {
+		f := grab(t, out, at)
+		moving := corr(f, image.Rect(20, 20, 170, 236))
+		static := corr(f, image.Rect(220, 20, 370, 236))
+		if moving > 0.25 {
+			t.Errorf("t=%.1f: the moving area carries the still's detail (correlation %.2f): a static ghost", at, moving)
+		}
+		if static < 0.8 {
+			t.Errorf("t=%.1f: the static area should keep the still's detail (correlation %.2f)", at, static)
+		}
+	}
+}
+
+func TestSceneRefinishVersion(t *testing.T) {
+	withSceneRoot(t)
+	q := jobqueue.NewQueue()
+	id := "0123abcd-0000-0000-0000-00000000f001"
+	dir, _ := sceneDir(id)
+	_ = os.MkdirAll(filepath.Join(dir, ".loki-temp", "job1"), 0755)
+	crop := filepath.Join(dir, "motion-m-1.png")
+	raw := filepath.Join(dir, ".loki-temp", "job1", "motion-m-1_reshoot.mp4")
+	locked := filepath.Join(dir, "motion-m-1_locked.mp4")
+	for _, p := range []string{crop, raw, locked} {
+		_ = os.WriteFile(p, []byte("x"), 0644)
+	}
+	region := SceneRect{W: 640, H: 480}
+	writeTestScene(t, &Scene{ID: id, Width: 1000, Height: 1000, Layers: []*SceneLayer{{ID: "m", Name: "M", Kind: SceneKindMotion,
+		Options: map[string]any{"detail": false}, Versions: []SceneVersion{
+			{Path: locked, Region: region, Prompt: "p"}, // from before Raw was recorded: found beside its crop
+			{Path: filepath.Join(dir, "motion-m-1_locked_xfade.mp4"), Region: region},
+		}, Active: 0}}})
+	s, err := RefinishVersion(q, id, "m", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	j := s.Layers[0].Job
+	if j == nil || j.Raw != raw || j.Note != "re-finished v1" || j.Step != "scene-lock" {
+		t.Fatalf("job %+v", j)
+	}
+	job, _, _ := q.JobSnapshot(j.ID, 0)
+	args := strings.Join(job.Arguments, " ")
+	for _, want := range []string{"--still=" + crop, "--out=" + filepath.Join(dir, "motion-m-1_refined.mp4"), "--freeze=true", "--detail=false", "--size=640x480"} {
+		if !strings.Contains(args, want) {
+			t.Errorf("args lack %q: %s", want, args)
+		}
+	}
+	if job.Input != raw {
+		t.Errorf("input %q, want the engine output", job.Input)
+	}
+	if _, err := RefinishVersion(q, id, "m", 0); err != ErrSceneBusy {
+		t.Errorf("a second re-finish while one runs: %v", err)
+	}
+	// It finishes: a new version that remembers the raw output.
+	claim(t, q, j.ID)
+	finish(t, q, j.ID, filepath.Join(dir, "motion-m-1_refined.mp4"))
+	s, _ = GetScene(q, id)
+	v := s.Layers[0].Versions[s.Layers[0].Active]
+	if len(s.Layers[0].Versions) != 3 || v.Raw != raw || v.Note != "re-finished v1" || v.Region != region {
+		t.Fatalf("new version %+v", v)
+	}
+	// A loop version has no engine output of its own to re-finish from... unless its crop's raw exists:
+	// the loop file name still leads to the crop, which is fine (it re-finishes the original clip).
+	if sceneVersionCrop(SceneVersion{Path: filepath.Join(dir, "elsewhere.mp4")}) != "" {
+		t.Error("an unrelated file has no crop")
 	}
 }

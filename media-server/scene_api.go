@@ -17,6 +17,7 @@ package main
 //   POST   /api/scenes/{id}/layers/{lid}/versions/{n}/loop {kind}  seamless-loop copy of a motion version
 //                                                               (crossfade | natural | boomerang)
 //   POST   /api/scenes/{id}/layers/{lid}/versions/{n}/motion    where a motion version moves {dataUrl, region}
+//   POST   /api/scenes/{id}/layers/{lid}/versions/{n}/refinish  redo its finish (edges, detail) from the engine output
 //   DELETE /api/scenes/{id}/layers/{lid}/versions/{n}            drop a version
 //   DELETE /api/scenes/{id}/layers/{lid}/versions?keep=N         drop every version but N
 //   POST   /api/scenes/{id}/render {format}          export video | still beside the source
@@ -213,6 +214,9 @@ func sceneVersionActionHandler(deps *Dependencies) http.HandlerFunc {
 			sceneReply(w, s, err)
 		case "boomerang":
 			s, err := tasks.LoopVersion(r.Context(), id, lid, n, tasks.LoopBoomerang)
+			sceneReply(w, s, err)
+		case "refinish":
+			s, err := tasks.RefinishVersion(deps.Queue, id, lid, n)
 			sceneReply(w, s, err)
 		case "motion":
 			url, region, err := tasks.VersionMotionMap(r.Context(), id, lid, n)

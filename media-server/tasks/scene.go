@@ -104,8 +104,11 @@ type SceneVersion struct {
 	Duration float64   `json:"duration,omitempty"` // motion: seconds
 	Audio    bool      `json:"audio,omitempty"`    // motion: has a soundtrack
 	Note     string    `json:"note,omitempty"`     // e.g. "boomerang of v2"
-	JobID    string    `json:"jobId,omitempty"`
-	Created  time.Time `json:"created"`
+	// Raw is the engine's own output a finished (scene-lock) version was made
+	// from, so the finish can be redone without regenerating (RefinishVersion).
+	Raw     string    `json:"raw,omitempty"`
+	JobID   string    `json:"jobId,omitempty"`
+	Created time.Time `json:"created"`
 }
 
 // SceneJob is a layer's generation in flight (server-owned).
@@ -125,6 +128,10 @@ type SceneJob struct {
 	Requeued int `json:"requeued,omitempty"`
 	// Step is the command of the step running now (e.g. reshoot, scene-lock).
 	Step string `json:"step,omitempty"`
+	// Note is given to the version this job makes (e.g. "re-finished v2").
+	Note string `json:"note,omitempty"`
+	// Raw: the engine output this job finishes (a re-finish), kept on the version.
+	Raw string `json:"raw,omitempty"`
 	// Line is the job's latest log line, for the editor's status text.
 	Line string `json:"line,omitempty"`
 }
@@ -530,6 +537,7 @@ func UpdateScene(q *jobqueue.Queue, id string, in *Scene) (*Scene, error) {
 				os.Remove(m)
 			}
 			os.Remove(filepath.Join(dir, "mask-"+safeLayerID(oid)+".png"))
+			os.Remove(filepath.Join(dir, "voice-"+safeLayerID(oid)+".wav"))
 		}
 	}
 	s.Layers = next
@@ -632,16 +640,6 @@ func reconcileLayerJob(q *jobqueue.Queue, s *Scene, l *SceneLayer) bool {
 	}
 	last := len(steps) - 1
 
-	addVersion := func(out, jobID, note string) {
-		v := SceneVersion{Path: out, Region: l.Job.Region, Prompt: l.Job.Prompt, JobID: jobID, Note: note, Created: time.Now().UTC()}
-		if l.Kind == SceneKindMotion && deps.BundledOrEmpty("ffprobe") != "" {
-			v.Duration = probeVideoDuration(context.Background(), out)
-			v.Audio = probeHasAudio(out)
-		}
-		l.Versions = append(l.Versions, v)
-		l.Active = len(l.Versions) - 1
-		l.Error = ""
-	}
 	outputOf := func(st step) string {
 		out := ""
 		for _, f := range st.job.OutputFiles {
@@ -650,6 +648,25 @@ func reconcileLayerJob(q *jobqueue.Queue, s *Scene, l *SceneLayer) bool {
 			}
 		}
 		return out
+	}
+	addVersion := func(out, jobID, note string) {
+		if note == "" {
+			note = l.Job.Note
+		}
+		v := SceneVersion{Path: out, Region: l.Job.Region, Prompt: l.Job.Prompt, JobID: jobID, Note: note, Raw: l.Job.Raw, Created: time.Now().UTC()}
+		// A chain's first step is the engine: its output is what was finished.
+		if v.Raw == "" && len(steps) > 1 && steps[0].ok {
+			if raw := outputOf(steps[0]); raw != "" && raw != out {
+				v.Raw = raw
+			}
+		}
+		if l.Kind == SceneKindMotion && deps.BundledOrEmpty("ffprobe") != "" {
+			v.Duration = probeVideoDuration(context.Background(), out)
+			v.Audio = probeHasAudio(out)
+		}
+		l.Versions = append(l.Versions, v)
+		l.Active = len(l.Versions) - 1
+		l.Error = ""
 	}
 
 	// Cleared from the queue before the scene looked: the result (if any) is
@@ -943,7 +960,7 @@ func sceneGraphLayers(dir string, layers []*SceneLayer, stillsOnly bool) ([]scen
 		}
 		g := sceneGraphLayer{Media: v.Path, Motion: l.Kind == SceneKindMotion, Region: v.Region, Mask: mask, Duration: v.Duration, Speed: 1}
 		if g.Motion {
-			g.Audio = v.Audio && optBool(l.Options, "sound")
+			g.Audio = v.Audio && sceneLayerSound(l.Options)
 			t := sceneLayerTiming(l.Options)
 			g.Speed, g.Offset, g.Volume = 1/t.Speed, t.Offset, t.Volume
 			// Volume 0 mutes it (in the graph, 0 means "as generated").
@@ -996,15 +1013,93 @@ type sceneMotionPromptInput struct {
 	Sound           bool
 	// SoundDesc: what it should sound like ("crackling fire, soft wind").
 	SoundDesc string
-	// Voices allows speech and music (default: never).
-	Voices    bool
+	// Voices allows speech and music in the ambience (default: never).
+	Voices bool
+	// Lines are spoken in order (dialogue implies sound). VoiceRef: the
+	// generation has <Audio 1>, a voice-timbre reference for the first speaker.
+	Lines     []dialogueLine
+	VoiceRef  bool
 	LockEdges bool
+}
+
+// dialogueLine is one spoken line of a motion layer: who says it (empty =
+// the person in the picture), in which language, and the words.
+type dialogueLine struct {
+	Speaker string `json:"speaker,omitempty"`
+	Lang    string `json:"lang,omitempty"`
+	Text    string `json:"text"`
+}
+
+// sceneDialogue reads a layer's dialogue option (a JSON array of lines),
+// skipping empty lines.
+func sceneDialogue(opts map[string]any) []dialogueLine {
+	raw, ok := opts["dialogue"].([]any)
+	if !ok {
+		return nil
+	}
+	var out []dialogueLine
+	for _, r := range raw {
+		m, ok := r.(map[string]any)
+		if !ok {
+			continue
+		}
+		l := dialogueLine{Speaker: strings.TrimSpace(optString(m, "speaker")), Lang: strings.TrimSpace(optString(m, "lang")), Text: strings.TrimSpace(optString(m, "text"))}
+		if l.Text != "" {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+// sceneLayerSound reports whether a motion layer generates sound: asked for,
+// or implied by dialogue.
+func sceneLayerSound(opts map[string]any) bool {
+	return optBool(opts, "sound") || len(sceneDialogue(opts)) > 0
+}
+
+// dialogueText renders lines in loki-reshoot's dialogue format: each voice a
+// stable speaker ID (S1, S2... in order of first speech), the words in
+// <d>[Language] ...</d> with closing punctuation. The default speaker (and a
+// speaker named like the picture's person) is <Subject 1>, the person shown.
+func dialogueText(lines []dialogueLine) string {
+	ids := map[string]int{}
+	var parts []string
+	for i, l := range lines {
+		who := strings.ToLower(l.Speaker)
+		if who == "" {
+			who = "the person in the picture"
+		}
+		id, seen := ids[who]
+		if !seen {
+			id = len(ids) + 1
+			ids[who] = id
+		}
+		label := l.Speaker
+		if label == "" || who == "the person in the picture" {
+			label = "<Subject 1>"
+		}
+		lang := l.Lang
+		if lang == "" {
+			lang = "English"
+		}
+		text := strings.TrimSpace(l.Text)
+		if !strings.ContainsAny(text[len(text)-1:], ".?!") {
+			text += "."
+		}
+		verb := "says"
+		if i > 0 {
+			verb = "then says"
+		}
+		parts = append(parts, fmt.Sprintf("%s (S%d) %s, <d>[%s] %s</d>", label, id, verb, lang, text))
+	}
+	return strings.Join(parts, " ")
 }
 
 func sceneMotionPrompt(in sceneMotionPromptInput) string {
 	motion := strings.TrimSpace(in.Motion)
 	subject := strings.TrimSpace(in.Subject)
-	sound, lockEdges := in.Sound, in.LockEdges
+	talking := len(in.Lines) > 0
+	sound, lockEdges := in.Sound || talking, in.LockEdges
 	what := "the scene shown in <Picture 1>"
 	if subject != "" {
 		what = subject + ", as shown in <Picture 1>"
@@ -1027,6 +1122,9 @@ func sceneMotionPrompt(in sceneMotionPromptInput) string {
 		quietScape := "; no speech, no music."
 		if in.Voices {
 			quiet, quietScape = ".", "."
+		} else if talking {
+			// The lines are the only speech.
+			quiet, quietScape = "; no other voices and no music.", "; no music."
 		}
 		if desc != "" {
 			soundLine = "The sound: " + desc + ", realistic and present throughout" + quiet
@@ -1039,20 +1137,34 @@ func sceneMotionPrompt(in sceneMotionPromptInput) string {
 			scape = "Natural ambience of the depicted elements and their motion" + quietScape
 		}
 	}
-	return strings.Join([]string{
-		"subject_definitions:",
-		"<Subject 1> is " + what + ", to be kept exactly as shown: its content, shapes, colors, lighting, texture, style and framing.",
-		"",
-		"summary:",
-		"[keyframe completion] The target video is a faithful animation of <Picture 1>, one region of a larger still picture: one continuous shot that starts exactly from <Picture 1> and brings it to life. " + action,
-		"",
-		"retention_analysis:",
+	defs := []string{"<Subject 1> is " + what + ", to be kept exactly as shown: its content, shapes, colors, lighting, texture, style and framing."}
+	task := "[keyframe completion]"
+	retain := []string{
 		"<Subject 1> (appears in [Shot 1]): fully_preserved - content, appearance, style and framing are retained.",
 		"<Picture 1> ([Shot 1] first frame): fully_preserved - the video begins from this exact composition and keeps its look.",
+	}
+	speech := ""
+	if talking {
+		if in.VoiceRef {
+			defs = append(defs, "<Audio 1> is the voice-timbre reference for the first speaker (S1).")
+			task = "[keyframe completion + audio reference]"
+			retain = append(retain, "<Audio 1>: reference - the first speaker (S1) follows <Audio 1>'s voice timbre and delivery without copying the original signal or its words.")
+		}
+		speech = " " + dialogueText(in.Lines) + " Their lips, jaw and face move naturally and in sync with every word, with natural pauses; apart from speaking they keep their pose and expression."
+	}
+	return strings.Join([]string{
+		"subject_definitions:",
+		strings.Join(defs, "\n"),
+		"",
+		"summary:",
+		task + " The target video is a faithful animation of <Picture 1>, one region of a larger still picture: one continuous shot that starts exactly from <Picture 1> and brings it to life. " + action + speech,
+		"",
+		"retention_analysis:",
+		strings.Join(retain, "\n"),
 		"",
 		"detailed_description:",
 		"The target video keeps the exact look, rendering style, colors, lighting and framing of <Picture 1>.",
-		"[Shot 1] The shot begins exactly from <Picture 1> and stays one uninterrupted, unedited take with the same composition. " + action + " Nothing new enters the frame: no people, faces, animals or objects appear that are not already in <Picture 1>, and nothing is replaced. The edges of the frame stay continuous with what surrounds them. The camera is perfectly steady, locked off on a tripod, with no movement, zoom or shake at all. " + soundLine,
+		"[Shot 1] The shot begins exactly from <Picture 1> and stays one uninterrupted, unedited take with the same composition. " + action + speech + " Nothing new enters the frame: no people, faces, animals or objects appear that are not already in <Picture 1>, and nothing is replaced. The edges of the frame stay continuous with what surrounds them. The camera is perfectly steady, locked off on a tripod, with no movement, zoom or shake at all. " + soundLine,
 		"",
 		"overall_soundscape:",
 		scape,
@@ -1060,6 +1172,33 @@ func sceneMotionPrompt(in sceneMotionPromptInput) string {
 		"non_diegetic_music:",
 		music,
 	}, "\n")
+}
+
+// sceneVoiceClipMax caps a voice reference: the engine takes audio
+// references up to 15 s, and a timbre needs only a few seconds.
+const sceneVoiceClipMax = 15.0
+
+// sceneVoiceClip copies the first sceneVoiceClipMax seconds of a voice
+// reference's sound (an audio file, or a video's soundtrack) into the scene
+// folder as voice-<layer>.wav. Audio only: a video handed to the engine
+// as-is would also become a visual reference.
+func sceneVoiceClip(ctx context.Context, dir, lid, ref string) (string, error) {
+	ref = absPath(ref)
+	if _, err := os.Stat(ref); err != nil {
+		return "", fmt.Errorf("voice reference not found: %s", ref)
+	}
+	if !mediaext.IsAudio(ref) && !mediaext.IsVideo(ref) {
+		return "", fmt.Errorf("the voice reference must be an audio or video file")
+	}
+	out := filepath.Join(dir, "voice-"+safeLayerID(lid)+".wav")
+	if err := runSceneFFmpeg(ctx, []string{"-i", ref, "-vn", "-t", formatFloatArg(sceneVoiceClipMax), "-ac", "1", "-ar", "24000", out}); err != nil {
+		return "", fmt.Errorf("reading the voice reference: %w", err)
+	}
+	if info, err := os.Stat(out); err != nil || info.Size() < 1000 {
+		os.Remove(out)
+		return "", fmt.Errorf("the voice reference has no sound")
+	}
+	return out, nil
 }
 
 // GenerateLayer queues the next generation of layer lid: crops its region
@@ -1141,9 +1280,21 @@ func GenerateLayer(ctx context.Context, q *jobqueue.Queue, id, lid string) (*Sce
 		// (breathing, blinking, identity) and makes the model invent one
 		// in a crop of sky or water. The crop is <Picture 1> of a prompt
 		// written for a region of a larger, otherwise still picture.
+		lines := sceneDialogue(l.Options)
+		voice := ""
+		if ref := strings.TrimSpace(optString(l.Options, "voiceRef")); ref != "" && len(lines) > 0 {
+			v, err := sceneVoiceClip(ctx, dir, l.ID, ref)
+			if err != nil {
+				os.Remove(input)
+				return nil, err
+			}
+			voice = v
+			opt("refs", voice)
+		}
 		opt("prompt", sceneMotionPrompt(sceneMotionPromptInput{
 			Motion: prompt, Subject: optString(l.Options, "describe"),
 			Sound: optBool(l.Options, "sound"), SoundDesc: optString(l.Options, "soundPrompt"), Voices: optBool(l.Options, "voices"),
+			Lines: lines, VoiceRef: voice != "",
 			LockEdges: l.Options["lock"] != false,
 		}))
 		dur := optFloat(l.Options, "duration")
@@ -1155,7 +1306,7 @@ func GenerateLayer(ctx context.Context, q *jobqueue.Queue, id, lid string) (*Sce
 		if m := optString(l.Options, "model"); m == reshootModelFast {
 			opt("model", reshootModelFast)
 		}
-		if !optBool(l.Options, "sound") {
+		if !sceneLayerSound(l.Options) {
 			opt("noaudio", "true")
 		}
 	}
@@ -1283,6 +1434,105 @@ func DeleteVersion(id, lid string, n int) (*Scene, error) {
 			os.Remove(p)
 			os.Remove(motionMapPath(p))
 		}
+		if err := saveSceneLocked(s); err != nil {
+			return nil, err
+		}
+		return s, nil
+	}
+	return nil, ErrLayerNotFound
+}
+
+// versionRaw finds the engine output a finished motion version was made
+// from: recorded on it, else (versions from before it was recorded) the
+// reshoot output beside its crop in the workflow temp folders.
+func versionRaw(id string, v SceneVersion) string {
+	if v.Raw != "" {
+		if _, err := os.Stat(v.Raw); err == nil {
+			return v.Raw
+		}
+	}
+	crop := sceneVersionCrop(v)
+	if crop == "" {
+		return ""
+	}
+	dir, _ := sceneDir(id)
+	stem := strings.TrimSuffix(filepath.Base(crop), filepath.Ext(crop))
+	matches, _ := filepath.Glob(filepath.Join(dir, ".loki-temp", "*", stem+"_reshoot.mp4"))
+	if len(matches) > 0 {
+		return matches[len(matches)-1]
+	}
+	if p := filepath.Join(dir, stem+"_reshoot.mp4"); fileExists(p) {
+		return p
+	}
+	return ""
+}
+
+// sceneVersionCrop is the crop (generation input) a version was made from:
+// its file name up to the first _locked / _refined / _reshoot suffix + .png.
+func sceneVersionCrop(v SceneVersion) string {
+	base := filepath.Base(v.Path)
+	for _, suf := range []string{"_locked", "_refined", "_reshoot"} {
+		if i := strings.Index(base, suf); i > 0 {
+			p := filepath.Join(filepath.Dir(v.Path), base[:i]+".png")
+			if fileExists(p) {
+				return p
+			}
+		}
+	}
+	return ""
+}
+
+func fileExists(p string) bool {
+	_, err := os.Stat(p)
+	return err == nil
+}
+
+// RefinishVersion redoes the finish (edge lock, detail) of motion version n
+// from the engine's raw output with the layer's current settings, as a new
+// version. CPU only: no regeneration.
+func RefinishVersion(q *jobqueue.Queue, id, lid string, n int) (*Scene, error) {
+	sceneMu.Lock()
+	defer sceneMu.Unlock()
+	s, err := loadSceneLocked(id)
+	if err != nil {
+		return nil, err
+	}
+	reconcileScene(q, s)
+	for _, l := range s.Layers {
+		if l.ID != lid {
+			continue
+		}
+		if l.Kind != SceneKindMotion || n < 0 || n >= len(l.Versions) {
+			return nil, fmt.Errorf("no motion version %d", n+1)
+		}
+		if l.Job != nil {
+			return nil, ErrSceneBusy
+		}
+		v := l.Versions[n]
+		raw, crop := versionRaw(id, v), sceneVersionCrop(v)
+		if raw == "" || crop == "" {
+			return nil, fmt.Errorf("the engine output of v%d is no longer on disk (loops and older versions can't be re-finished)", n+1)
+		}
+		stem := strings.TrimSuffix(crop, filepath.Ext(crop))
+		out := stem + "_refined.mp4"
+		for k := 2; fileExists(out); k++ {
+			out = fmt.Sprintf("%s_refined%d.mp4", stem, k)
+		}
+		freeze, detail := l.Options["lock"] != false, l.Options["detail"] != false
+		ids, err := q.AddWorkflow(jobqueue.Workflow{Tasks: []jobqueue.WorkflowTask{{
+			Command: "scene-lock", Input: raw,
+			Arguments: []string{"--still=" + crop, "--out=" + out, "--freeze=" + strconv.FormatBool(freeze), "--detail=" + strconv.FormatBool(detail),
+				fmt.Sprintf("--size=%dx%d", v.Region.W, v.Region.H)},
+		}}})
+		if err != nil || len(ids) == 0 {
+			if err == nil {
+				err = errors.New("the job queue returned no job")
+			}
+			return nil, err
+		}
+		l.Error = ""
+		l.Job = &SceneJob{ID: ids[0], Chain: ids, State: "pending", Region: v.Region, Prompt: v.Prompt, Input: crop,
+			Step: "scene-lock", Note: fmt.Sprintf("re-finished v%d", n+1), Raw: raw}
 		if err := saveSceneLocked(s); err != nil {
 			return nil, err
 		}

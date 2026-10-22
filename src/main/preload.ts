@@ -81,6 +81,7 @@ export type Channels =
   | 'find-subtitle'
   | 'open-studio'
   | 'open-scene-editor'
+  | 'select-voice-file'
   | 'list-monitors'
   | 'set-wallpaper'
   | 'studio-media-saved'

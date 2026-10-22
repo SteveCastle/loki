@@ -789,6 +789,22 @@ ipcMain.handle(
   }
 );
 
+// The Scene editor's voice reference: an audio file, or a video whose
+// soundtrack holds the voice.
+ipcMain.handle('select-voice-file', async (event: IpcMainInvokeEvent) => {
+  const win = senderWindow(event) ?? mainWindow;
+  invariant(win, 'no window to parent the dialog to');
+  const result = await dialog.showOpenDialog(win, {
+    title: 'Choose a voice',
+    properties: ['openFile'],
+    filters: [
+      { name: 'Audio or video', extensions: ['wav', 'mp3', 'm4a', 'aac', 'flac', 'ogg', 'opus', 'mp4', 'mov', 'mkv', 'webm'] },
+      { name: 'All Files', extensions: ['*'] },
+    ],
+  });
+  return result.canceled ? null : result.filePaths[0];
+});
+
 // Handle directory selection event from renderer process
 type SelectDirectoryInput = [string | undefined];
 ipcMain.handle(

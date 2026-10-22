@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { isElectron, send } from '../../platform';
+import { invoke, isElectron, send } from '../../platform';
 import { imageOp, maskBounds, maskImagesReady, preloadMaskImages, rasterizeMask, rasterizeProtect, regionFor, type MaskOp, type Rect } from './mask';
 import {
   layerRate,
@@ -469,6 +469,17 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
     [motionMap, patchLayer, flash]
   );
 
+  // A voice reference: a native dialog in Electron, the server's file browser in the web build.
+  const chooseVoice = useCallback(async (): Promise<string | null> => {
+    try {
+      if (isElectron) return ((await invoke('select-voice-file', [])) as string | null) || null;
+      const { openFileBrowser } = await import('../controls/file-browser-modal');
+      return (await openFileBrowser('file')) || null;
+    } catch {
+      return null;
+    }
+  }, []);
+
   const protectMask = useMemo(
     () => (selected ? rasterizeProtect(selected.shapes || [], doc.width, doc.height, selected.feather) : ''),
     [selected, doc.width, doc.height]
@@ -751,10 +762,12 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
               onDeleteVersion={(n) => serverAction(() => sceneApi.deleteVersion(doc.id, selected.id, n), 'Could not discard the version')}
               onKeepOnly={(n) => serverAction(() => sceneApi.keepOnly(doc.id, selected.id, n), 'Could not discard the other versions')}
               onLoop={(n, kind) => loopVersion(selected.id, n, kind)}
+              onRefinish={(n) => serverAction(() => sceneApi.refinish(doc.id, selected.id, n), 'Could not re-finish the version')}
               motionShown={!!motionView && motionView.layerId === selected.id && motionView.n === selected.active}
               onShowMotion={() => toggleMotion(selected)}
               onGrowToMotion={() => growToMotion(selected)}
               loopSpeed={layerRate(doc, selected)}
+              onChooseVoice={chooseVoice}
             />
           ) : (
             <section className="sc-section sc-help">

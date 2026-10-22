@@ -160,3 +160,18 @@ describe('scene layer timing', () => {
     expect(layerRate(free, free.layers[0])).toBe(0.5);
   });
 });
+
+describe('scene dialogue', () => {
+  // eslint-disable-next-line global-require
+  const { dialogueSeconds } = require('../renderer/components/scene/scene-api');
+  it('estimates speech length from words (characters for unspaced languages)', () => {
+    expect(dialogueSeconds([])).toBe(0);
+    expect(dialogueSeconds([{ text: '   ' }])).toBe(0);
+    // 10 words at 2.5/s + 0.6 s lead-in
+    expect(dialogueSeconds([{ text: 'one two three four five six seven eight nine ten' }])).toBeCloseTo(4.6);
+    // two lines add a pause between them
+    expect(dialogueSeconds([{ text: 'a b c d e' }, { text: 'f g h i j' }])).toBeCloseTo(2 + 2 + 0.4 + 0.6);
+    // 12 Japanese characters at ~6/s
+    expect(dialogueSeconds([{ text: 'こんにちは、元気ですか？今日', lang: 'Japanese' }])).toBeCloseTo(14 / 6 + 0.6);
+  });
+});

@@ -30,6 +30,32 @@ export interface SceneJob {
   step?: string;
 }
 
+/** One spoken line of a motion layer: who says it (empty = the person in the picture), the language, the words. */
+export interface DialogueLine {
+  speaker?: string;
+  lang?: string;
+  text: string;
+}
+
+export const DIALOGUE_LANGUAGES = ['English', 'Spanish', 'French', 'German', 'Italian', 'Portuguese', 'Japanese', 'Chinese', 'Korean', 'Russian', 'Hindi', 'Arabic'];
+
+const UNSPACED = new Set(['Japanese', 'Chinese']);
+
+/**
+ * Roughly how long the lines take to say (seconds): ~2.5 words a second (about 6 characters a second for
+ * languages written without spaces), plus a short pause between lines.
+ */
+export function dialogueSeconds(lines: DialogueLine[] | undefined): number {
+  const spoken = (lines || []).filter((l) => l.text.trim());
+  if (!spoken.length) return 0;
+  const talk = spoken.reduce((sum, l) => {
+    const t = l.text.trim();
+    if (UNSPACED.has(l.lang || '')) return sum + t.replace(/\s+/g, '').length / 6;
+    return sum + t.split(/\s+/).length / 2.5;
+  }, 0);
+  return talk + 0.4 * (spoken.length - 1) + 0.6;
+}
+
 /** Per-layer generation settings (stored as the layer's `options`). */
 export interface LayerOptions {
   context?: 'tight' | 'normal' | 'wide' | 'full';
@@ -51,6 +77,10 @@ export interface LayerOptions {
   soundPrompt?: string;
   /** motion: allow speech and music in its sound (default never) */
   voices?: boolean;
+  /** motion: lines spoken in order (dialogue implies sound) */
+  dialogue?: DialogueLine[];
+  /** motion: an audio or video file whose voice the first speaker speaks in */
+  voiceRef?: string;
   /** motion: lock the static parts to the still (default on; see media-server/tasks/scene_lock.go) */
   lock?: boolean;
   /** motion: output at the region's size with the still's fine detail (default on) */
@@ -176,6 +206,8 @@ export const sceneApi = {
   deleteVersion: (id: string, layer: string, n: number) => call<Scene>('DELETE', `/api/scenes/${enc(id)}/layers/${enc(layer)}/versions/${n}`),
   /** Discard every version of a layer but n. */
   keepOnly: (id: string, layer: string, n: number) => call<Scene>('DELETE', `/api/scenes/${enc(id)}/layers/${enc(layer)}/versions?keep=${n}`),
+  /** Redo version n's finish (edges, detail) from the engine's output with the layer's current settings: a new version. */
+  refinish: (id: string, layer: string, n: number) => call<Scene>('POST', `/api/scenes/${enc(id)}/layers/${enc(layer)}/versions/${n}/refinish`, {}),
   loop: (id: string, layer: string, n: number, kind: LoopKind) =>
     call<Scene>('POST', `/api/scenes/${enc(id)}/layers/${enc(layer)}/versions/${n}/loop`, { kind }, 180000),
   /** Where version n moves: a PNG data URL (alpha = motion) covering `region`. */

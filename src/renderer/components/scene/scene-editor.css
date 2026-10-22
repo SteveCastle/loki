@@ -796,6 +796,73 @@ body.sc-body {
   accent-color: var(--sc-accent);
 }
 
+.sc-dialogue {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  background: var(--sc-field);
+  border: 1px solid var(--sc-hairline);
+  border-radius: 5px;
+}
+
+.sc-dialogue-head,
+.sc-voice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sc-dialogue-head {
+  justify-content: space-between;
+}
+
+.sc-dialogue-line {
+  display: grid;
+  grid-template-columns: 1fr 110px 22px;
+  gap: 4px;
+}
+
+.sc-line-text {
+  grid-column: 1 / -1;
+  min-height: 44px;
+}
+
+.sc-speaker,
+.sc-lang {
+  min-width: 0;
+}
+
+.sc-row-x {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  color: var(--sc-dim);
+  font: inherit;
+  background: transparent;
+  border: 0;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.sc-row-x:hover {
+  color: var(--sc-danger);
+  background: var(--sc-field);
+}
+
+.sc-voice-file {
+  display: inline-flex;
+  align-items: center;
+  max-width: 160px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.sc-fit {
+  font-size: 12px;
+}
+
 .sc-btn-tiny {
   height: 22px;
   padding: 0 6px;

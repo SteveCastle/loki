@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { mediaUrl } from '../../platform';
 import { maskBounds, rectContains, type ContextSize } from './mask';
-import { layerTiming, type LayerOptions, type LoopKind, type SceneLayer } from './scene-api';
+import { DIALOGUE_LANGUAGES, dialogueSeconds, layerTiming, type DialogueLine, type LayerOptions, type LoopKind, type SceneLayer } from './scene-api';
 
 // The Scene editor's right-hand panel: the layer stack (top of the list = top
 // of the picture) and the selected layer's settings, generation and versions.
@@ -156,6 +156,8 @@ export interface InspectorProps {
   /** Discard every version but n. */
   onKeepOnly: (n: number) => void;
   onLoop: (n: number, kind: LoopKind) => void;
+  /** Redo version n's finish (edges, detail) with the current settings. */
+  onRefinish: (n: number) => void;
   /** Whether the active version's motion map is shown; toggled by onShowMotion. */
   motionShown: boolean;
   onShowMotion: () => void;
@@ -163,6 +165,93 @@ export interface InspectorProps {
   onClearProtect: () => void;
   /** The active version's PTS multiplier in the scene (layerRate: 1 = as generated, 2 = half speed). */
   loopSpeed: number;
+  /** Pick an audio or video file whose voice the first speaker uses; resolves to its path, or null. */
+  onChooseVoice: () => Promise<string | null>;
+}
+
+const LENGTHS = [5, 8, 10, 15];
+
+/** The Dialogue section of a Motion layer: lines in order, an optional voice, and whether they fit the length. */
+function DialogueEditor({ o, onOptions, onChooseVoice }: { o: LayerOptions; onOptions: (p: LayerOptions) => void; onChooseVoice: () => Promise<string | null> }) {
+  const lines = o.dialogue || [];
+  const set = (next: DialogueLine[]) => onOptions(next.length ? { dialogue: next, sound: true } : { dialogue: next });
+  const patch = (i: number, p: Partial<DialogueLine>) => set(lines.map((l, j) => (j === i ? { ...l, ...p } : l)));
+  const need = dialogueSeconds(lines);
+  const length = o.duration || 5;
+  const fits = need <= length;
+  const longer = LENGTHS.find((d) => d >= need);
+  const voiceName = o.voiceRef ? o.voiceRef.split(/[\\/]/).pop() : '';
+  return (
+    <div className="sc-dialogue">
+      <div className="sc-dialogue-head">
+        <span className="sc-label">Dialogue</span>
+        <button type="button" className="sc-btn sc-btn-quiet sc-btn-tiny" onClick={() => set([...lines, { text: '', lang: lines[lines.length - 1]?.lang || 'English' }])}>
+          + Line
+        </button>
+      </div>
+      {lines.map((l, i) => (
+        // eslint-disable-next-line react/no-array-index-key
+        <div key={i} className="sc-dialogue-line">
+          <input className="sc-input sc-speaker" value={l.speaker || ''} placeholder="the person" title="Who says it (empty: the person in the picture)" onChange={(e) => patch(i, { speaker: e.target.value })} aria-label="Speaker" />
+          <select className="sc-select sc-lang" value={l.lang || 'English'} onChange={(e) => patch(i, { lang: e.target.value })} aria-label="Language">
+            {DIALOGUE_LANGUAGES.map((lang) => (
+              <option key={lang} value={lang}>
+                {lang}
+              </option>
+            ))}
+          </select>
+          <button type="button" className="sc-row-x" title="Remove this line" onClick={() => set(lines.filter((_, j) => j !== i))}>
+            ×
+          </button>
+          <textarea className="sc-prompt sc-line-text" rows={2} value={l.text} placeholder="What they say, in their language" onChange={(e) => patch(i, { text: e.target.value })} aria-label="Words" />
+        </div>
+      ))}
+      {lines.length > 0 && (
+        <>
+          <div className="sc-voice">
+            <span className="sc-label" title="An audio or video file of the voice the first speaker should have (its first 15 s are used)">
+              Voice
+            </span>
+            {o.voiceRef ? (
+              <span className="sc-voice-file" title={o.voiceRef}>
+                {voiceName}
+                <button type="button" className="sc-row-x" title="Use a generated voice instead" onClick={() => onOptions({ voiceRef: '' })}>
+                  ×
+                </button>
+              </span>
+            ) : (
+              <span className="sc-faint">generated to suit the speaker</span>
+            )}
+            <button
+              type="button"
+              className="sc-btn sc-btn-tiny"
+              onClick={async () => {
+                const p = await onChooseVoice();
+                if (p) onOptions({ voiceRef: p });
+              }}
+            >
+              {o.voiceRef ? 'Change…' : 'Choose…'}
+            </button>
+          </div>
+          {need > 0 && (
+            <div className={fits ? 'sc-faint sc-fit' : 'sc-warn'}>
+              About {need.toFixed(1)} s of speech in a {length} s layer
+              {!fits && longer && (
+                <>
+                  {' '}
+                  — it won’t fit.{' '}
+                  <button type="button" className="sc-btn sc-btn-tiny" onClick={() => onOptions({ duration: longer })}>
+                    Use {longer} s
+                  </button>
+                </>
+              )}
+              {!fits && !longer && ' — too long even for 15 s: split it across two layers or shorten it.'}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
 }
 
 /** A version chip's discard button: the first click arms it, the second (within 3 s) discards. */
@@ -241,6 +330,7 @@ export function Inspector(props: InspectorProps) {
           </button>
         ))}
       </div>
+      {motion && <DialogueEditor o={o} onOptions={props.onOptions} onChooseVoice={props.onChooseVoice} />}
       {motion && (
         <>
           <label className="sc-label" htmlFor="sc-describe">
@@ -327,7 +417,7 @@ export function Inspector(props: InspectorProps) {
                 { value: 1, label: 'Generate', title: 'Generate ambient sound for this area; the export mixes every layer’s sound' },
               ]}
             />
-            {o.sound && (
+            {(o.sound || (o.dialogue || []).length > 0) && (
               <>
                 <span className="sc-label" title="What this area should sound like; empty = the natural ambience of what moves">
                   Sounds like
@@ -504,6 +594,18 @@ export function Inspector(props: InspectorProps) {
                     </button>
                     <button type="button" className="sc-btn" disabled={busy} onClick={() => props.onLoop(l.active, 'boomerang')} title="Forward then backward: for back-and-forth motion (swaying, breathing, flicker)">
                       Boomerang
+                    </button>
+                  </div>
+                  <div className="sc-version-actions">
+                    <span className="sc-label">Finish</span>
+                    <button
+                      type="button"
+                      className="sc-btn"
+                      disabled={busy || !!l.job}
+                      onClick={() => props.onRefinish(l.active)}
+                      title="Redo this version's finish (static edges, detail) from the engine's original output with the current Edges/Detail settings, as a new version. No regeneration: a few seconds on the CPU."
+                    >
+                      Re-finish
                     </button>
                   </div>
                   <div className="sc-version-actions">

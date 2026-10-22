@@ -39,9 +39,11 @@ import (
 //     low-frequency tone, so it can't drift against its surroundings. With
 //     the mask, the region's boundary is the still itself on every frame.
 //   - detail (Detail: Match still): the video comes out at the region's own
-//     size (up to sceneFinishMaxLong), Lanczos-upscaled, with the still's
-//     fine detail added back into the moving parts, fading out where the
-//     motion is large (static detail on fast-moving content would "stick").
+//     size (up to sceneFinishMaxLong), Lanczos-upscaled and sharpened, with
+//     the still's fine detail only where the video is near-static. Never on
+//     content that moves: the still's detail does not move with it, so it
+//     reads as a static ghost of the picture over the motion (measured: the
+//     first version added it to moving areas at up to full strength).
 //
 // It also writes the video's motion map (<out>_motion.png: alpha = how much
 // each pixel moves), which the editor shows and can grow a mask to. Runs as
@@ -59,6 +61,7 @@ var sceneLockOptions = []TaskOption{
 	{Name: "still", Label: "Still Frame", Type: "string", Default: "", Description: "The still the video was generated from (its first frame)"},
 	{Name: "freeze", Label: "Lock Static Parts", Type: "bool", Default: true, Description: "Parts of the video that don't move become the still exactly; moving parts take its tone"},
 	{Name: "detail", Label: "Match Still Detail", Type: "bool", Default: false, Description: "Output at the region's size with the still's fine detail added back into the motion"},
+	{Name: "out", Label: "Output", Type: "string", Default: "", Description: "Output file (beside the still); empty = <still>_locked.mp4"},
 	{Name: "size", Label: "Region Size", Type: "string", Default: "", Description: "WxH of the region the video fills (with detail: the output size, capped)"},
 }
 
@@ -102,6 +105,12 @@ func sceneLockTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 		return fail("no video in the input", nil)
 	}
 	out := strings.TrimSuffix(still, filepath.Ext(still)) + "_locked.mp4"
+	if o := strings.TrimSpace(optString(opts, "out")); o != "" {
+		if filepath.Dir(absPath(o)) != filepath.Dir(absPath(still)) || !mediaext.IsVideo(o) {
+			return fail("--out must be a video file beside the still", nil)
+		}
+		out = absPath(o)
+	}
 	q.PushJobStdout(j.ID, fmt.Sprintf("%s: finishing %s against %s (lock %v, detail %v)", tag, filepath.Base(video), filepath.Base(still), fo.Freeze, fo.Detail))
 	_ = q.SetJobProgress(j.ID, 0, 2)
 	stats, err := finishMotion(ctx, video, still, out, fo, func(pass int) { _ = q.SetJobProgress(j.ID, pass, 2) })
@@ -167,8 +176,17 @@ func probeVideoInfo(ctx context.Context, path string) (videoInfo, error) {
 // decodeFrames streams the video's frames, scaled to w×h (Lanczos), as packed
 // RGB24 to fn.
 func decodeFrames(ctx context.Context, path string, w, h int, fn func(i int, rgb []byte) error) (int, error) {
+	return decodeFramesVF(ctx, path, w, h, "", fn)
+}
+
+// decodeFramesVF is decodeFrames with extra filters after the scale.
+func decodeFramesVF(ctx context.Context, path string, w, h int, extra string, fn func(i int, rgb []byte) error) (int, error) {
+	vf := fmt.Sprintf("scale=%d:%d:flags=lanczos", w, h)
+	if extra != "" {
+		vf += "," + extra
+	}
 	cmd := exec.CommandContext(ctx, deps.MustBundled("ffmpeg"), "-hide_banner", "-loglevel", "error", "-i", path,
-		"-vf", fmt.Sprintf("scale=%d:%d:flags=lanczos", w, h), "-f", "rawvideo", "-pix_fmt", "rgb24", "-")
+		"-vf", vf, "-f", "rawvideo", "-pix_fmt", "rgb24", "-")
 	platform.HideSubprocessWindow(cmd)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -264,14 +282,16 @@ func boxBlur(buf []float32, w, h, stride, ch, r int) {
 }
 
 // Motion energy (max luma change from frame 0, blurred) below lockStill is
-// frozen to the still; above lockMove it is all video. Detail fades from full
-// at lockMove to detailFloor of it at detailFade.
+// frozen to the still; above lockMove it is all video. The still's detail
+// follows the same ramp: none on anything that moves.
 const (
-	lockStill   = 4.0
-	lockMove    = 18.0
-	detailFade  = 72.0
-	detailFloor = 0.3
+	lockStill = 4.0
+	lockMove  = 18.0
 )
+
+// detailSharpen is the unsharp mask the moving video gets instead (detail
+// from its own pixels, so it moves with them).
+const detailSharpen = "unsharp=5:5:0.7:5:5:0"
 
 func smoothstep(a, b, x float64) float64 {
 	t := clampFloat((x-a)/(b-a), 0, 1)
@@ -455,7 +475,7 @@ func finishMotion(ctx context.Context, video, still, out string, o finishOptions
 		}
 		K = make([]float32, w*h)
 		for i, m := range motion {
-			K[i] = float32(1 - (1-detailFloor)*smoothstep(lockMove, detailFade, float64(m)))
+			K[i] = float32(1 - smoothstep(lockStill, lockMove, float64(m)))
 		}
 	}
 
@@ -479,7 +499,11 @@ func finishMotion(ctx context.Context, video, still, out string, o finishOptions
 	}
 	bw := bufio.NewWriterSize(stdin, 1<<20)
 	buf := make([]byte, w*h*3)
-	_, derr := decodeFrames(ctx, video, w, h, func(n int, rgb []byte) error {
+	sharpen := ""
+	if o.Detail && w > info.W {
+		sharpen = detailSharpen
+	}
+	_, derr := decodeFramesVF(ctx, video, w, h, sharpen, func(n int, rgb []byte) error {
 		for i := 0; i < w*h; i++ {
 			e := E[i]
 			for c := 0; c < 3; c++ {
