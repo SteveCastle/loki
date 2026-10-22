@@ -355,3 +355,22 @@ func TestSceneExportOffsetAndSpeed(t *testing.T) {
 		t.Errorf("half speed: 2 s in shows clip frame %d, want ~24", n)
 	}
 }
+
+func TestSceneMotionPromptSound(t *testing.T) {
+	p := sceneMotionPrompt(sceneMotionPromptInput{Motion: "the fire flickers", Sound: true, SoundDesc: " crackling fire, soft wind. "})
+	for _, want := range []string{"The sound: crackling fire, soft wind, realistic and present throughout; nobody speaks and there is no music.",
+		"overall_soundscape:\ncrackling fire, soft wind; no speech, no music.", "non_diegetic_music:\nN/A"} {
+		if !strings.Contains(p, want) {
+			t.Errorf("prompt lacks %q:\n%s", want, p)
+		}
+	}
+	p = sceneMotionPrompt(sceneMotionPromptInput{Sound: true, SoundDesc: "a radio playing jazz", Voices: true})
+	if strings.Contains(p, "no music") || !strings.Contains(p, "The sound: a radio playing jazz, realistic and present throughout.") ||
+		!strings.Contains(p, "non_diegetic_music:\nOnly if the soundscape above calls for it.") {
+		t.Errorf("voices allowed:\n%s", p)
+	}
+	// Without sound the description is ignored.
+	if p := sceneMotionPrompt(sceneMotionPromptInput{SoundDesc: "thunder"}); strings.Contains(p, "thunder") || !strings.Contains(p, "Silent.") {
+		t.Errorf("silent layer:\n%s", p)
+	}
+}

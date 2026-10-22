@@ -987,9 +987,24 @@ func sceneStillLongEdge(r SceneRect) int {
 // (the region is composited back into a still frame, so any camera move would
 // swim against its surroundings), and only what is already in the crop moves,
 // the way motion describes. Same sections as loki-reshoot's own templates.
-func sceneMotionPrompt(motion, subject string, sound, lockEdges bool) string {
-	motion = strings.TrimSpace(motion)
-	subject = strings.TrimSpace(subject)
+//
+// Sound (when generated) is the layer's own description if it has one, else
+// the ambience of what moves; speech and music are ruled out unless the
+// layer allows them.
+type sceneMotionPromptInput struct {
+	Motion, Subject string
+	Sound           bool
+	// SoundDesc: what it should sound like ("crackling fire, soft wind").
+	SoundDesc string
+	// Voices allows speech and music (default: never).
+	Voices    bool
+	LockEdges bool
+}
+
+func sceneMotionPrompt(in sceneMotionPromptInput) string {
+	motion := strings.TrimSpace(in.Motion)
+	subject := strings.TrimSpace(in.Subject)
+	sound, lockEdges := in.Sound, in.LockEdges
 	what := "the scene shown in <Picture 1>"
 	if subject != "" {
 		what = subject + ", as shown in <Picture 1>"
@@ -1005,9 +1020,24 @@ func sceneMotionPrompt(motion, subject string, sound, lockEdges bool) string {
 	}
 	soundLine := "Silent."
 	scape := "N/A"
+	music := "N/A"
 	if sound {
-		soundLine = "The sound is the natural, realistic ambience of exactly what moves in the shot, soft but present throughout; nobody speaks and there is no music."
-		scape = "Natural ambience of the depicted elements and their motion; no speech, no music."
+		desc := strings.TrimRight(strings.TrimSpace(in.SoundDesc), ". ")
+		quiet := "; nobody speaks and there is no music."
+		quietScape := "; no speech, no music."
+		if in.Voices {
+			quiet, quietScape = ".", "."
+		}
+		if desc != "" {
+			soundLine = "The sound: " + desc + ", realistic and present throughout" + quiet
+			scape = desc + quietScape
+			if in.Voices {
+				music = "Only if the soundscape above calls for it."
+			}
+		} else {
+			soundLine = "The sound is the natural, realistic ambience of exactly what moves in the shot, soft but present throughout" + quiet
+			scape = "Natural ambience of the depicted elements and their motion" + quietScape
+		}
 	}
 	return strings.Join([]string{
 		"subject_definitions:",
@@ -1028,7 +1058,7 @@ func sceneMotionPrompt(motion, subject string, sound, lockEdges bool) string {
 		scape,
 		"",
 		"non_diegetic_music:",
-		"N/A",
+		music,
 	}, "\n")
 }
 
@@ -1111,7 +1141,11 @@ func GenerateLayer(ctx context.Context, q *jobqueue.Queue, id, lid string) (*Sce
 		// (breathing, blinking, identity) and makes the model invent one
 		// in a crop of sky or water. The crop is <Picture 1> of a prompt
 		// written for a region of a larger, otherwise still picture.
-		opt("prompt", sceneMotionPrompt(prompt, optString(l.Options, "describe"), optBool(l.Options, "sound"), l.Options["lock"] != false))
+		opt("prompt", sceneMotionPrompt(sceneMotionPromptInput{
+			Motion: prompt, Subject: optString(l.Options, "describe"),
+			Sound: optBool(l.Options, "sound"), SoundDesc: optString(l.Options, "soundPrompt"), Voices: optBool(l.Options, "voices"),
+			LockEdges: l.Options["lock"] != false,
+		}))
 		dur := optFloat(l.Options, "duration")
 		if dur <= 0 {
 			dur = 5

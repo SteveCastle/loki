@@ -329,6 +329,27 @@ export function Inspector(props: InspectorProps) {
             />
             {o.sound && (
               <>
+                <span className="sc-label" title="What this area should sound like; empty = the natural ambience of what moves">
+                  Sounds like
+                </span>
+                <input
+                  className="sc-input"
+                  value={o.soundPrompt || ''}
+                  placeholder="e.g. crackling fire, soft wind (empty: natural ambience)"
+                  onChange={(e) => props.onOptions({ soundPrompt: e.target.value })}
+                  aria-label="Sound description"
+                />
+                <span className="sc-label" title="Whether the sound may include speech or music">
+                  Voices
+                </span>
+                <Seg
+                  value={o.voices ? 1 : 0}
+                  onChange={(v) => props.onOptions({ voices: v === 1 })}
+                  options={[
+                    { value: 0, label: 'No speech or music', title: 'Ambience and effects only (the default)' },
+                    { value: 1, label: 'Allow', title: 'Speech or music may appear, e.g. when the description asks for it' },
+                  ]}
+                />
                 <span className="sc-label" title="This layer's level in the mix (the preview stops at 100%; the export goes to 200%)">
                   Volume
                 </span>

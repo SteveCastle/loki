@@ -47,6 +47,10 @@ export interface LayerOptions {
   offset?: number;
   /** motion: soundtrack gain (0-2, default 1; 0 mutes it) */
   volume?: number;
+  /** motion: what its generated sound should be ("crackling fire, soft wind"); empty = the ambience of what moves */
+  soundPrompt?: string;
+  /** motion: allow speech and music in its sound (default never) */
+  voices?: boolean;
   /** motion: lock the static parts to the still (default on; see media-server/tasks/scene_lock.go) */
   lock?: boolean;
   /** motion: output at the region's size with the still's fine detail (default on) */

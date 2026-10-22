@@ -111,7 +111,7 @@ function withMask(s: Scene, l: SceneLayer): SceneLayer {
 const DEFAULTS_KEY = 'loki.scene.layerDefaults.v1';
 const REMEMBERED: Record<LayerKind, Array<keyof LayerOptions>> = {
   still: ['steps', 'context'],
-  motion: ['duration', 'model', 'megapixels', 'sound', 'lock', 'detail', 'context'],
+  motion: ['duration', 'model', 'megapixels', 'sound', 'voices', 'lock', 'detail', 'context'],
 };
 const BASE_OPTIONS: Record<LayerKind, LayerOptions> = {
   still: { context: 'normal', steps: 25 },

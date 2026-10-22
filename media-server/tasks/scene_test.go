@@ -339,7 +339,7 @@ func TestSceneFlattenWithFFmpeg(t *testing.T) {
 }
 
 func TestSceneMotionPrompt(t *testing.T) {
-	p := sceneMotionPrompt("the clouds roll.", "", false, true)
+	p := sceneMotionPrompt(sceneMotionPromptInput{Motion: "the clouds roll.", LockEdges: true})
 	for _, want := range []string{"[keyframe completion]", "starts exactly from <Picture 1>", "The motion: the clouds roll.", "locked off", "no people, faces", "Silent.", "near the edges of the frame stays perfectly still"} {
 		if !strings.Contains(p, want) {
 			t.Errorf("prompt lacks %q:\n%s", want, p)
@@ -348,7 +348,7 @@ func TestSceneMotionPrompt(t *testing.T) {
 	if strings.Contains(p, "breathing") || strings.Contains(p, "blinks") {
 		t.Errorf("region prompts must not assume a person:\n%s", p)
 	}
-	p = sceneMotionPrompt("", "the waterfall", true, false)
+	p = sceneMotionPrompt(sceneMotionPromptInput{Subject: "the waterfall", Sound: true})
 	if !strings.Contains(p, "the waterfall, as shown in <Picture 1>") || !strings.Contains(p, "drift gently") || strings.Contains(p, "Silent.") || strings.Contains(p, "edges of the frame stays") {
 		t.Errorf("ambient + subject + sound prompt:\n%s", p)
 	}
