@@ -620,6 +620,9 @@ if (isElectron) {
   // Channels that are Electron-only and should silently return undefined
   const stubbedChannels = [
     'select-db',
+    // Web scans are one HTTP request with no streaming; leaving the
+    // loading state already discards the result.
+    'cancel-load-files',
     'refresh-library', 'copy-file-into-clipboard',
     'check-for-updates',
     'load-duplicates-by-path', 'merge-duplicates-by-path',

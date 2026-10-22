@@ -188,6 +188,10 @@ type LibraryState = {
   pinnedPath: string | null;
   savedSortByDuringStreaming: Settings['sortBy'] | null;
   userMovedCursorDuringStreaming: boolean;
+  // Identifies the folder scan in flight. Main echoes it on every
+  // load-files-batch, so batches from a scan the user navigated away from
+  // (still in the IPC pipe when the next scan starts) are dropped.
+  fsScanId: string;
   // When set to a new unique ID, signals the list to scroll to the current cursor
   scrollToCursorEventId: string | null;
   // libraryLoadId captured at the moment an in-place mutation (e.g. removing
@@ -256,6 +260,81 @@ const addQueryErrorToast = assign<LibraryState, AnyEventObject>({
 // and add per-call entropy for the seed.
 const newLoadId = () =>
   `${uniqueId()}-${Math.random().toString(36).slice(2, 10)}`;
+
+// Leave the streaming mode loadingFromFS set up: restore the user's sort, land
+// the cursor on the pinned (or currently shown) item within that sort, and
+// persist the library. Used both when a scan completes (`lib` = main's sorted
+// result) and when the user interrupts one (`lib` = whatever streamed in).
+// Returns ALL state changes for a single atomic assign so no intermediate
+// state is observable.
+function finishFsScan(
+  context: LibraryState,
+  lib: Item[],
+  fallbackCursor: number
+): Partial<LibraryState> {
+  const newLibraryLoadId = newLoadId();
+  const restoredSortBy = (context.savedSortByDuringStreaming ||
+    'name') as Settings['sortBy'];
+
+  let finalCursor = fallbackCursor;
+  if (Array.isArray(lib) && lib.length > 0) {
+    // Seed with the id the view will actually render under: for
+    // shuffle/battle the order depends on it, so a throwaway id here would
+    // land the cursor on the wrong item. It also warms filter's memo for the
+    // next render.
+    const sorted = filter(
+      newLibraryLoadId,
+      context.textFilter,
+      lib,
+      context.settings.filters,
+      restoredSortBy
+    );
+    const preferredPaths = [
+      context.pinnedPath || undefined,
+      context.library[context.cursor]?.path || undefined,
+    ].filter(Boolean) as string[];
+
+    for (const p of preferredPaths) {
+      const idx = sorted.findIndex(
+        (it: Item) =>
+          it?.path &&
+          path.normalize(it.path).toLowerCase() ===
+            path.normalize(p).toLowerCase()
+      );
+      if (idx !== -1) {
+        finalCursor = idx;
+        break;
+      }
+    }
+    updatePersistedCursor(context, finalCursor);
+  }
+
+  setSessionValues({
+    library: { library: lib, initialFile: context.initialFile },
+    cursor: { cursor: finalCursor },
+  });
+
+  return {
+    library: lib,
+    libraryLoadId: newLibraryLoadId,
+    cursor: finalCursor,
+    settings: {
+      ...context.settings,
+      sortBy: restoredSortBy,
+    },
+    streaming: false,
+    pinnedPath: null,
+    userMovedCursorDuringStreaming: false,
+    savedSortByDuringStreaming: null,
+  };
+}
+
+// Abandon an in-flight folder scan, keeping the partial library. Runs as the
+// transition action on every way out of loadingFromFS except completion
+// (main is told to stop by loadingFromFS's exit action).
+const finishInterruptedFsScan = assign<LibraryState, AnyEventObject>(
+  (context) => finishFsScan(context, context.library, context.cursor)
+);
 
 const setLibrary = assign<LibraryState, AnyEventObject>({
   library: (context, event) => {
@@ -791,6 +870,7 @@ const getInitialContext = (): LibraryState => {
     pinnedPath: null,
     savedSortByDuringStreaming: null,
     userMovedCursorDuringStreaming: false,
+    fsScanId: '',
     scrollToCursorEventId: null,
     preserveScrollFromLoadId: null,
     masonryDimensionsCache: {},
@@ -1912,9 +1992,14 @@ export const libraryMachine = createMachine(
                 previousLibrary: () => [],
                 previousCursor: () => 0,
                 previousInitialFile: () => '',
+                fsScanId: () => newLoadId(),
               }),
               () => clearSessionKeys(['previous']),
             ],
+            // Every way out — completion, error, or the user navigating away
+            // mid-scan — tells main to stop. After completion main has
+            // already released the scan, so this is a no-op there.
+            exit: (context) => send('cancel-load-files', [context.fsScanId]),
             invoke: {
               src: (context, event) => {
                 console.log('loadingFromFS', context, event);
@@ -1924,82 +2009,55 @@ export const libraryMachine = createMachine(
                   // Ask main to sort with original sort once complete
                   context.savedSortByDuringStreaming || 'name',
                   recursive,
-                  { fastest: true },
+                  { fastest: true, scanId: context.fsScanId },
                 ]);
               },
               onDone: {
                 target: 'loadedFromFS',
                 actions: [
-                  // Single atomic assign to prevent intermediate state observations
-                  assign<LibraryState, AnyEventObject>((context, event) => {
-                    const lib = (event.data?.library || []) as Item[];
-                    const newLibraryLoadId = newLoadId();
-                    const restoredSortBy = (context.savedSortByDuringStreaming ||
-                      'name') as Settings['sortBy'];
-
-                    // Calculate final cursor position using pinned path and restored sort
-                    let finalCursor = event.data?.cursor ?? context.cursor;
-                    if (Array.isArray(lib) && lib.length > 0) {
-                      // Seed with the id the view will actually render under:
-                      // for shuffle/battle the order depends on it, so a
-                      // throwaway id here would land the cursor on the wrong
-                      // item. It also warms filter's memo for the next render.
-                      const sorted = filter(
-                        newLibraryLoadId,
-                        context.textFilter,
-                        lib,
-                        context.settings.filters,
-                        restoredSortBy
-                      );
-                      const preferredPaths = [
-                        context.pinnedPath || undefined,
-                        context.library[context.cursor]?.path || undefined,
-                      ].filter(Boolean) as string[];
-
-                      for (const p of preferredPaths) {
-                        const idx = sorted.findIndex(
-                          (it: Item) =>
-                            it?.path &&
-                            path.normalize(it.path).toLowerCase() ===
-                              path.normalize(p).toLowerCase()
-                        );
-                        if (idx !== -1) {
-                          finalCursor = idx;
-                          break;
-                        }
-                      }
-                      updatePersistedCursor(context, finalCursor);
-                    }
-
-                    // Persist library updates
-                    setSessionValues({
-                      library: { library: lib, initialFile: context.initialFile },
-                      cursor: { cursor: finalCursor },
-                    });
-
-                    // Return ALL state changes atomically
-                    return {
-                      library: lib,
-                      libraryLoadId: newLibraryLoadId,
-                      cursor: finalCursor,
-                      settings: {
-                        ...context.settings,
-                        sortBy: restoredSortBy,
-                      },
-                      streaming: false,
-                      pinnedPath: null,
-                      userMovedCursorDuringStreaming: false,
-                      savedSortByDuringStreaming: null,
-                    };
-                  }),
+                  assign<LibraryState, AnyEventObject>((context, event) =>
+                    finishFsScan(
+                      context,
+                      (event.data?.library || []) as Item[],
+                      event.data?.cursor ?? context.cursor
+                    )
+                  ),
                 ],
               },
               onError: {
                 target: 'loadedFromFS',
+                actions: [finishInterruptedFsScan],
               },
             },
             on: {
+              // A big folder can take a long time to scan; none of this waits
+              // for it. Navigating elsewhere abandons the scan (keeping what
+              // streamed in, which a cancelled picker falls back to).
+              SET_FILE: {
+                target: 'loadingFromFS',
+                actions: [
+                  finishInterruptedFsScan,
+                  assign<LibraryState, AnyEventObject>({
+                    textFilter: () => '',
+                    initialFile: (context, event) => event.path,
+                  }),
+                ],
+              },
+              SELECT_FILE: {
+                target: 'selecting',
+                actions: [finishInterruptedFsScan],
+              },
+              SELECT_DIRECTORY: {
+                target: 'selectingDirectory',
+                actions: [finishInterruptedFsScan],
+              },
+              CANCEL_LOAD: {
+                target: 'loadedFromFS',
+                actions: [finishInterruptedFsScan],
+              },
               LOAD_FILES_BATCH: {
+                cond: (context: LibraryState, event: AnyEventObject) =>
+                  !event.data?.scanId || event.data.scanId === context.fsScanId,
                 actions: assign<LibraryState, AnyEventObject>(
                   (context, event) => {
                     const currentView = filter(
@@ -2281,10 +2339,12 @@ export const libraryMachine = createMachine(
               },
               SET_FILE: {
                 target: 'loadingFromFS',
-                actions: assign<LibraryState, AnyEventObject>({
-                  textFilter: () => '',
-                  initialFile: (context, event) => event.path,
-                }),
+                actions: [
+                  assign<LibraryState, AnyEventObject>({
+                    textFilter: () => '',
+                    initialFile: (context, event) => event.path,
+                  }),
+                ],
               },
               DELETE_FILE: {
                 cond: (context: LibraryState) => context.canWrite,
@@ -3460,7 +3520,7 @@ const GlobalStateProviderInner = (props: Props) => {
         const batch = (args[0] as { path: string; mtimeMs: number }[]) || [];
         libraryService.send({
           type: 'LOAD_FILES_BATCH',
-          data: { files: batch },
+          data: { files: batch, scanId: args[1] as string | undefined },
         });
       }
     );

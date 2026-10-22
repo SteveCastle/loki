@@ -60,6 +60,7 @@ export default function App(): JSX.Element {
       state.matches({ library: 'loadingDB' })
     );
   }, [state]);
+  const isScanningFolder = state.matches({ library: 'loadingFromFS' });
   console.log('state', state);
   if (state.matches({ library: 'manualSetup' })) return <SetupWizard />;
 
@@ -68,7 +69,15 @@ export default function App(): JSX.Element {
     <QueryClientProvider client={queryClient}>
       <DndProvider backend={HTML5Backend}>
         <Panels />
-        {isLoadingState && <Loader />}
+        {isLoadingState && (
+          <Loader
+            onStop={
+              isScanningFolder
+                ? () => libraryService.send('CANCEL_LOAD')
+                : undefined
+            }
+          />
+        )}
         <HotKeyController />
         {autoPlay && <AutoPlayController />}
         <DragChipLayer />

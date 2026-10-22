@@ -573,6 +573,8 @@ ipcMain.handle('load-db', async (event, args) => {
 
   // Register Media Events
   ipcMain.handle('load-files', loadFilesModule.loadFiles(db));
+  ipcMain.removeAllListeners('cancel-load-files');
+  ipcMain.on('cancel-load-files', loadFilesModule.cancelLoadFiles);
   ipcMain.handle('refresh-library', loadFilesModule.refreshLibrary(db));
   ipcMain.handle('load-media-by-tags', mediaModule.loadMediaByTags(db));
   ipcMain.handle(

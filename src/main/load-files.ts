@@ -47,6 +47,54 @@ function watchChildInactivity(
   };
 }
 
+// Cancellation: the user can leave a slow scan (open another folder, pick a
+// new file, or stop it outright). Killing the child is what actually frees the
+// disk/network; settling immediately lets loadFiles return its partial
+// results instead of waiting for the child's close.
+function watchAbort(
+  child: ChildProcess,
+  signal: AbortSignal | undefined,
+  settle: () => void
+) {
+  if (!signal) return;
+  const onAbort = () => {
+    try {
+      child.kill();
+    } catch {
+      // best-effort
+    }
+    settle();
+  };
+  if (signal.aborted) {
+    onAbort();
+    return;
+  }
+  signal.addEventListener('abort', onAbort, { once: true });
+  child.once('close', () => signal.removeEventListener('abort', onAbort));
+}
+
+// One live scan per window: a new load-files from the same renderer
+// supersedes (aborts) the previous one, and cancel-load-files aborts it
+// without starting another.
+const activeScans = new Map<
+  number,
+  { controller: AbortController; scanId?: string }
+>();
+
+// args[0] is the scanId being abandoned; a cancel that arrives after a newer
+// scan has started must not take that one down with it.
+export const cancelLoadFiles = (
+  event: { sender: { id: number } },
+  args?: [string?]
+) => {
+  const scan = activeScans.get(event.sender.id);
+  if (!scan) return;
+  const scanId = args?.[0];
+  if (scanId && scan.scanId && scanId !== scan.scanId) return;
+  activeScans.delete(event.sender.id);
+  scan.controller.abort();
+};
+
 type File = {
   path: string;
   mtimeMs: number;
@@ -94,10 +142,11 @@ async function walkDirectory(
   recursive: boolean,
   filterRegex: RegExp,
   onFile: (file: File) => void,
-  needMtime: boolean
+  needMtime: boolean,
+  signal?: AbortSignal
 ) {
   const queue: string[] = [rootDir];
-  while (queue.length > 0) {
+  while (queue.length > 0 && !signal?.aborted) {
     const currentDir = queue.shift() as string;
     let dir;
     try {
@@ -106,6 +155,8 @@ async function walkDirectory(
       continue;
     }
     for await (const dirent of dir) {
+      // Breaking out of for-await closes the Dir handle.
+      if (signal?.aborted) break;
       const fullPath = path.join(currentDir, dirent.name);
       if (dirent.isDirectory()) {
         if (recursive) queue.push(fullPath);
@@ -131,7 +182,8 @@ async function listFilesFastDarwin(
   recursive: boolean,
   filterRegex: RegExp,
   onFile: (file: File) => void,
-  needMtime: boolean
+  needMtime: boolean,
+  signal?: AbortSignal
 ) {
   return new Promise<void>((resolve) => {
     // If not recursive, a simple directory read is faster and avoids BSD find limitations
@@ -140,6 +192,7 @@ async function listFilesFastDarwin(
         try {
           const dir = await fsPromises.opendir(rootDir);
           for await (const dirent of dir) {
+            if (signal?.aborted) break;
             if (dirent.isDirectory()) continue;
             const fullPath = path.join(rootDir, dirent.name);
             const base = dirent.name;
@@ -188,6 +241,7 @@ async function listFilesFastDarwin(
       resolve();
     };
     const settle = ctl.settle;
+    watchAbort(child, signal, settle);
     const MAX_CONC_STATS = needMtime ? 32 : 0;
 
     const trySchedule = () => {
@@ -252,7 +306,7 @@ async function listFilesFastDarwin(
       finalize();
     });
     child.on('close', () => {
-      if (buffer.length > 0) {
+      if (!settled && buffer.length > 0) {
         const filePath = buffer;
         if (filePath) handlePath(filePath);
       }
@@ -265,7 +319,8 @@ async function listFilesFastWindows(
   rootDir: string,
   recursive: boolean,
   filterRegex: RegExp,
-  onFile: (file: File) => void
+  onFile: (file: File) => void,
+  signal?: AbortSignal
 ) {
   return new Promise<void>((resolve) => {
     // Use PowerShell for robust quoting, UNC support, and UTF-8 output
@@ -301,7 +356,9 @@ async function listFilesFastWindows(
       resolve();
     };
     const settle = ctl.settle;
+    watchAbort(child, signal, settle);
     child.stdout.on('data', (chunk: Buffer) => {
+      if (settled) return;
       watchdog.bump();
       totalBytes += chunk.length;
       buffer += chunk.toString('utf8');
@@ -330,6 +387,7 @@ async function listFilesFastWindows(
       console.log('[fastest] stderr:', chunk.toString('utf8'));
     });
     const flushRemainder = () => {
+      if (settled) return;
       const trimmed = buffer.trim();
       if (trimmed.length > 0) {
         let filePath = trimmed;
@@ -381,7 +439,13 @@ async function listFilesFastWindows(
   });
 }
 
-type LoadFilesOptions = { fastest?: boolean; skipStat?: boolean };
+type LoadFilesOptions = {
+  fastest?: boolean;
+  skipStat?: boolean;
+  // Echoed on load-files-batch / load-files-done so the renderer can drop
+  // events from a scan it has already walked away from.
+  scanId?: string;
+};
 type LoadFilesInput =
   | [string, string, boolean]
   | [string, string, boolean, LoadFilesOptions];
@@ -397,12 +461,28 @@ type RefreshLibraryResult = {
   removed: string[];
 };
 
+function releaseScan(controller: AbortController, senderId: number) {
+  if (activeScans.get(senderId)?.controller === controller) {
+    activeScans.delete(senderId);
+  }
+}
+
+function cancelledResult(controller: AbortController, senderId: number) {
+  releaseScan(controller, senderId);
+  return { library: [] as File[], cursor: 0, cancelled: true };
+}
+
 export const loadFiles =
   (db: Database) => async (event: IpcMainInvokeEvent, args: LoadFilesInput) => {
     const filePath = args[0] as string;
     const sortOrder = args[1] as string;
     const recursive = args[2] as boolean;
     const options: LoadFilesOptions = (args as any)[3] || {};
+    const senderId = event.sender.id;
+    activeScans.get(senderId)?.controller.abort();
+    const controller = new AbortController();
+    activeScans.set(senderId, { controller, scanId: options.scanId });
+    const { signal } = controller;
     let folderPath: string;
     let fileName: string;
     let archiveExtracted = false;
@@ -440,6 +520,7 @@ export const loadFiles =
         fastest: !!options.fastest,
       },
     });
+    if (signal.aborted) return cancelledResult(controller, senderId);
 
     // Stream the directory and emit batches to the renderer for incremental UI updates
     const files: File[] = [];
@@ -450,7 +531,11 @@ export const loadFiles =
       if (batch.length === 0) return;
       try {
         // Send and clear the batch
-        event.sender.send('load-files-batch', batch.splice(0, batch.length));
+        event.sender.send(
+          'load-files-batch',
+          batch.splice(0, batch.length),
+          options.scanId
+        );
         console.log('[loader] sent batch, cumulative files:', files.length);
       } catch (err) {
         // Ignore send errors (window might be gone)
@@ -468,6 +553,14 @@ export const loadFiles =
       needMtime,
       BATCH_SIZE,
     });
+    const onFile = (file: File) => {
+      if (signal.aborted) return;
+      files.push(file);
+      batch.push(file);
+      if (batch.length >= BATCH_SIZE) {
+        flushBatch();
+      }
+    };
     if (options.fastest && os.platform() === 'win32') {
       console.log(
         '[loader] using fastest Windows mode for folder:',
@@ -477,13 +570,8 @@ export const loadFiles =
         folderPath,
         effectiveRecursive,
         filters.all.value,
-        (file) => {
-          files.push(file);
-          batch.push(file);
-          if (batch.length >= BATCH_SIZE) {
-            flushBatch();
-          }
-        }
+        onFile,
+        signal
       );
     } else if (options.fastest && os.platform() === 'darwin') {
       console.log('[loader] using fastest macOS mode for folder:', folderPath);
@@ -491,14 +579,9 @@ export const loadFiles =
         folderPath,
         effectiveRecursive,
         filters.all.value,
-        (file) => {
-          files.push(file);
-          batch.push(file);
-          if (batch.length >= BATCH_SIZE) {
-            flushBatch();
-          }
-        },
-        sortOrder === 'date' && !options.skipStat
+        onFile,
+        sortOrder === 'date' && !options.skipStat,
+        signal
       );
     } else {
       console.log('[loader] using Node walker for folder:', folderPath);
@@ -506,16 +589,29 @@ export const loadFiles =
         folderPath,
         effectiveRecursive,
         filters.all.value,
-        (file) => {
-          files.push(file);
-          batch.push(file);
-          if (batch.length >= BATCH_SIZE) {
-            flushBatch();
-          }
-        },
-        needMtime
+        onFile,
+        needMtime,
+        signal
       );
     }
+    if (signal.aborted) {
+      // Superseded or stopped: the renderer has already moved on and keeps
+      // whatever streamed in, so skip the final batch and done event. Still
+      // import what was found — those files were on screen and may be acted
+      // on like any other library item.
+      insertBulkMedia(
+        db,
+        files.map((file) => file.path)
+      );
+      logEvent({
+        level: 'info',
+        scope: 'ipc:load-files',
+        message: 'load-files cancelled',
+        data: { filePath, scanned: files.length },
+      });
+      return cancelledResult(controller, senderId);
+    }
+    releaseScan(controller, senderId);
     flushBatch();
 
     const effectiveSort =
@@ -555,6 +651,7 @@ export const loadFiles =
       event.sender.send('load-files-done', {
         total: sortedFiles.length,
         cursor,
+        scanId: options.scanId,
       });
     } catch (err) {
       console.log('[loader] error sending done', err);
