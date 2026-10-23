@@ -233,3 +233,29 @@ describe('scene references', () => {
     expect(pickable(['a.png'], null, refKind)).toEqual([]);
   });
 });
+
+describe('same-window reference picks (Transform)', () => {
+  // eslint-disable-next-line global-require
+  const bridge = require('../renderer/components/scene/pick-bridge');
+
+  it('opens a request here and resolves with the answer, without relaying it', async () => {
+    const { result } = bridge.requestLocalPick(['image'], 'Edit · a.png');
+    bridge.answerPick(['C:/x/b.png']);
+    await expect(result).resolves.toEqual(['C:/x/b.png']);
+  });
+
+  it('cancel resolves null and closes the request', async () => {
+    const { result, cancel } = bridge.requestLocalPick(['image'], 'Edit · a.png');
+    cancel();
+    await expect(result).resolves.toBeNull();
+    bridge.answerPick(['C:/x/late.png']); // nothing open: ignored
+  });
+
+  it('a newer request ends the older one', async () => {
+    const first = bridge.requestLocalPick(['image'], 'one');
+    const second = bridge.requestLocalPick(['image', 'video'], 'two');
+    await expect(first.result).resolves.toBeNull();
+    bridge.answerPick(['C:/x/c.mp4']);
+    await expect(second.result).resolves.toEqual(['C:/x/c.mp4']);
+  });
+});

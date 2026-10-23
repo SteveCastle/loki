@@ -1,4 +1,4 @@
-// Picking Scene editor references in the viewer: the editor asks, the viewer
+// Picking references in the viewer for a Scene editor (or the Transform modal): the editor asks, the viewer
 // (with its own search, tags and browsing) shows a picking banner and a palette
 // action, and the chosen paths come back. Electron relays through the main
 // process (scene-pick-request / scene-pick-result, see scene-window.ts); the
@@ -81,16 +81,50 @@ let current: PickRequest | null = null;
 const listeners = new Set<() => void>();
 const emit = () => listeners.forEach((l) => l());
 let subscribed: (() => void) | null = null;
+// A pick asked for by this window itself (the Transform modal): answered here, never relayed.
+let local: { id: string; resolve: (paths: string[] | null) => void } | null = null;
+
+function endLocal(paths: string[] | null) {
+  const l = local;
+  local = null;
+  l?.resolve(paths);
+}
 
 /** Start receiving pick requests (the viewer calls this once; idempotent). */
 export function listenForPickRequests(): void {
   if (subscribed) return;
   subscribed = listen('request', (msg: RequestMsg) => {
-    if (msg?.type === 'open') current = msg.req;
-    else if (msg?.type === 'close' && current?.id === msg.id) current = null;
+    if (msg?.type === 'open') {
+      // An editor window's request takes over from one of our own.
+      endLocal(null);
+      current = msg.req;
+    } else if (msg?.type === 'close' && current?.id === msg.id) current = null;
     else return;
     emit();
   });
+}
+
+/**
+ * Pick references in this same window (the viewer stays usable around a hidden modal): the banner and the palette
+ * action appear as for an editor window's request. Resolves with the paths, or null when cancelled.
+ */
+export function requestLocalPick(kinds: RefKind[], label: string): { result: Promise<string[] | null>; cancel: () => void } {
+  endLocal(null);
+  const id = `l${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+  const result = new Promise<string[] | null>((resolve) => {
+    local = { id, resolve };
+  });
+  current = { id, kinds, label };
+  emit();
+  return {
+    result,
+    cancel: () => {
+      if (local?.id !== id) return;
+      endLocal(null);
+      current = null;
+      emit();
+    },
+  };
 }
 
 export function usePickRequest(): PickRequest | null {
@@ -119,7 +153,8 @@ export function pickable(paths: string[], req: PickRequest | null, kindOf: (p: s
 /** Answer the open request: paths, or null to cancel. */
 export function answerPick(paths: string[] | null): void {
   if (!current) return;
-  postResult({ id: current.id, paths });
+  if (local?.id === current.id) endLocal(paths);
+  else postResult({ id: current.id, paths });
   current = null;
   emit();
 }

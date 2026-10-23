@@ -1,4 +1,4 @@
-import React, { useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useSelector } from '@xstate/react';
 import { GlobalStateContext } from '../../state';
@@ -32,6 +32,7 @@ import { EngineSetupDeferred } from './engine-setup';
 import { markUsed, savedTransformKey } from '../../saved-recent';
 import { TransformFlowView, validateForRun, validateShape, type PromptPreviewState } from './flow-view';
 import { canStartScene, openSceneEditor } from '../scene/launch';
+import { requestLocalPick } from '../scene/pick-bridge';
 
 // ---------------------------------------------------------------------------
 // Host (container): owns phase/intent/settings state, talks to the server
@@ -214,6 +215,25 @@ function FlowSession({ req }: { req: NonNullable<ReturnType<typeof useFlowReques
     [intent, paths]
   );
 
+  // Add references by browsing the viewer itself: the modal hides (keeping everything) while the pick banner and
+  // the palette's References action are up, and comes back with the picks added after the inputs.
+  const [picking, setPicking] = useState(false);
+  const cancelPick = useRef<(() => void) | null>(null);
+  useEffect(() => () => cancelPick.current?.(), []);
+  const addReferences = useCallback(() => {
+    if (!intent || !pinnable(intent)) return;
+    const name = (paths[0] || '').split(/[\\/]/).pop() || '';
+    const { result, cancel } = requestLocalPick(intent === 'edit' ? ['image'] : ['image', 'video', 'audio'], `${intentById(intent).title} · ${name}`);
+    cancelPick.current = cancel;
+    setPicking(true);
+    result.then((picked) => {
+      cancelPick.current = null;
+      setPicking(false);
+      const add = (picked || []).filter((p) => !paths.includes(p));
+      if (add.length) changePaths([...paths, ...add]);
+    });
+  }, [intent, paths, changePaths]);
+
   // Pins stay for the next flow (also when they arrive with a saved prompt or the last run).
   useEffect(() => {
     if (intent && pinnable(intent)) savePins(intent, settings.pinned || []);
@@ -262,6 +282,8 @@ function FlowSession({ req }: { req: NonNullable<ReturnType<typeof useFlowReques
   // Esc closes; Ctrl+Enter runs from the review phase.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // Hidden while picking references: the viewer has the keyboard (Shift+Esc cancels the pick).
+      if (picking) return;
       if (e.key === 'Escape') {
         // A field that uses Esc itself (naming a saved prompt) cancels that, not the whole flow.
         if (e.target instanceof Element && e.target.closest('[data-ts-local-esc]')) return;
@@ -275,7 +297,7 @@ function FlowSession({ req }: { req: NonNullable<ReturnType<typeof useFlowReques
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, [phase, status, run]);
+  }, [phase, status, run, picking]);
 
   const view = (
     <TransformFlowView
@@ -311,6 +333,7 @@ function FlowSession({ req }: { req: NonNullable<ReturnType<typeof useFlowReques
       onRemovePath={(p) => paths.length > 1 && changePaths(paths.filter((x) => x !== p))}
       onMakeFirst={(p) => changePaths([p, ...paths.filter((x) => x !== p)])}
       onPin={pin}
+      onAddReferences={addReferences}
       preview={preview}
       onAgain={() => {
         setStatus('idle');
@@ -318,5 +341,6 @@ function FlowSession({ req }: { req: NonNullable<ReturnType<typeof useFlowReques
       }}
     />
   );
+  if (picking) return null;
   return createPortal(view, document.body);
 }

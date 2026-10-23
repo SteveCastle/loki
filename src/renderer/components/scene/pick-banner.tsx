@@ -40,7 +40,7 @@ export default function ScenePickBanner() {
       <span className="scene-pick-dot" aria-hidden />
       <span className="scene-pick-text">
         <strong>Choosing references</strong> for {req.label} · {kindsLabel(req.kinds)}. Search and browse as usual; select several with
-        Shift+right-click / Ctrl+click and use <em>Add to Scene</em> in the palette.
+        Shift+right-click / Ctrl+click and use <em>Add</em> under References in the palette.
       </span>
       <button
         type="button"
@@ -70,7 +70,7 @@ export function ScenePickPaletteSection({ paths, onDone }: { paths: string[]; on
   return (
     <div className="context-palette-merge scene-pick-section">
       <div className="workflow-picker-header">
-        <span className="action-group-title">Scene references</span>
+        <span className="action-group-title">References</span>
       </div>
       <button
         type="button"
