@@ -23,11 +23,9 @@ export default function useTagDrop(item: Item, location: 'DETAIL' | 'LIST') {
   const { libraryService } = useContext(GlobalStateContext);
   const queryClient = useQueryClient();
   const [isLeft, setIsLeft] = useState<boolean>(false);
-  // Lightweight selectors for hover behavior, others are read from snapshot on drop
-  const actualVideoTime = useSelector(libraryService, (state) => {
-    return state.context.videoPlayer.actualVideoTime;
-  });
-
+  // Lightweight selectors for hover behavior, others are read from snapshot on
+  // drop. The video time is read on drop too: subscribing to it re-rendered
+  // every visible list cell ~4x a second while a video played.
   const activeTag = useSelector(libraryService, (state) => {
     return state.context.dbQuery.tags[0];
   });
@@ -115,7 +113,7 @@ export default function useTagDrop(item: Item, location: 'DETAIL' | 'LIST') {
             targetPaths,
             tag.label,
             tag.category,
-            location === 'DETAIL' ? actualVideoTime : null,
+            location === 'DETAIL' ? ctx.videoPlayer.actualVideoTime : null,
             applyTagPreview,
           ]);
           libraryService.send('SET_MOST_RECENT_TAG', {
@@ -348,7 +346,7 @@ export default function useTagDrop(item: Item, location: 'DETAIL' | 'LIST') {
         }
       },
     }),
-    [item, libraryService, activeTag, actualVideoTime, location, queryClient]
+    [item, libraryService, activeTag, location, queryClient]
   );
 
   return { drop, collectedProps, containerRef, isLeft };

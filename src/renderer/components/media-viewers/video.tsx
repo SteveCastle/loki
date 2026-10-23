@@ -52,6 +52,11 @@ const fetchMediaPreview =
   };
 
 // return true if the input is a valid value for currentTime
+function shallowEqualPlayer<T extends Record<string, unknown>>(a: T, b: T) {
+  for (const k in a) if (a[k] !== b[k]) return false;
+  return true;
+}
+
 function validateCurrentTime(currentTime: number) {
   return !isNaN(currentTime) && currentTime >= 0 && currentTime !== Infinity;
 }
@@ -78,8 +83,24 @@ export function Video({
   useHLS = false,
 }: Props) {
   const { libraryService } = useContext(GlobalStateContext);
+  // Pick fields with a shallow compare: videoPlayer is a new object on every
+  // SET_ACTUAL_VIDEO_TIME (~4 Hz), which re-rendered every mounted <Video>
+  // (list thumbnails included) while anything played.
   const { timeStamp, loopLength, loopStartTime, playing, playbackRate } =
-    useSelector(libraryService, (state) => state.context.videoPlayer);
+    useSelector(
+      libraryService,
+      (state) => {
+        const vp = state.context.videoPlayer;
+        return {
+          timeStamp: vp.timeStamp,
+          loopLength: vp.loopLength,
+          loopStartTime: vp.loopStartTime,
+          playing: vp.playing,
+          playbackRate: vp.playbackRate,
+        };
+      },
+      shallowEqualPlayer
+    );
 
   const eventId = useSelector(
     libraryService,
@@ -247,9 +268,12 @@ export function Video({
     };
   }, [path, settable, libraryService]);
 
+  // Audio tracks and subtitles belong to the detail player only: list
+  // thumbnails reporting theirs reset the user's track choice and replaced
+  // or cleared the detail video's subtitles while scrolling.
   useEffect(() => {
     const video = mediaRef?.current;
-    if (!video) return;
+    if (!video || !settable) return;
     const handleMetadata = () => {
       const list = (video as any).audioTracks as
         | { length: number; [i: number]: any }
@@ -276,11 +300,11 @@ export function Video({
       video.removeEventListener('loadedmetadata', handleMetadata);
       video.removeEventListener('loadeddata', handleMetadata);
     };
-  }, [path, libraryService]);
+  }, [path, libraryService, settable]);
 
   useEffect(() => {
     const video = mediaRef?.current;
-    if (!video) return;
+    if (!video || !settable) return;
     const list = (video as any).audioTracks as
       | { length: number; [i: number]: { enabled: boolean } }
       | undefined;
@@ -288,9 +312,10 @@ export function Video({
     for (let i = 0; i < list.length; i++) {
       list[i].enabled = i === selectedAudioTrackIndex;
     }
-  }, [selectedAudioTrackIndex]);
+  }, [selectedAudioTrackIndex, settable]);
 
   useEffect(() => {
+    if (!settable) return undefined;
     let revoked: string | null = null;
     let cancelled = false;
     findSubtitle(path)
@@ -317,7 +342,7 @@ export function Video({
       if (revoked) URL.revokeObjectURL(revoked);
       libraryService.send({ type: 'SET_AVAILABLE_SUBTITLE', subtitle: null });
     };
-  }, [path, libraryService]);
+  }, [path, libraryService, settable]);
 
   useEffect(() => {
     const trackEl = trackRef.current;
@@ -693,7 +718,7 @@ export function Video({
           autoPlay
           loop={!hlsActive}
         >
-          {availableSubtitle && (
+          {settable && availableSubtitle && (
             <track
               ref={trackRef}
               kind="subtitles"
