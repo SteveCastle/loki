@@ -389,8 +389,8 @@ func hlsRunFFmpeg(ctx context.Context, jobID string, q *jobqueue.Queue, args []s
 	for scan.Scan() {
 		_ = q.PushJobStdout(jobID, scan.Text())
 	}
+	<-doneErr // drain stderr before Wait closes the pipe
 	runErr := cmd.Wait()
-	<-doneErr
 	return runErr
 }
 

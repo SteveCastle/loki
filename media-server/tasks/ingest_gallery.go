@@ -151,8 +151,10 @@ func ingestGalleryTaskWithOptions(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.M
 		mu.Unlock()
 	}()
 
-	galleryErr := cmd.Wait()
+	// Drain both pipes before Wait: Wait closes them, so waiting first drops
+	// the final lines (e.g. yt-dlp's after_move path) and can fail a read.
 	<-doneReading
+	galleryErr := cmd.Wait()
 
 	select {
 	case <-ctx.Done():
