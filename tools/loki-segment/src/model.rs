@@ -57,6 +57,10 @@ pub struct ObjPrompt {
     /// [x, y, w, h]
     #[serde(default, rename = "box")]
     pub bbox: Option<Vec<f32>>,
+    /// clicks/box only: use this ambiguity candidate (0 = best; index into the `candidates` list a `multimask`
+    /// request returned) as the object's mask instead of the decoder's own choice
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub candidate: Option<usize>,
 }
 
 /// A segmented object: soft mask logits at 288x288 (model space) plus its metadata.
@@ -66,6 +70,8 @@ pub struct Segment {
     pub score: f32,
     /// f32 logits [288*288] on the device
     pub logits: Tensor,
+    /// clicks/box objects with `multimask`: the 3 ambiguity candidates, best first (score, logits)
+    pub candidates: Vec<(f32, Tensor)>,
 }
 
 impl Model {
@@ -138,7 +144,7 @@ impl Model {
     }
 
     /// One object from clicks / a box (input pixels).
-    pub fn clicks(&self, enc: &Encoded, points: &[(f32, f32, i32)], bbox: Option<[f32; 4]>) -> Result<(f32, Tensor, crate::interactive::SamOutput)> {
+    pub fn clicks(&self, enc: &Encoded, points: &[(f32, f32, i32)], bbox: Option<[f32; 4]>, candidate: Option<usize>) -> Result<(f32, Tensor, crate::interactive::SamOutput)> {
         let (sx, sy) = (IMG as f32 / enc.width as f32, IMG as f32 / enc.height as f32);
         let mut pts: Vec<Point> = points.iter().map(|&(x, y, l)| Point { x: x * sx, y: y * sy, label: l }).collect();
         if let Some(b) = bbox {
@@ -146,14 +152,17 @@ impl Model {
             pts.push(Point { x: (b[0] + b[2]) * sx, y: (b[1] + b[3]) * sy, label: 3 });
         }
         let multimask = pts.len() == 1;
-        let o = self.inter.decode(&enc.sam, &pts, multimask)?;
+        let mut o = self.inter.decode(&enc.sam, &pts, multimask)?;
+        if let Some(c) = candidate {
+            o.choose(&self.dev, c)?;
+        }
         // score: the decoder's object-presence probability (its IoU head is an uncalibrated regression)
         Ok((crate::detector::sigmoid(o.obj_score), o.mask.clone(), o))
     }
 
     /// Resolve a list of object prompts on one encoded image into segments (ids assigned in order; a concept
     /// prompt yields one segment per detected instance).
-    pub fn segment(&self, enc: &Encoded, prompts: &[ObjPrompt], threshold: f32) -> Result<Vec<Segment>> {
+    pub fn segment(&self, enc: &Encoded, prompts: &[ObjPrompt], threshold: f32, multimask: bool) -> Result<Vec<Segment>> {
         let mut out = Vec::new();
         let mut next_id = prompts.iter().filter_map(|p| p.obj).max().unwrap_or(0) + 1;
         for p in prompts {
@@ -169,13 +178,18 @@ impl Model {
                     Some(_) => bail!("a box is [x, y, w, h]"),
                     None => None,
                 };
-                let (score, logits, _) = self.clicks(enc, &pts, bbox)?;
+                let (score, logits, o) = self.clicks(enc, &pts, bbox, p.candidate)?;
+                let candidates = if multimask {
+                    o.ranked().into_iter().map(|k| Ok((crate::detector::sigmoid(o.ious[k]), o.row(&self.dev, k)?))).collect::<Result<Vec<_>>>()?
+                } else {
+                    Vec::new()
+                };
                 let id = p.obj.unwrap_or_else(|| {
                     next_id += 1;
                     next_id - 1
                 });
                 let label = p.text.clone().unwrap_or_else(|| if p.bbox.is_some() { "box".into() } else { "click".into() });
-                out.push(Segment { id, label, score, logits });
+                out.push(Segment { id, label, score, logits, candidates });
             } else if let Some(t) = &p.text {
                 let found = self.concept(enc, t, threshold)?;
                 let n = found.len();
@@ -189,7 +203,7 @@ impl Model {
                         }
                     };
                     let label = if n > 1 { t.clone() } else { t.clone() };
-                    out.push(Segment { id, label, score, logits });
+                    out.push(Segment { id, label, score, logits, candidates: Vec::new() });
                 }
             } else {
                 bail!("a prompt needs text, points or a box");

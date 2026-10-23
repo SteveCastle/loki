@@ -1,6 +1,6 @@
 """Reference dump of the OFFICIAL SAM 3.1 video tracker (multiplex predictor) on a folder of JPEG frames.
 
-Usage (from tools/loki-segment):
+Usage (from tools/loki-segment; --obj ID[@FRAME]:X,Y[,L][;X,Y,L...], frame 0 by default):
     tools/ref-env/Scripts/python.exe -I ref/ref_video.py FRAMES_DIR OUT_DIR --obj 1:X,Y[,L][;X,Y,L...] [--obj 2:...] [--fp32]
 
 Clicks are in video pixels on frame 0, one --obj per object. Dumps (f32, see ref_common.Dump):
@@ -111,15 +111,21 @@ def main():
         H, W = st["video_height"], st["video_width"]
         dump("images", torch.stack([imgs[i].float() for i in range(n)]))
         meta = {"width": W, "height": H, "frames": n, "objects": {}, "fp32": a.fp32}
+        meta["prompts"] = []
         for spec in a.obj:
             oid, pts = spec.split(":")
+            fidx = 0
+            if "@" in oid:
+                oid, fs = oid.split("@")
+                fidx = int(fs)
             coords, labels = [], []
             for p in pts.split(";"):
                 v = [float(t) for t in p.split(",")]
                 coords.append([v[0] / W, v[1] / H])
                 labels.append(int(v[2]) if len(v) > 2 else 1)
-            meta["objects"][oid] = {"points": [[c[0] * W, c[1] * H, l] for c, l in zip(coords, labels)]}
-            trk.add_new_points(st, frame_idx=0, obj_id=int(oid), points=torch.tensor(coords, dtype=torch.float32),
+            meta["objects"].setdefault(oid, {"points": [[c[0] * W, c[1] * H, l] for c, l in zip(coords, labels)]})
+            meta["prompts"].append({"obj": int(oid), "frame": fidx, "points": [[c[0] * W, c[1] * H, l] for c, l in zip(coords, labels)]})
+            trk.add_new_points(st, frame_idx=fidx, obj_id=int(oid), points=torch.tensor(coords, dtype=torch.float32),
                                labels=torch.tensor(labels, dtype=torch.int32), clear_old_points=True, rel_coordinates=True)
         Base.propagate_in_video_preflight(trk, st, run_mem_encoder=True)
         for fi, obj_ids, low_res, video_res in Base.propagate_in_video(trk, st, start_frame_idx=0, max_frame_num_to_track=n,

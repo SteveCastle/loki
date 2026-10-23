@@ -32,10 +32,17 @@ fn main() -> Result<()> {
     sess.ref_inputs = Some((0..n).map(|i| imgs[i * per..(i + 1) * per].to_vec()).collect());
     let mut prompts = Vec::new();
     let mut ids: Vec<u32> = Vec::new();
-    for (oid, o) in meta["objects"].as_object().unwrap() {
-        let pts: Vec<Vec<f32>> = o["points"].as_array().unwrap().iter().map(|p| p.as_array().unwrap().iter().map(|v| v.as_f64().unwrap() as f32).collect()).collect();
-        ids.push(oid.parse()?);
-        prompts.push(ObjPrompt { obj: Some(oid.parse()?), frame: Some(0), points: pts, ..Default::default() });
+    let pts_of = |o: &serde_json::Value| -> Vec<Vec<f32>> { o["points"].as_array().unwrap().iter().map(|p| p.as_array().unwrap().iter().map(|v| v.as_f64().unwrap() as f32).collect()).collect() };
+    if let Some(list) = meta["prompts"].as_array() {
+        for p in list {
+            ids.push(p["obj"].as_u64().unwrap() as u32);
+            prompts.push(ObjPrompt { obj: Some(p["obj"].as_u64().unwrap() as u32), frame: Some(p["frame"].as_u64().unwrap() as usize), points: pts_of(p), ..Default::default() });
+        }
+    } else {
+        for (oid, o) in meta["objects"].as_object().unwrap() {
+            ids.push(oid.parse()?);
+            prompts.push(ObjPrompt { obj: Some(oid.parse()?), frame: Some(0), points: pts_of(o), ..Default::default() });
+        }
     }
     let t = Instant::now();
     let tr = sess.compute(&model, &prompts, 0.5, &TrackOpts { looped: false, bidir: false, smooth: 0, sticky: std::env::var("STICKY").ok().and_then(|v| v.parse().ok()).unwrap_or(0.0) }, false)?;

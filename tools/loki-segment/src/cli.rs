@@ -25,7 +25,11 @@ const AFTER_HELP: &str = r#"PROMPTS
                        [{"obj": 1, "frame": 0, "text": "dog"}, {"obj": 2, "points": [[410,220,1],[400,300,0]]},
                         {"obj": 3, "box": [10,20,200,150], "text": "label only"}]
                        An entry with points/box is one object (its "text" is just its label); an entry with only
-                       "text" yields every instance of that concept.
+                       "text" yields every instance of that concept. Video: entries may be on different frames, and
+                       several entries with the same "obj" on different frames are corrections (each adds a
+                       conditioning frame to that object's memory). "candidate": k (clicks/box) uses the k-th
+                       ambiguity candidate (0 = best, the order --multimask lists them in) as the object's mask.
+  --multimask          clicks/box: also write SAM's 3 ambiguity candidates (sub-part / part / whole), best first.
 
 OUTPUT
   Masks are 8-bit grayscale PNGs at the input resolution with SOFT edges (sigmoid of the upsampled logits;
@@ -33,11 +37,17 @@ OUTPUT
   Image:  one object  -> -o FILE.png, or -o DIR/<id>.png, default <input>_mask.png next to the input.
           several     -> -o DIR/<id>.png, or FILE_<id>.png for -o FILE.png, default <input>_mask_<id>.png.
           -o -        -> the PNG bytes on stdout (exactly one object; refuses a terminal).
-  Video:  DIR/<id>/<frame:05>.png per object (default <input>_masks/).
+          --multimask: candidates beside each click/box mask as <mask>_c1.png .. _c3.png.
+  Video:  DIR/<id>/<frame:05>.png per object (default <input>_masks/); --multimask candidates as
+          DIR/<id>/<frame:05>_c1.png .. on each prompted frame.
   stdout: the path of every file written, one per line; with --json a single JSON object instead:
     {"width":W,"height":H,"frames":N,"fps":F,"model":"SAM 3.1",
      "objects":[{"id":1,"label":"person","score":0.93,"bbox":[x,y,w,h],"mask":"path.png"}]}
-    (video objects carry "frames":"DIR" instead of "mask"; bbox is on the prompted frame; [] when nothing found)
+    (with --multimask, click/box objects add "candidates":[{"mask":..,"score":..,"bbox":[..]}, ...] best first,
+     score = sigmoid of the decoder's IoU prediction; video candidates also carry "frame")
+    (video objects carry "frames":"DIR" instead of "mask" and "prompt_frames":[..]; bbox is on their first prompted
+     frame; the top level adds "prompt_frame" (first) and "prompt_frames"; "objects":[] when nothing found)
+  stderr, video: one progress line per frame step, "track 37/301 (95 ms/frame)", also when not a terminal.
   stderr: progress and timings (-q silences). Exit status 0 ok (also when nothing matched), 1 error, 2 usage.
   Every PNG carries the loki generation record (iTXt "loki"; see tools/CONVENTIONS.md).
 
@@ -45,8 +55,9 @@ SERVE (interactive editors)
   --serve reads JSON lines on stdin and answers exactly one JSON line per request on stdout:
     {"cmd":"open","path":"img.jpg"}           -> {"ok":true,"width":..,"height":..,"frames":1,"ms":..}
     {"cmd":"segment","text":"dog","out":"dir"} -> same object as --json (fields: text|prompt, point, points
-        [[x,y,l]..], neg, box, prompts [...], threshold, out, alpha, binary, frame)
-    {"cmd":"track", ...}                       -> video: propagate the prompts through the clip
+        [[x,y,l]..], neg, box, prompts [...], threshold, out, alpha, binary, frame, multimask, candidate)
+        on an open video: previews frame "frame" only (~100 ms for a new frame, ~10 ms again on the same one)
+    {"cmd":"track", ...}                       -> video: propagate the prompts (any frames) through the clip
     {"cmd":"close"}                            -> drop the open image/video ({"ok":true})
   Errors come back as {"error":"..."} and the session continues; EOF ends it. Models load once; an open image is
   encoded once, so each segment request costs only the prompt decoders (~5-20 ms + PNG writing).
@@ -108,6 +119,10 @@ pub struct Cli {
     /// Output file, directory, or - (PNG to stdout)
     #[arg(short = 'o', long = "out")]
     pub out: Option<String>,
+    /// Clicks/boxes: also write SAM's 3 ambiguity candidates (sub-part / part / whole), best first, as
+    /// <mask>_c1.png .. _c3.png, listed under "candidates" in --json (video: on the prompted frames)
+    #[arg(long)]
+    pub multimask: bool,
     /// Write the input as RGBA with the mask as alpha (a cut-out) instead of a gray mask
     #[arg(long)]
     pub alpha: bool,
@@ -269,6 +284,7 @@ impl OutPlan {
 pub struct WriteOpts {
     pub alpha: bool,
     pub binary: bool,
+    pub multimask: bool,
 }
 
 /// Write the masks of one image and return the JSON objects.
@@ -281,8 +297,8 @@ pub fn write_masks(model: &Model, img: &Rgb8, segs: &[Segment], plan: &OutPlan, 
     if let Some(d) = &plan.dir {
         std::fs::create_dir_all(d).with_context(|| format!("creating {}", d.display()))?;
     }
-    for s in segs {
-        let mut m = model.mask_u8(&s.logits, img.w, img.h)?;
+    let encode = |logits: &crate::tensor::Tensor, obj: Value| -> Result<(Vec<u8>, Option<[usize; 4]>)> {
+        let mut m = model.mask_u8(logits, img.w, img.h)?;
         if opts.binary {
             for v in m.iter_mut() {
                 *v = if *v >= 128 { 255 } else { 0 };
@@ -290,9 +306,13 @@ pub fn write_masks(model: &Model, img: &Rgb8, segs: &[Segment], plan: &OutPlan, 
         }
         let bbox = mask_bbox(&m, img.w, img.h);
         let mut r = rec.clone();
-        r.set("object", json!({"id": s.id, "label": s.label, "score": s.score}));
+        r.set("object", obj);
         let text = vec![(genmeta::PNG_KEYWORD.to_string(), r.to_json())];
         let bytes = if opts.alpha { crate::image::rgba_png_bytes(img, &m, &text)? } else { crate::image::gray_png_bytes(img.w, img.h, &m, &text)? };
+        Ok((bytes, bbox))
+    };
+    for s in segs {
+        let (bytes, bbox) = encode(&s.logits, json!({"id": s.id, "label": s.label, "score": s.score}))?;
         let mask_val = if plan.stdout {
             let mut so = std::io::stdout().lock();
             if so.is_terminal() {
@@ -312,13 +332,27 @@ pub fn write_masks(model: &Model, img: &Rgb8, segs: &[Segment], plan: &OutPlan, 
             paths.push(p.clone());
             Value::from(p.display().to_string())
         };
-        objs.push(json!({
+        let mut o = json!({
             "id": s.id,
             "label": s.label,
             "score": (s.score as f64 * 1e4).round() / 1e4,
             "bbox": bbox.map(|b| json!(b)).unwrap_or(Value::Null),
             "mask": mask_val,
-        }));
+        });
+        if opts.multimask && !s.candidates.is_empty() && !plan.stdout {
+            // derive from the mask path's own spelling so separators stay consistent with "mask"
+            let base = plan.path_for(s.id, segs.len()).display().to_string();
+            let stem = base.strip_suffix(".png").unwrap_or(&base).to_string();
+            let mut cands = Vec::new();
+            for (k, (score, lg)) in s.candidates.iter().enumerate() {
+                let (bytes, bbox) = encode(lg, json!({"id": s.id, "label": s.label, "candidate": k, "score": score}))?;
+                let p = PathBuf::from(format!("{stem}_c{}.png", k + 1));
+                std::fs::write(&p, &bytes).with_context(|| format!("writing {}", p.display()))?;
+                cands.push(json!({"mask": p.display().to_string(), "score": (*score as f64 * 1e4).round() / 1e4, "bbox": bbox.map(|b| json!(b)).unwrap_or(Value::Null)}));
+            }
+            o["candidates"] = Value::Array(cands);
+        }
+        objs.push(o);
     }
     Ok((objs, paths))
 }
@@ -362,12 +396,12 @@ fn run(cli: &Cli) -> Result<()> {
     model.dev.sync()?;
     info!("encoded {}x{} in {:.0} ms", img.w, img.h, ms(t));
     let t = Instant::now();
-    let segs = run_prompts(&model, &enc, &prompts, cli.threshold, cli.everything)?;
+    let segs = run_prompts(&model, &enc, &prompts, cli.threshold, cli.everything, cli.multimask)?;
     model.dev.sync()?;
     info!("{} object(s) in {:.0} ms", segs.len(), ms(t));
     let rec = base_record(&prompts, cli.threshold, &input, img.w, img.h, meta.as_ref());
     let t = Instant::now();
-    let (objs, paths) = write_masks(&model, &img, &segs, &plan, &WriteOpts { alpha: cli.alpha, binary: cli.binary }, &rec)?;
+    let (objs, paths) = write_masks(&model, &img, &segs, &plan, &WriteOpts { alpha: cli.alpha, binary: cli.binary, multimask: cli.multimask }, &rec)?;
     info!("wrote {} mask(s) in {:.0} ms", objs.len(), ms(t));
     if segs.is_empty() {
         info!("nothing matched");
@@ -384,8 +418,8 @@ fn run(cli: &Cli) -> Result<()> {
 }
 
 /// Prompts plus optional automatic mask generation.
-pub fn run_prompts(model: &Model, enc: &Encoded, prompts: &[ObjPrompt], threshold: f32, everything: bool) -> Result<Vec<Segment>> {
-    let mut segs = model.segment(enc, prompts, threshold)?;
+pub fn run_prompts(model: &Model, enc: &Encoded, prompts: &[ObjPrompt], threshold: f32, everything: bool, multimask: bool) -> Result<Vec<Segment>> {
+    let mut segs = model.segment(enc, prompts, threshold, multimask)?;
     if everything {
         let first = segs.iter().map(|s| s.id).max().unwrap_or(0) + 1;
         segs.extend(crate::everything::generate(model, enc, first)?);
@@ -440,6 +474,11 @@ mod tests {
         assert_eq!(p.len(), 1, "text next to clicks labels the clicked object");
         assert_eq!(p[0].text.as_deref(), Some("dog"));
         assert_eq!(p[0].points, vec![vec![5.0, 6.0, 1.0], vec![1.0, 2.0, 0.0]]);
+        let r: Value = serde_json::from_str(r#"{"cmd":"segment","point":[5,6],"candidate":2}"#).unwrap();
+        assert_eq!(crate::serve::prompts_from_json(&r).unwrap()[0].candidate, Some(2));
+        let r: Value = serde_json::from_str(r#"{"cmd":"track","prompts":[{"obj":1,"frame":0,"points":[[1,1,1]]},{"obj":1,"frame":40,"box":[0,0,9,9],"candidate":1}]}"#).unwrap();
+        let p = crate::serve::prompts_from_json(&r).unwrap();
+        assert_eq!((p[1].obj, p[1].frame, p[1].candidate), (Some(1), Some(40), Some(1)));
         let r: Value = serde_json::from_str(r#"{"cmd":"track","frame":9,"prompts":[{"obj":3,"points":[[1,1,1]]},{"text":"x","frame":2}]}"#).unwrap();
         let p = crate::serve::prompts_from_json(&r).unwrap();
         assert_eq!((p[0].frame, p[1].frame), (Some(9), Some(2)));

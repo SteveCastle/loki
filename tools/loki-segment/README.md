@@ -40,8 +40,10 @@ loki-segment [OPTIONS] INPUT            # INPUT = image or video file (or - for 
   -P, --prompt-file FILE   concept prompts, one per line (- = stdin)
   --point X,Y              positive click (input pixels), repeatable;  --neg X,Y negative click
   --box X,Y,W,H            box prompt (input pixels), repeatable
-  --frame N                video: frame the prompts are on (default 0)
-  --prompts FILE.json      full spec: [{ "obj": 1, "frame": 0, "text": "...", "points": [[x,y,1|0],...], "box": [x,y,w,h] }, ...]
+  --frame N                video: frame the flag prompts are on (default 0)
+  --prompts FILE.json      full spec: [{ "obj": 1, "frame": 0, "text": "...", "points": [[x,y,1|0],...], "box": [x,y,w,h],
+                           "candidate": k }, ...]   (video: any frames; same obj on several frames = corrections)
+  --multimask              clicks/box: also write the 3 ambiguity candidates (sub-part / part / whole), best first
   --everything             every object (automatic mask generation, images)
   --threshold F            concept detector score threshold (default 0.5)
   --loop, --no-bidir, --smooth N, --sticky F   video stability knobs (below)
@@ -57,6 +59,14 @@ score `sigmoid(class) * sigmoid(presence)` exceeds `--threshold`, best first. Cl
 with `"points"`/`"box"`) go to the SAM prompt decoder and pick **one** object. With one positive click the decoder's ambiguity mode is
 used (3 candidates, best predicted IoU). Several `--box` without clicks give one object per box. In `--prompts`, an entry with both
 clicks and `"text"` is the clicked object, and the text is only its label.
+
+**Ambiguity candidates.** One click is ambiguous between sub-part, part and whole (a click on a house can return its door). With
+`--multimask` (serve: `"multimask": true`), every click/box object also gets SAM's 3 candidates, best predicted IoU first. They are
+written as `<mask>_c1.png .. _c3.png` (video: `DIR/<id>/<frame:05>_c1.png ..` on each prompted frame) and listed in `--json` as
+`"candidates": [{"mask": path, "score": s, "bbox": [x,y,w,h]}, ...]`, plus `"frame"` on video. `score` is the sigmoid of the IoU
+prediction. With a single click, candidate 0 is the top-level `mask`. With several clicks or a box, the top-level mask is SAM's
+single-mask output and the candidates are the alternatives. To use a candidate, send the same prompt with `"candidate": k` (an index
+into that list): the object's mask, and on video its tracking memory, become that candidate. Concept objects have no candidates.
 
 **Outputs.** Masks are 8-bit grayscale PNGs at the input resolution with **soft edges**: the sigmoid of the 288x288 mask logits,
 bilinearly upsampled the way the official pipeline does it. Threshold at 128 for a hard mask, or pass `--binary`. Naming:
@@ -77,9 +87,9 @@ bilinearly upsampled the way the official pipeline does it. Threshold at 128 for
 `bbox` is on the prompted frame, and the object adds `"prompt_frame"`. An empty `objects` list (exit 0) means nothing matched. For
 clicks, `score` is the decoder's object-presence probability; for `--everything` it is `sigmoid` of the predicted IoU.
 
-**Contract notes** (relative to the brief this tool was built against): `-P/--prompt-file`, `--alpha`, `--binary`, `--sticky` and
-`--model` are additions. On a video, all prompts of one run must be on the same frame for now (`--frame`, or the same `"frame"` in
-every entry). `--everything` is image-only.
+**Contract notes** (relative to the brief this tool was built against): `-P/--prompt-file`, `--alpha`, `--binary`, `--sticky`,
+`--multimask`, `"candidate"` and `--model` are additions. Video JSON adds `"prompt_frames"` (top level and per object), and
+`"prompt_frame"` is the first of them. `--everything` is image-only.
 
 ## `--serve` (interactive editors)
 
@@ -90,9 +100,12 @@ every entry). `--everything` is image-only.
 {"cmd":"segment","text":"dog","out":"dir/"}             -> the --json object, plus "ms"
 {"cmd":"segment","point":[x,y],"neg":[[x,y]],"box":[x,y,w,h],"out":"click.png"}
 {"cmd":"segment","prompts":[{...}, ...],"threshold":0.4,"alpha":true,"binary":false,"everything":false}
+{"cmd":"segment","point":[x,y],"multimask":true,"out":"dir/"} -> adds "candidates" (best first) to click/box objects
+{"cmd":"segment","point":[x,y],"candidate":2,"out":"dir/"}     -> that candidate becomes the object's mask
 {"cmd":"open","path":"clip.mp4"}                        -> decodes the frames (no model work yet)
 {"cmd":"segment","frame":40,"point":[x,y],"out":"dir/"} -> video: that frame only (a fast preview, dir/<id>/00040.png)
-{"cmd":"track","frame":40,"prompts":[...],"out":"dir/","loop":true,"smooth":3,"sticky":0.15,"no_bidir":false}
+{"cmd":"track","prompts":[{"obj":1,"frame":0,"points":[[x,y,1]]},{"obj":1,"frame":40,"points":[[x,y,1]]},
+  {"text":"dog","frame":60}],"out":"dir/","loop":true,"smooth":3,"sticky":0.15,"no_bidir":false}
 {"cmd":"close"}   {"cmd":"info"}
 ```
 
@@ -106,7 +119,8 @@ with a 1800x1200 image, PNG writing included:
 | `open` (decode + resize + ViT-L + three necks) | 95-110 ms |
 | `segment` click / clicks + box | 7-10 ms |
 | `segment` concept (cached text) / new concept | 10-30 ms / +6 ms text encoding |
-| video `segment` preview on a new frame / same frame again | ~100 ms / ~10 ms |
+| video `segment` preview: click on a new frame / same frame again (+`multimask`: +2 ms) | ~100 ms / 9-11 ms |
+| video `segment` preview: concept on a new frame / same frame (2-6 instances) | ~130 ms / ~55 ms |
 
 ## Video and temporal stability
 
@@ -114,6 +128,18 @@ The tracker is SAM 3.1's own: memory encoder, decoupled RoPE memory attention ov
 and object pointers from the last 15 frames, all through the multiplex decoder. Objects are bucketed the way the official demo does
 it. Every clicked object gets its own bucket, with independent memory. The instances of one concept are multiplexed up to 16 to a
 bucket, which costs about one object's worth of compute. Each frame's backbone runs once per pass, whatever the number of buckets.
+
+**Several prompted frames.** `--prompts` entries can sit on any frames. Several entries for the same `obj` on different frames are
+corrections: each becomes a conditioning frame in that object's memory, like the official demo's `add_new_points` on another frame.
+The tracker attends to the closest 4 conditioning frames, before or after, and at a conditioning frame the output is the prompt
+itself. A text-only entry on frame N adds that concept's instances as objects conditioned on frame N. Clicks for the same object on
+the same frame add up. Propagation is a forward pass from the first prompted frame and a backward pass from the last; the frames
+between prompts get both estimates, merged by distance to the conditioning frame each one came from. Checked against the official
+tracker (girl clicked on frame 0 and corrected on frame 12, forward): the correction frame matches at cosine 0.999985, the worst frame
+at 0.999, and mean mask IoU is 0.9967. The frames after the correction, which diverged without it, now agree.
+
+**Progress.** A video run prints one stderr line per frame step, `track 37/301 (95 ms/frame)`, also when stderr is not a terminal
+(`-q` silences it). The total counts both passes. Parse `(\d+)/(\d+)`; stdout stays a single `--json` object.
 
 On top of the stock model, these knobs target flicker:
 

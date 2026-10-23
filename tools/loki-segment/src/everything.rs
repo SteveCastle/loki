@@ -82,7 +82,7 @@ pub fn generate(model: &Model, enc: &Encoded, first_id: u32) -> Result<Vec<Segme
     for (i, c) in kept.into_iter().enumerate() {
         let t = Tensor::from_f32(&model.dev, &c.logits, &[p])?;
         debug_assert_eq!(t.dtype, DType::F32);
-        out.push(Segment { id: first_id + i as u32, label: "object".into(), score: crate::detector::sigmoid(c.score), logits: t });
+        out.push(Segment { id: first_id + i as u32, label: "object".into(), score: crate::detector::sigmoid(c.score), logits: t, candidates: Vec::new() });
     }
     Ok(out)
 }

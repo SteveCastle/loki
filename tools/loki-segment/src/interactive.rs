@@ -158,6 +158,37 @@ pub struct SamOutput {
     pub ious: Vec<f32>,
     /// mask token used for the object pointer (video), f32 [256]
     pub token: Vec<f32>,
+    /// all 4 mask tokens (row k of `all`), for picking another candidate
+    pub tokens: Vec<Vec<f32>>,
+}
+
+impl SamOutput {
+    /// The 3 ambiguity candidates (mask tokens 1..3: sub-part / part / whole), best predicted IoU first.
+    pub fn ranked(&self) -> Vec<usize> {
+        let mut k: Vec<usize> = (1..self.ious.len().min(4)).collect();
+        k.sort_by(|a, b| self.ious[*b].partial_cmp(&self.ious[*a]).unwrap());
+        k
+    }
+    /// Logits [288*288] of candidate row `k` (a copy on the device).
+    pub fn row(&self, dev: &Device, k: usize) -> Result<Tensor> {
+        let p = self.all.numel() / self.all.shape[0];
+        let t = Tensor::new(dev, DType::F32, &[p])?;
+        dev.dtod(t.ptr, self.all.ptr + (k * p * 4) as u64, p * 4)?;
+        Ok(t)
+    }
+    /// Make candidate `rank` (index into `ranked()`) the output: its mask (even when the decoder judged the object
+    /// absent), IoU and token.
+    pub fn choose(&mut self, dev: &Device, rank: usize) -> Result<()> {
+        let r = self.ranked();
+        let Some(&k) = r.get(rank) else { anyhow::bail!("candidate {rank} does not exist (0..{})", r.len()) };
+        self.mask = self.row(dev, k)?;
+        self.iou = self.ious[k];
+        self.token = self.tokens[k].clone();
+        if self.obj_score <= 0.0 {
+            self.obj_score = 1.0;
+        }
+        Ok(())
+    }
 }
 
 /// Interactive decoder (also the shape of the multiplex decoder's transformer).
@@ -459,6 +490,7 @@ impl Interactive {
             ops::fill_f32(dev, &mask, NO_OBJ_SCORE)?;
         }
         let token = hsv[(2 + pick) * D..(3 + pick) * D].to_vec();
-        Ok(SamOutput { mask, iou: ious[pick], obj_score, all: masks, ious, token })
+        let tokens = (0..4).map(|k| hsv[(2 + k) * D..(3 + k) * D].to_vec()).collect();
+        Ok(SamOutput { mask, iou: ious[pick], obj_score, all: masks, ious, token, tokens })
     }
 }

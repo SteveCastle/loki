@@ -77,7 +77,8 @@ pub fn prompts_from_json(req: &Value) -> Result<Vec<ObjPrompt>> {
         if label.is_some() {
             out.retain(|p| p.text.is_none());
         }
-        out.push(ObjPrompt { obj, points: pts, bbox: boxes.into_iter().next(), frame, text: label });
+        let candidate = req.get("candidate").and_then(|v| v.as_u64()).map(|v| v as usize);
+        out.push(ObjPrompt { obj, points: pts, bbox: boxes.into_iter().next(), frame, text: label, candidate });
     }
     if let Some(p) = req.get("prompts") {
         let v: Vec<ObjPrompt> = serde_json::from_value(p.clone()).context("\"prompts\" must be a list of objects")?;
@@ -117,7 +118,11 @@ fn handle(model: &Model, sess: &mut Session, req: &Value, cli: &Cli) -> Result<V
             let prompts = prompts_from_json(req)?;
             let threshold = req.get("threshold").and_then(|v| v.as_f64()).map(|v| v as f32).unwrap_or(cli.threshold);
             let everything = req.get("everything").and_then(|v| v.as_bool()).unwrap_or(false);
-            let opts = WriteOpts { alpha: req.get("alpha").and_then(|v| v.as_bool()).unwrap_or(false), binary: req.get("binary").and_then(|v| v.as_bool()).unwrap_or(false) };
+            let opts = WriteOpts {
+                alpha: req.get("alpha").and_then(|v| v.as_bool()).unwrap_or(cli.alpha),
+                binary: req.get("binary").and_then(|v| v.as_bool()).unwrap_or(cli.binary),
+                multimask: req.get("multimask").and_then(|v| v.as_bool()).unwrap_or(cli.multimask),
+            };
             let out = req.get("out").and_then(|v| v.as_str());
             if prompts.is_empty() && !everything {
                 bail!("nothing to segment: give text, point(s), neg, box, prompts or everything");
@@ -126,7 +131,7 @@ fn handle(model: &Model, sess: &mut Session, req: &Value, cli: &Cli) -> Result<V
                 Session::None => bail!("no image open: send {{\"cmd\":\"open\",\"path\":...}} first"),
                 Session::Image { path, img, enc } => {
                     let t = Instant::now();
-                    let segs = run_prompts(model, enc, &prompts, threshold, everything)?;
+                    let segs = run_prompts(model, enc, &prompts, threshold, everything, opts.multimask)?;
                     let plan = OutPlan::new(out, Some(path))?;
                     if plan.stdout {
                         bail!("\"out\": \"-\" is not available in --serve (stdout carries the replies)");
@@ -139,7 +144,10 @@ fn handle(model: &Model, sess: &mut Session, req: &Value, cli: &Cli) -> Result<V
                     v.meta = req.get("meta").cloned();
                     let vopts = crate::video::TrackOpts::from_json(req, cli);
                     // on a video, "segment" previews the prompted frame only; "track" propagates through the clip
-                    v.track(model, &prompts, threshold, out, &opts, &vopts, cmd == "segment")
+                    let t = Instant::now();
+                    let mut r = v.track(model, &prompts, threshold, out, &opts, &vopts, cmd == "segment")?;
+                    r["ms"] = json!(ms(t).round());
+                    Ok(r)
                 }
             }
         }

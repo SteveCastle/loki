@@ -1,6 +1,7 @@
-//! Video: frames through ffmpeg, SAM 3.1 tracking from one prompted frame, and the temporal-stability layer on top
-//! of the stock tracker:
-//!   - bidirectional: a backward pass from the prompted frame covers the frames before it (default on);
+//! Video: frames through ffmpeg, SAM 3.1 tracking from one or more prompted frames, and the temporal-stability layer
+//! on top of the stock tracker:
+//!   - bidirectional: a forward pass from the first prompted frame and a backward pass from the last one; frames
+//!     between prompts get both estimates, merged by distance to the conditioning frame (default on);
 //!   - loop (`--loop`): both passes run all the way around the clip, so every frame gets a forward and a backward
 //!     estimate; they are merged with weights falling off with the distance to the prompt, which makes the last
 //!     frame agree with the first;
@@ -61,27 +62,39 @@ pub struct VideoSession {
     pub meta: Option<Value>,
 }
 
-/// A tracked object: its conditioning-frame output and identity.
-pub struct CondObj {
+/// One conditioning (prompted) frame of an object.
+pub struct CondEntry {
+    /// low-res logits [288*288] on the device
+    pub logits: Tensor,
+    /// object score logit fed to the memory encoder
+    pub obj_score: f32,
+    /// object pointer [256]
+    pub ptr: Vec<f32>,
+    /// reported score (detector probability for concepts, presence probability for clicks)
+    pub score: f32,
+    /// clicks/box: the 3 ambiguity candidates, best first (score, logits)
+    pub candidates: Vec<(f32, Tensor)>,
+}
+
+/// A tracked object and the frames it was prompted on.
+pub struct VObj {
     pub id: u32,
     pub label: String,
-    pub score: f32,
-    pub logits: Tensor,
-    pub obj_score: f32,
-    pub ptr: Vec<f32>,
-    /// found by a concept prompt (multiplexed with its siblings)
-    pub concept: bool,
+    /// instances of one concept prompt share a tracker bucket (multiplexed); None = own bucket
+    pub group: Option<usize>,
+    pub conds: BTreeMap<usize, CondEntry>,
 }
 
 /// Tracking result: the objects and, per frame, their (merged, smoothed) low-res logits [288*288] per object.
 pub struct Tracked {
-    pub objs: Vec<CondObj>,
-    pub frame: usize,
+    pub objs: Vec<VObj>,
+    /// every prompted frame, ascending
+    pub cond_frames: Vec<usize>,
     pub logits: BTreeMap<usize, Vec<Vec<f32>>>,
 }
 
-/// Per frame, per object: low-res logits on the host, plus the pass distance they came from.
-type Estimates = BTreeMap<usize, Vec<(usize, Vec<Vec<f32>>)>>;
+/// A bucket's conditioning frames: frame -> (memory, logits of the bucket's objects).
+type BucketConds = BTreeMap<usize, (FrameMem, Vec<Vec<f32>>)>;
 
 impl VideoSession {
     /// A session over frames already in memory (e.g. a JPEG sequence).
@@ -139,8 +152,10 @@ impl VideoSession {
         }
     }
 
-    /// Resolve the prompts on their frame into conditioning objects.
-    fn condition(&mut self, model: &Model, prompts: &[ObjPrompt], threshold: f32, frame: usize) -> Result<(Vec<CondObj>, FrameFeats)> {
+    /// Resolve the prompts of one frame into conditioning entries: (object id, label, concept group, entry).
+    /// `next_id` hands out ids to objects without one; concept prompts get group ids from `next_group`.
+    #[allow(clippy::type_complexity)]
+    fn condition(&mut self, model: &Model, prompts: &[ObjPrompt], threshold: f32, frame: usize, next_id: &mut u32, next_group: &mut usize, need_ptr: bool) -> Result<(Vec<(u32, String, Option<usize>, CondEntry)>, FrameFeats)> {
         let enc = match &self.last_enc {
             Some((t, e)) if *t == frame => e.clone(),
             _ => {
@@ -155,12 +170,12 @@ impl VideoSession {
         let feats = model.tracker.frame_feats(enc.prop.as_ref().unwrap())?;
         self.cache.insert(frame, feats.clone());
         let (sx, sy) = (IMG as f32 / img.w as f32, IMG as f32 / img.h as f32);
-        let mut objs: Vec<CondObj> = Vec::new();
-        let mut next_id = prompts.iter().filter_map(|p| p.obj).max().unwrap_or(0) + 1;
+        let mut out: Vec<(u32, String, Option<usize>, CondEntry)> = Vec::new();
         let mut fresh = || {
-            next_id += 1;
-            next_id - 1
+            *next_id += 1;
+            *next_id - 1
         };
+        let mut geo_on_frame = 0;
         for p in prompts {
             if !p.points.is_empty() || p.bbox.is_some() {
                 let mut pts: Vec<Point> = p
@@ -175,38 +190,42 @@ impl VideoSession {
                     pts.push(Point { x: b[0] * sx, y: b[1] * sy, label: 2 });
                     pts.push(Point { x: (b[0] + b[2]) * sx, y: (b[1] + b[3]) * sy, label: 3 });
                 }
-                let o = model.inter.decode(&enc.sam, &pts, pts.len() == 1)?;
+                let mut o = model.inter.decode(&enc.sam, &pts, pts.len() == 1)?;
+                let candidates = o.ranked().into_iter().map(|k| Ok((crate::detector::sigmoid(o.ious[k]), o.row(&model.dev, k)?))).collect::<Result<Vec<_>>>()?;
+                if let Some(c) = p.candidate {
+                    o.choose(&model.dev, c)?;
+                }
                 let id = p.obj.unwrap_or_else(&mut fresh);
                 let label = p.text.clone().unwrap_or_else(|| if p.bbox.is_some() { "box".into() } else { "click".into() });
                 let score = crate::detector::sigmoid(o.obj_score);
-                if self.parity && !objs.is_empty() {
+                let entry = if self.parity && geo_on_frame > 0 {
                     // official demo: objects added to an existing bucket enter through the mask-input path
                     let (lg, ptr, sc) = self.mask_object_from_logits(model, &enc, &o.mask)?;
-                    objs.push(CondObj { id, label, score, logits: lg, obj_score: sc, ptr, concept: false });
+                    CondEntry { logits: lg, obj_score: sc, ptr, score, candidates }
                 } else {
                     let (ptr, sc) = model.tracker.cond_object(&o);
                     let lg = self.via_video_res(model, &o.mask)?;
-                    objs.push(CondObj { id, label, score, logits: lg, obj_score: sc, ptr, concept: false });
-                }
+                    CondEntry { logits: lg, obj_score: sc, ptr, score, candidates }
+                };
+                geo_on_frame += 1;
+                out.push((id, label, None, entry));
             } else if let Some(t) = &p.text {
                 // concept: every detected instance enters the tracker through the mask-input path
+                let group = *next_group;
+                *next_group += 1;
                 for (i, (score, logits)) in model.concept(&enc, t, threshold)?.into_iter().enumerate() {
                     let id = match p.obj {
                         Some(o) if i == 0 => o,
                         _ => fresh(),
                     };
-                    let (lg, ptr, sc) = self.mask_object(model, &enc, &logits)?;
-                    objs.push(CondObj { id, label: t.clone(), score, logits: lg, obj_score: sc, ptr, concept: true });
+                    let (lg, ptr, sc) = self.mask_object(model, &enc, &logits, need_ptr)?;
+                    out.push((id, t.clone(), Some(group), CondEntry { logits: lg, obj_score: sc, ptr, score, candidates: Vec::new() }));
                 }
             } else {
                 bail!("a prompt needs text, points or a box");
             }
         }
-        if objs.len() > SLOTS {
-            info!("{} objects found; tracking the first {SLOTS}", objs.len());
-            objs.truncate(SLOTS);
-        }
-        Ok((objs, feats))
+        Ok((out, feats))
     }
 
     /// The official demo stores a prompted frame's masks at video resolution and brings them back to 288 for
@@ -246,7 +265,8 @@ impl VideoSession {
 
     /// `_use_mask_as_output`: a detector mask (288 logits) as a conditioning mask: the output is the binary mask
     /// (x20 - 10), the pointer comes from the interactive decoder prompted with the mask.
-    fn mask_object(&self, model: &Model, enc: &crate::model::Encoded, logits288: &Tensor) -> Result<(Tensor, Vec<f32>, f32)> {
+    /// `need_ptr`: false for a preview (the pointer, a host-side mask-prompt pass, is only needed for tracking).
+    fn mask_object(&self, model: &Model, enc: &crate::model::Encoded, logits288: &Tensor, need_ptr: bool) -> Result<(Tensor, Vec<f32>, f32)> {
         let dev = &model.dev;
         let lo = logits288.to_f32_vec(dev)?;
         // binary mask at 1008: bilinear of the logits > 0
@@ -258,11 +278,14 @@ impl VideoSession {
         )?;
         let m1008: Vec<f32> = up.to_f32_vec(dev)?.iter().map(|v| if *v > 0.0 { 1.0 } else { 0.0 }).collect();
         let appearing = m1008.iter().any(|v| *v > 0.0);
-        let dense = model.inter.mask_prompt(&m1008);
-        let o = model.inter.decode_with(&enc.sam, &[Point { x: 0.0, y: 0.0, label: -1 }], false, Some(&dense))?;
-        let (mut ptr, _) = model.tracker.cond_object(&o);
-        if !appearing {
-            ptr = model.tracker.no_obj_pointer(&ptr);
+        let mut ptr = Vec::new();
+        if need_ptr {
+            let dense = model.inter.mask_prompt(&m1008);
+            let o = model.inter.decode_with(&enc.sam, &[Point { x: 0.0, y: 0.0, label: -1 }], false, Some(&dense))?;
+            ptr = model.tracker.cond_object(&o).0;
+            if !appearing {
+                ptr = model.tracker.no_obj_pointer(&ptr);
+            }
         }
         // output mask: binary x 20 - 10 (low res: the area-average of the 1008 mask, as the official downsample)
         let bin: Vec<f32> = crate::image::resample_plane(&m1008, IMG, IMG, LOW, LOW).iter().map(|v| v * 20.0 - 10.0).collect();
@@ -271,78 +294,135 @@ impl VideoSession {
         Ok((Tensor::from_f32(dev, &bin, &[P])?, ptr, sc))
     }
 
-    /// One propagation pass over `order` (physical frame indices, pass step i+1 = order[i]) for every bucket at
-    /// once (each frame's backbone runs once); the conditioning frame is pass step 0. Returns per visited frame,
-    /// per bucket, the per-object logits (host).
-    #[allow(clippy::too_many_arguments)]
-    fn run_pass(&mut self, model: &Model, conds: &[(FrameMem, Vec<Vec<f32>>)], order: &[usize], label: &str, debug: bool, sticky: f32) -> Result<Vec<(usize, Vec<Vec<Vec<f32>>>)>> {
+    /// One propagation pass over `order` (physical frame indices; position k in the pass = order[k]) for every bucket
+    /// at once, so each frame's backbone runs once. A bucket starts at its first conditioning frame in the pass; at
+    /// its conditioning frames the output is the prompt's mask. Memory per frame, as upstream: the (up to 4) closest
+    /// conditioning frames, before or after, then the 6 most recent tracked frames; object pointers of the
+    /// conditioning frames and the last 15 frames. Returns per position: frame, per bucket Some((distance to the last
+    /// conditioning frame, per-object logits)) or None before the bucket starts.
+    #[allow(clippy::type_complexity)]
+    fn run_pass(&mut self, model: &Model, conds: &[BucketConds], order: &[usize], sticky: f32, progress: &mut Progress) -> Result<Vec<(usize, Vec<Option<(usize, Vec<Vec<f32>>)>>)>> {
         let num_frames = self.frames.len();
         let nb = conds.len();
+        let pos_of: HashMap<usize, usize> = order.iter().enumerate().map(|(k, f)| (*f, k)).collect();
+        // per bucket: conditioning position -> frame
+        let cpos: Vec<BTreeMap<usize, usize>> = conds.iter().map(|c| c.keys().filter_map(|f| pos_of.get(f).map(|k| (*k, *f))).collect()).collect();
+        let start: Vec<Option<usize>> = cpos.iter().map(|c| c.keys().next().copied()).collect();
         let mut mems: Vec<BTreeMap<usize, FrameMem>> = vec![BTreeMap::new(); nb];
-        let mut prev: Vec<Vec<Vec<f32>>> = conds.iter().map(|c| c.1.clone()).collect();
-        let mut out = Vec::new();
-        let t0 = Instant::now();
-        for (i, &t) in order.iter().enumerate() {
-            let step = i + 1;
-            let feats = self.feats(model, t)?;
+        let mut prev: Vec<Vec<Vec<f32>>> = vec![Vec::new(); nb];
+        let mut last_cond: Vec<usize> = vec![0; nb];
+        let mut out = Vec::with_capacity(order.len());
+        let mut dbg_steps = 0;
+        for (k, &t) in order.iter().enumerate() {
+            let mut feats: Option<FrameFeats> = None;
             let mut per_bucket = Vec::with_capacity(nb);
             for b in 0..nb {
-                let cond = &conds[b].0;
-                let n = conds[b].1.len();
-                let mut mem: Vec<(&FrameMem, i64)> = vec![(cond, step as i64)];
+                let Some(s) = start[b] else {
+                    per_bucket.push(None);
+                    continue;
+                };
+                if k < s {
+                    per_bucket.push(None);
+                    continue;
+                }
+                if let Some(f) = cpos[b].get(&k) {
+                    let lg = conds[b][f].1.clone();
+                    prev[b] = lg.clone();
+                    last_cond[b] = k;
+                    per_bucket.push(Some((0, lg)));
+                    continue;
+                }
+                if feats.is_none() {
+                    feats = Some(self.feats(model, t)?);
+                }
+                let fe = feats.as_ref().unwrap();
+                let n = conds[b].values().next().map(|c| c.1.len()).unwrap_or(0);
+                // conditioning frames: up to 4 closest (closest before, closest after, then by distance)
+                let all: Vec<usize> = cpos[b].keys().copied().collect();
+                let mut sel: Vec<usize> = Vec::new();
+                if all.len() <= 4 {
+                    sel = all.clone();
+                } else {
+                    if let Some(c) = all.iter().copied().filter(|c| *c < k).max() {
+                        sel.push(c);
+                    }
+                    if let Some(c) = all.iter().copied().filter(|c| *c >= k).min() {
+                        sel.push(c);
+                    }
+                    let mut rest: Vec<usize> = all.iter().copied().filter(|c| !sel.contains(c)).collect();
+                    rest.sort_by_key(|c| (*c as i64 - k as i64).abs());
+                    for c in rest {
+                        if sel.len() >= 4 {
+                            break;
+                        }
+                        sel.push(c);
+                    }
+                }
+                let cond_mem = |p: usize| -> Option<&FrameMem> { cpos[b].get(&p).map(|f| &conds[b][f].0) };
+                let mut mem: Vec<(&FrameMem, i64)> = sel.iter().map(|c| (cond_mem(*c).unwrap(), k as i64 - *c as i64)).collect();
                 for t_pos in 1..7usize {
                     let t_rel = 7 - t_pos;
-                    if step >= t_rel + 1 {
-                        if let Some(m) = mems[b].get(&(step - t_rel)) {
+                    if k >= t_rel {
+                        let p = k - t_rel;
+                        if let Some(m) = mems[b].get(&p) {
                             mem.push((m, t_pos as i64));
+                        } else if !sel.contains(&p) {
+                            if let Some(m) = cond_mem(p) {
+                                mem.push((m, t_pos as i64));
+                            }
                         }
                     }
                 }
-                let mut ptrs: Vec<(&[f32], usize)> = vec![(&cond.ptr, step)];
+                let mut ptrs: Vec<(&[f32], usize)> = sel.iter().map(|c| (cond_mem(*c).unwrap().ptr.as_slice(), (k as i64 - *c as i64).unsigned_abs() as usize)).collect();
                 for t_diff in 1..num_frames.min(16) {
-                    if t_diff > step {
+                    if t_diff > k {
                         break;
                     }
-                    if let Some(m) = mems[b].get(&(step - t_diff)) {
+                    let p = k - t_diff;
+                    if let Some(m) = mems[b].get(&p) {
                         ptrs.push((&m.ptr, t_diff));
+                    } else if !sel.contains(&p) {
+                        if let Some(m) = cond_mem(p) {
+                            ptrs.push((&m.ptr, t_diff));
+                        }
                     }
                 }
-                let pix = model.tracker.attend_memory(&feats, &mem, &ptrs, num_frames)?;
-                let (objs, ptr) = model.tracker.decode(&feats, &pix, n, if sticky > 0.0 { Some((&prev[b], sticky)) } else { None })?;
-                if debug && b == 0 && step <= 3 {
+                let pix = model.tracker.attend_memory(fe, &mem, &ptrs, num_frames)?;
+                let (objs, ptr) = model.tracker.decode(fe, &pix, n, if sticky > 0.0 && prev[b].len() == n { Some((&prev[b], sticky)) } else { None })?;
+                let dbg = b == 0 && dbg_steps < 3;
+                if dbg {
                     self.dbg(model, &format!("f{t}_pixmem"), &pix)?;
                     self.dbg_host(&format!("f{t}_objptr"), &[SLOTS, 256], &ptr)?;
                 }
                 let lrefs: Vec<&Tensor> = objs.iter().map(|o| &o.logits).collect();
                 let scores: Vec<f32> = objs.iter().map(|o| o.score).collect();
-                let maskmem = model.tracker.encode_memory(&feats, &lrefs, &scores, &vec![false; n], false)?;
-                if debug && b == 0 && step <= 3 {
+                let maskmem = model.tracker.encode_memory(fe, &lrefs, &scores, &vec![false; n], false)?;
+                if dbg {
                     self.dbg(model, &format!("f{t}_maskmem"), &maskmem)?;
+                    dbg_steps += 1;
                 }
-                mems[b].insert(step, FrameMem { maskmem, feat: feats.feat.clone(), ptr });
-                if step > 16 {
-                    mems[b].remove(&(step - 16));
+                mems[b].insert(k, FrameMem { maskmem, feat: fe.feat.clone(), ptr });
+                if k >= 16 {
+                    mems[b].remove(&(k - 16));
                 }
                 let mut lg = Vec::with_capacity(n);
                 for o in &objs {
                     lg.push(o.logits.to_f32_vec(&model.dev)?);
                 }
                 prev[b] = lg.clone();
-                per_bucket.push(lg);
+                per_bucket.push(Some((k - last_cond[b], lg)));
             }
             out.push((t, per_bucket));
-            if !crate::log::quiet() && (step % 10 == 0 || step == order.len()) {
-                eprintln!("  {label} {step}/{} ({:.0} ms/frame)", order.len(), ms(t0) / step as f64);
-            }
+            progress.tick();
         }
         Ok(out)
     }
 
-    /// Track the prompts through the clip and write DIR/<id>/<frame>.png. `single`: only the prompted frame.
+    /// Track the prompts through the clip and write DIR/<id>/<frame>.png. `single`: only the prompted frames.
     #[allow(clippy::too_many_arguments)]
     pub fn track(&mut self, model: &Model, prompts: &[ObjPrompt], threshold: f32, out: Option<&str>, opts: &WriteOpts, vopts: &TrackOpts, single: bool) -> Result<Value> {
         let t_all = Instant::now();
-        let Tracked { objs, frame: f, logits: merged } = self.compute(model, prompts, threshold, vopts, single)?;
+        let Tracked { objs, cond_frames, logits: merged } = self.compute(model, prompts, threshold, vopts, single)?;
         let nf = self.frames.len();
         let dir = match out {
             Some(o) => PathBuf::from(o),
@@ -352,7 +432,6 @@ impl VideoSession {
                 ip.with_file_name(format!("{stem}_masks"))
             }
         };
-        // write masks
         let t = Instant::now();
         let mut rec = base_record(prompts, threshold, &self.path, self.width, self.height, self.meta.as_ref());
         rec.set("frames", nf as u64).set("fps", self.fps).set("loop", vopts.looped).set("bidir", vopts.bidir).set("smooth", vopts.smooth as u64).set("sticky", vopts.sticky as f64);
@@ -360,131 +439,215 @@ impl VideoSession {
         info!("wrote {written} mask(s) in {:.0} ms; total {:.1} s", ms(t), t_all.elapsed().as_secs_f64());
         let mut jobjs = Vec::new();
         for (o_i, o) in objs.iter().enumerate() {
-            let m = model.mask_u8(&Tensor::from_f32(&model.dev, &merged[&f][o_i], &[P])?, self.width, self.height)?;
-            jobjs.push(json!({
+            let (f0, first) = o.conds.iter().next().unwrap();
+            let m = model.mask_u8(&Tensor::from_f32(&model.dev, &merged[f0][o_i], &[P])?, self.width, self.height)?;
+            let mut j = json!({
                 "id": o.id,
                 "label": o.label,
-                "score": (o.score as f64 * 1e4).round() / 1e4,
+                "score": (first.score as f64 * 1e4).round() / 1e4,
                 "bbox": mask_bbox(&m, self.width, self.height).map(|b| json!(b)).unwrap_or(Value::Null),
                 "frames": dir.join(o.id.to_string()).display().to_string(),
-            }));
+                "prompt_frames": o.conds.keys().collect::<Vec<_>>(),
+            });
+            if opts.multimask {
+                let mut cands = Vec::new();
+                for (f, c) in &o.conds {
+                    for (k, (score, lg)) in c.candidates.iter().enumerate() {
+                        let mut cm = model.mask_u8(lg, self.width, self.height)?;
+                        if opts.binary {
+                            cm.iter_mut().for_each(|v| *v = if *v >= 128 { 255 } else { 0 });
+                        }
+                        let p = dir.join(o.id.to_string()).join(format!("{f:05}_c{}.png", k + 1));
+                        let mut r = rec.clone();
+                        r.set("object", json!({"id": o.id, "label": o.label, "candidate": k, "score": score})).set("frame", *f as u64);
+                        let bytes = crate::image::gray_png_bytes(self.width, self.height, &cm, &[(genmeta::PNG_KEYWORD.to_string(), r.to_json())])?;
+                        std::fs::write(&p, bytes).with_context(|| format!("writing {}", p.display()))?;
+                        cands.push(json!({"frame": f, "mask": p.display().to_string(), "score": (*score as f64 * 1e4).round() / 1e4,
+                            "bbox": mask_bbox(&cm, self.width, self.height).map(|b| json!(b)).unwrap_or(Value::Null)}));
+                    }
+                }
+                if !cands.is_empty() {
+                    j["candidates"] = Value::Array(cands);
+                }
+            }
+            jobjs.push(j);
         }
-        Ok(json!({"width": self.width, "height": self.height, "frames": nf, "fps": self.fps, "model": MODEL_NAME, "prompt_frame": f, "objects": jobjs}))
+        let f0 = cond_frames.first().copied().unwrap_or(0);
+        Ok(json!({"width": self.width, "height": self.height, "frames": nf, "fps": self.fps, "model": MODEL_NAME, "prompt_frame": f0, "prompt_frames": cond_frames, "objects": jobjs}))
     }
 
-    /// Condition on the prompted frame, propagate, merge and smooth (no output written).
+    /// Condition on every prompted frame, propagate forward and backward, merge and smooth (nothing written).
     pub fn compute(&mut self, model: &Model, prompts: &[ObjPrompt], threshold: f32, vopts: &TrackOpts, single: bool) -> Result<Tracked> {
-        let frames: Vec<usize> = prompts.iter().map(|p| p.frame.unwrap_or(0)).collect();
-        let f = frames.first().copied().unwrap_or(0);
-        if frames.iter().any(|x| *x != f) {
-            bail!("all video prompts must be on the same frame for now (got frames {frames:?})");
-        }
         let nf = self.frames.len();
-        if f >= nf {
-            bail!("--frame {f} is past the end of the clip ({nf} frames)");
-        }
-        let t = Instant::now();
-        let (objs, feats) = self.condition(model, prompts, threshold, f)?;
-        info!("prompted frame {f}: {} object(s) in {:.0} ms", objs.len(), ms(t));
-        let n = objs.len();
-        let mut est: Estimates = BTreeMap::new();
-        let cond_logits: Vec<Vec<f32>> = objs.iter().map(|o| o.logits.to_f32_vec(&model.dev)).collect::<Result<_>>()?;
-        est.entry(f).or_default().push((0, cond_logits));
-        if n > 0 && !single {
-            // buckets: the official demo gives every clicked object its own bucket (independent memory) and
-            // multiplexes a batch of detector instances 16 to a bucket
-            let mut buckets: Vec<Vec<usize>> = Vec::new();
-            for (i, o) in objs.iter().enumerate() {
-                match buckets.last_mut() {
-                    Some(b) if o.concept && objs[b[0]].concept && objs[b[0]].label == o.label && b.len() < SLOTS => b.push(i),
-                    _ => buckets.push(vec![i]),
-                }
+        // normalize: default frame 0; entries for the same object on the same frame are merged (clicks add up)
+        let mut entries: BTreeMap<usize, Vec<ObjPrompt>> = BTreeMap::new();
+        for p in prompts {
+            let f = p.frame.unwrap_or(0);
+            if f >= nf {
+                bail!("frame {f} is past the end of the clip ({nf} frames)");
             }
-            // the prompted frame's memory: non-overlap across every object, then encoded per bucket
-            let lrefs: Vec<&Tensor> = objs.iter().map(|o| &o.logits).collect();
-            let hi = model.tracker.hires(&lrefs, true)?;
-            let fwd: Vec<usize> = if vopts.looped { (1..nf).map(|k| (f + k) % nf).collect() } else { (f + 1..nf).collect() };
-            let bwd: Vec<usize> = if vopts.looped { (1..nf).map(|k| (f + nf - k) % nf).collect() } else { (0..f).rev().collect() };
-            let mut conds = Vec::new();
-            for (bi, b) in buckets.iter().enumerate() {
-                let scores: Vec<f32> = b.iter().map(|i| objs[*i].obj_score).collect();
-                let rows = hi.rows(b[0], b.len());
-                let maskmem = model.tracker.encode_hires(&feats, &rows, &scores, &vec![true; b.len()])?;
-                let mut ptr = vec![0f32; SLOTS * 256];
-                for (s, i) in b.iter().enumerate() {
-                    ptr[s * 256..(s + 1) * 256].copy_from_slice(&objs[*i].ptr);
-                }
-                if bi == 0 {
-                    self.dbg(model, "c0_maskmem", &maskmem)?;
-                    self.dbg_host("c0_objptr", &[SLOTS, 256], &ptr)?;
-                }
-                let cl: Vec<Vec<f32>> = b.iter().map(|i| est[&f][0].1[*i].clone()).collect();
-                conds.push((FrameMem { maskmem, feat: feats.feat.clone(), ptr }, cl));
-            }
-            if buckets.len() > 1 {
-                info!("{} objects in {} tracker buckets", n, buckets.len());
-            }
-            for (order, label, on) in [(&fwd, "forward", true), (&bwd, "backward", vopts.bidir || vopts.looped)] {
-                if !on || order.is_empty() {
+            let list = entries.entry(f).or_default();
+            let geo = !p.points.is_empty() || p.bbox.is_some();
+            if let (Some(id), true) = (p.obj, geo) {
+                if let Some(e) = list.iter_mut().find(|e| e.obj == Some(id) && (!e.points.is_empty() || e.bbox.is_some())) {
+                    e.points.extend(p.points.iter().cloned());
+                    if p.bbox.is_some() {
+                        e.bbox = p.bbox.clone();
+                    }
+                    if e.text.is_none() {
+                        e.text = p.text.clone();
+                    }
+                    if p.candidate.is_some() {
+                        e.candidate = p.candidate;
+                    }
                     continue;
                 }
-                for (i, (t, per_bucket)) in self.run_pass(model, &conds, order, label, true, vopts.sticky)?.into_iter().enumerate() {
-                    let key = i + 1 + if label == "backward" { 1_000_000 } else { 0 };
-                    let mut all = vec![Vec::new(); n];
-                    for (b, lg) in buckets.iter().zip(per_bucket) {
-                        for (k, oi) in b.iter().enumerate() {
-                            all[*oi] = lg[k].clone();
-                        }
+            }
+            let mut q = p.clone();
+            q.frame = Some(f);
+            list.push(q);
+        }
+        let mut next_id = prompts.iter().filter_map(|p| p.obj).max().unwrap_or(0) + 1;
+        let mut next_group = 0usize;
+        let mut objs: Vec<VObj> = Vec::new();
+        let mut feats_at: BTreeMap<usize, FrameFeats> = BTreeMap::new();
+        for (&f, list) in &entries {
+            let t = Instant::now();
+            let (found, feats) = self.condition(model, list, threshold, f, &mut next_id, &mut next_group, !single)?;
+            info!("prompted frame {f}: {} object(s) in {:.0} ms", found.len(), ms(t));
+            feats_at.insert(f, feats);
+            for (id, label, group, entry) in found {
+                match objs.iter_mut().find(|o| o.id == id) {
+                    Some(o) => {
+                        // another prompted frame for a known object: it gets its own bucket (its own memory)
+                        o.group = None;
+                        o.conds.insert(f, entry);
                     }
-                    est.entry(t).or_default().push((key, all));
+                    None => objs.push(VObj { id, label, group, conds: BTreeMap::from([(f, entry)]) }),
                 }
             }
-            // pass keys encode the direction; turn them back into distances
-            for list in est.values_mut() {
-                for (d, _) in list.iter_mut() {
-                    if *d >= 1_000_000 {
-                        *d -= 1_000_000;
+        }
+        let n = objs.len();
+        let cond_frames: Vec<usize> = feats_at.keys().copied().collect();
+        // the prompt masks are the outputs of their frames
+        let mut est: BTreeMap<usize, Vec<Vec<(usize, Vec<f32>)>>> = BTreeMap::new();
+        for (oi, o) in objs.iter().enumerate() {
+            for (f, c) in &o.conds {
+                est.entry(*f).or_insert_with(|| vec![Vec::new(); n])[oi].push((0, c.logits.to_f32_vec(&model.dev)?));
+            }
+        }
+        if n > 0 && !single {
+            // buckets: every clicked / multi-frame object alone (own memory, as the official demo does); the
+            // instances of one concept prompt multiplexed, 16 to a bucket
+            let mut buckets: Vec<Vec<usize>> = Vec::new();
+            for (i, o) in objs.iter().enumerate() {
+                match buckets.iter_mut().find(|b| o.group.is_some() && objs[b[0]].group == o.group && b.len() < SLOTS) {
+                    Some(b) => b.push(i),
+                    None => buckets.push(vec![i]),
+                }
+            }
+            if buckets.len() > 1 {
+                info!("{n} objects in {} tracker buckets", buckets.len());
+            }
+            // conditioning memories: per prompted frame, non-overlap across the objects prompted there, then per bucket
+            let mut bconds: Vec<BucketConds> = vec![BTreeMap::new(); buckets.len()];
+            let mut first_dbg = true;
+            for (&f, feats) in &feats_at {
+                let here: Vec<usize> = (0..n).filter(|i| objs[*i].conds.contains_key(&f)).collect();
+                let lrefs: Vec<&Tensor> = here.iter().map(|i| &objs[*i].conds[&f].logits).collect();
+                let hi = model.tracker.hires(&lrefs, true)?;
+                let p_hi = IMG * IMG;
+                for (bi, b) in buckets.iter().enumerate() {
+                    if !b.iter().all(|i| objs[*i].conds.contains_key(&f)) {
+                        continue;
+                    }
+                    let rows = Tensor::new(&model.dev, DType::F32, &[b.len(), p_hi])?;
+                    for (r, i) in b.iter().enumerate() {
+                        let src = here.iter().position(|h| h == i).unwrap();
+                        model.dev.dtod(rows.ptr + (r * p_hi * 4) as u64, hi.ptr + (src * p_hi * 4) as u64, p_hi * 4)?;
+                    }
+                    let scores: Vec<f32> = b.iter().map(|i| objs[*i].conds[&f].obj_score).collect();
+                    let maskmem = model.tracker.encode_hires(feats, &rows, &scores, &vec![true; b.len()])?;
+                    let mut ptr = vec![0f32; SLOTS * 256];
+                    for (s, i) in b.iter().enumerate() {
+                        ptr[s * 256..(s + 1) * 256].copy_from_slice(&objs[*i].conds[&f].ptr);
+                    }
+                    if bi == 0 && first_dbg {
+                        self.dbg(model, "c0_maskmem", &maskmem)?;
+                        self.dbg_host("c0_objptr", &[SLOTS, 256], &ptr)?;
+                        first_dbg = false;
+                    }
+                    let lg: Vec<Vec<f32>> = b.iter().map(|i| est[&f][*i][0].1.clone()).collect();
+                    bconds[bi].insert(f, (FrameMem { maskmem, feat: feats.feat.clone(), ptr }, lg));
+                }
+            }
+            let (fmin, fmax) = (cond_frames[0], *cond_frames.last().unwrap());
+            let fwd: Vec<usize> = if vopts.looped { (0..nf).map(|k| (fmin + k) % nf).collect() } else { (fmin..nf).collect() };
+            let bwd: Vec<usize> = if vopts.looped { (0..nf).map(|k| (fmax + nf - k) % nf).collect() } else { (0..=fmax).rev().collect() };
+            let do_bwd = vopts.bidir || vopts.looped;
+            let mut progress = Progress::new(fwd.len() + if do_bwd { bwd.len() } else { 0 });
+            for (order, on) in [(&fwd, true), (&bwd, do_bwd)] {
+                if !on {
+                    continue;
+                }
+                for (t, per_bucket) in self.run_pass(model, &bconds, order, vopts.sticky, &mut progress)? {
+                    for (b, r) in buckets.iter().zip(per_bucket) {
+                        let Some((d, lg)) = r else { continue };
+                        if d == 0 {
+                            continue; // the prompt mask itself, already recorded
+                        }
+                        let slot = est.entry(t).or_insert_with(|| vec![Vec::new(); n]);
+                        for (k, oi) in b.iter().enumerate() {
+                            slot[*oi].push((d, lg[k].clone()));
+                        }
                     }
                 }
             }
         }
-        // merge the estimates of each frame (weights fall off with the distance to the prompt)
+        // merge each frame's estimates: a prompt mask wins; otherwise weights fall off with the distance to the
+        // conditioning frame each estimate was propagated from
         let mut merged: BTreeMap<usize, Vec<Vec<f32>>> = BTreeMap::new();
-        for (t, list) in &est {
-            if list.len() == 1 {
-                merged.insert(*t, list[0].1.clone());
-                continue;
-            }
-            let ws: Vec<f32> = list.iter().map(|(d, _)| 1.0 / (1.0 + *d as f32)).collect();
-            let wsum: f32 = ws.iter().sum();
-            let mut m = vec![vec![0f32; P]; n];
-            for ((_, lg), w) in list.iter().zip(&ws) {
-                for o in 0..n {
-                    // absent objects carry -1024: clamp so one absent estimate does not swamp a present one
-                    for (acc, v) in m[o].iter_mut().zip(&lg[o]) {
-                        *acc += w / wsum * v.max(-32.0);
+        for (t, per_obj) in &est {
+            let mut m = Vec::with_capacity(n);
+            for list in per_obj {
+                if list.is_empty() {
+                    m.push(vec![crate::interactive::NO_OBJ_SCORE; P]);
+                } else if let Some((_, lg)) = list.iter().find(|(d, _)| *d == 0) {
+                    m.push(lg.clone());
+                } else if list.len() == 1 {
+                    m.push(list[0].1.clone());
+                } else {
+                    let ws: Vec<f32> = list.iter().map(|(d, _)| 1.0 / (1.0 + *d as f32)).collect();
+                    let wsum: f32 = ws.iter().sum();
+                    let mut acc = vec![0f32; P];
+                    for ((_, lg), w) in list.iter().zip(&ws) {
+                        // absent objects carry -1024: clamp so one absent estimate does not swamp a present one
+                        for (a, v) in acc.iter_mut().zip(lg) {
+                            *a += w / wsum * v.max(-32.0);
+                        }
                     }
+                    m.push(acc);
                 }
             }
             merged.insert(*t, m);
         }
         if vopts.smooth > 1 && merged.len() > 2 {
-            merged = smooth(&merged, n, vopts.smooth, vopts.looped, nf, f);
+            merged = smooth(&merged, n, vopts.smooth, vopts.looped, nf, &cond_frames);
         }
-        Ok(Tracked { objs, frame: f, logits: merged })
+        Ok(Tracked { objs, cond_frames, logits: merged })
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn write(&self, model: &Model, objs: &[CondObj], merged: &BTreeMap<usize, Vec<Vec<f32>>>, dir: &Path, opts: &WriteOpts, rec: &Record, single: bool) -> Result<usize> {
+    fn write(&self, model: &Model, objs: &[VObj], merged: &BTreeMap<usize, Vec<Vec<f32>>>, dir: &Path, opts: &WriteOpts, rec: &Record, single: bool) -> Result<usize> {
         let (w, h) = (self.width, self.height);
         let nf = self.frames.len();
         for o in objs {
             std::fs::create_dir_all(dir.join(o.id.to_string())).with_context(|| format!("creating {}", dir.display()))?;
         }
         let empty = vec![0u8; w * h];
-        let mut jobs: Vec<(PathBuf, Vec<u8>, usize, String)> = Vec::new();
+        let mut jobs: Vec<(PathBuf, Vec<u8>, String)> = Vec::new();
         let mut written = 0;
-        let flush = |jobs: &mut Vec<(PathBuf, Vec<u8>, usize, String)>| -> Result<()> {
+        let flush = |jobs: &mut Vec<(PathBuf, Vec<u8>, String)>| -> Result<()> {
             let chunk = std::mem::take(jobs);
             let nt = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).min(12);
             let per = (chunk.len() + nt - 1) / nt.max(1);
@@ -492,8 +655,7 @@ impl VideoSession {
                 let mut hs = Vec::new();
                 for part in chunk.chunks(per.max(1)) {
                     hs.push(sc.spawn(move || -> Result<()> {
-                        for (path, m, t, meta) in part {
-                            let _ = t;
+                        for (path, m, meta) in part {
                             let text = vec![(genmeta::PNG_KEYWORD.to_string(), meta.clone())];
                             let bytes = crate::image::gray_png_bytes(w, h, m, &text)?;
                             std::fs::write(path, bytes).with_context(|| format!("writing {}", path.display()))?;
@@ -521,7 +683,7 @@ impl VideoSession {
                 }
                 let mut r = rec.clone();
                 r.set("object", json!({"id": o.id, "label": o.label})).set("frame", t as u64);
-                jobs.push((dir.join(o.id.to_string()).join(format!("{t:05}.png")), m, t, r.to_json()));
+                jobs.push((dir.join(o.id.to_string()).join(format!("{t:05}.png")), m, r.to_json()));
                 written += 1;
             }
             if jobs.len() >= 64 {
@@ -533,13 +695,36 @@ impl VideoSession {
     }
 }
 
-/// Triangular temporal filter of radius n/2 over each object's logits (wrapping when looped); the prompted
-/// frame is kept as is.
-fn smooth(m: &BTreeMap<usize, Vec<Vec<f32>>>, nobj: usize, n: usize, looped: bool, nf: usize, keep: usize) -> BTreeMap<usize, Vec<Vec<f32>>> {
+/// Progress of a tracking run on stderr, one line per frame step: `track 37/124` (also when stderr is not a
+/// terminal, so callers can parse `(\d+)/(\d+)` from the last line). Silenced by -q.
+pub struct Progress {
+    done: usize,
+    total: usize,
+    t0: Instant,
+}
+impl Progress {
+    fn new(total: usize) -> Progress {
+        let p = Progress { done: 0, total, t0: Instant::now() };
+        if !crate::log::quiet() {
+            eprintln!("track 0/{total}");
+        }
+        p
+    }
+    fn tick(&mut self) {
+        self.done += 1;
+        if !crate::log::quiet() {
+            eprintln!("track {}/{} ({:.0} ms/frame)", self.done, self.total, ms(self.t0) / self.done as f64);
+        }
+    }
+}
+
+/// Triangular temporal filter of radius n/2 over each object's logits (wrapping when looped); prompted frames are
+/// kept as they are.
+fn smooth(m: &BTreeMap<usize, Vec<Vec<f32>>>, nobj: usize, n: usize, looped: bool, nf: usize, keep: &[usize]) -> BTreeMap<usize, Vec<Vec<f32>>> {
     let r = (n / 2).max(1) as i64;
     let mut out = BTreeMap::new();
     for (&t, cur) in m {
-        if t == keep {
+        if keep.contains(&t) {
             out.insert(t, cur.clone());
             continue;
         }
@@ -583,7 +768,7 @@ pub fn run_cli(cli: &Cli, input: &str, prompts: &[ObjPrompt], meta: Option<&Valu
     let mut sess = VideoSession::open(&model, input)?;
     sess.meta = meta.cloned();
     let vopts = TrackOpts { looped: cli.looped, bidir: !cli.no_bidir, smooth: cli.smooth, sticky: cli.sticky };
-    let r = sess.track(&model, prompts, cli.threshold, cli.out.as_deref(), &WriteOpts { alpha: cli.alpha, binary: cli.binary }, &vopts, false)?;
+    let r = sess.track(&model, prompts, cli.threshold, cli.out.as_deref(), &WriteOpts { alpha: cli.alpha, binary: cli.binary, multimask: cli.multimask }, &vopts, false)?;
     if cli.json {
         println!("{r}");
     } else {
