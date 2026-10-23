@@ -23,6 +23,7 @@ package main
 //   POST   /api/scenes/{id}/render {format}          export video | still beside the source
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -35,6 +36,7 @@ func RegisterSceneRoutes(mux *http.ServeMux, deps *Dependencies) {
 	mux.HandleFunc("/api/scenes", renderer.ApplyMiddlewares(scenesHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/scenes/{id}", renderer.ApplyMiddlewares(sceneHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/scenes/{id}/render", renderer.ApplyMiddlewares(sceneRenderHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/scenes/{id}/segment", renderer.ApplyMiddlewares(sceneSegmentHandler(), renderer.RoleAdmin))
 	mux.HandleFunc("/api/scenes/{id}/layers/{lid}/{action}", renderer.ApplyMiddlewares(sceneLayerActionHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/scenes/{id}/layers/{lid}/versions", renderer.ApplyMiddlewares(sceneKeepOnlyHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/scenes/{id}/layers/{lid}/versions/{n}", renderer.ApplyMiddlewares(sceneVersionHandler(deps), renderer.RoleAdmin))
@@ -197,6 +199,28 @@ func sceneKeepOnlyHandler(deps *Dependencies) http.HandlerFunc {
 	}
 }
 
+// sceneSegmentHandler answers one pick (POST tasks.SegmentRequest): the
+// objects loki-segment finds, as masks the editor adds to a layer.
+func sceneSegmentHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Use POST", http.StatusMethodNotAllowed)
+			return
+		}
+		var req tasks.SegmentRequest
+		if err := readJSONBody(r, &req); err != nil {
+			sceneError(w, err)
+			return
+		}
+		res, err := tasks.SegmentScene(r.Context(), r.PathValue("id"), req)
+		if err != nil {
+			sceneError(w, err)
+			return
+		}
+		writeJSON(w, res)
+	}
+}
+
 func sceneVersionActionHandler(deps *Dependencies) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -229,6 +253,19 @@ func sceneVersionActionHandler(deps *Dependencies) http.HandlerFunc {
 				return
 			}
 			writeJSON(w, map[string]any{"dataUrl": url, "region": region})
+		case "track":
+			var req struct {
+				Prompts json.RawMessage `json:"prompts"`
+			}
+			if err := readJSONBody(r, &req); err != nil {
+				sceneError(w, err)
+				return
+			}
+			s, err := tasks.TrackVersion(deps.Queue, id, lid, n, req.Prompts)
+			sceneReply(w, s, err)
+		case "untrack":
+			s, err := tasks.ClearTrack(deps.Queue, id, lid, n)
+			sceneReply(w, s, err)
 		case "motion":
 			url, region, err := tasks.VersionMotionMap(r.Context(), id, lid, n)
 			if err != nil {

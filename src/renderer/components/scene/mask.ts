@@ -29,7 +29,7 @@ export type MaskOp = (
   | { t: 'stroke'; pts: number[]; r: number; h?: number }
   | { t: 'image'; src: string; x: number; y: number; w: number; h: number; bx: number; by: number; bw: number; bh: number }
   | { t: 'layer'; id: string }
-) & { erase?: boolean; keep?: boolean; off?: boolean; c?: string; a?: number; fit?: string };
+) & { erase?: boolean; keep?: boolean; off?: boolean; c?: string; a?: number; fit?: string; label?: string };
 
 /** Whole-mask settings, applied after the ops in this order: expand (px; < 0 chokes), invert, feather, opacity. */
 export interface MaskOpts {
@@ -609,7 +609,8 @@ export function opLabel(op: MaskOp, layerName?: (id: string) => string | null): 
     case 'stroke':
       return op.h !== undefined && op.h < 1 ? 'Soft brush' : 'Brush';
     case 'image':
-      return op.fit ? 'Fitted to the result' : 'Painted piece';
+      if (op.fit) return 'Fitted to the result';
+      return op.label ? `Selected · ${op.label}` : 'Painted piece';
     case 'layer': {
       const name = layerName?.(op.id);
       return name === null || name === undefined ? 'Layer (deleted)' : `Layer · ${name}`;
@@ -643,4 +644,9 @@ export function motionRegion(r: Rect, frameW: number, frameH: number): Rect {
     }
   }
   return r;
+}
+
+/** A picked object (its mask covering rect, its box; frame pixels) as a mask piece, labelled with what it is. */
+export function pickedOp(mask: string, rect: Rect, bbox: Rect, label: string, erase = false): MaskOp {
+  return { t: 'image', src: mask, x: rect.x, y: rect.y, w: rect.w, h: rect.h, bx: bbox.x, by: bbox.y, bw: bbox.w, bh: bbox.h, label, erase: erase || undefined };
 }

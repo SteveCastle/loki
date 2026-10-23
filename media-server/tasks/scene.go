@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"image"
+	"image/png"
 	_ "image/png"
 	"math"
 	"os"
@@ -121,8 +122,10 @@ type SceneVersion struct {
 	// Inputs are the images the engine was given: the crop (<image1> /
 	// <Picture 1>), then the references in order. Empty for versions from
 	// before they were recorded, and for loops and re-finishes.
-	Inputs  []string  `json:"inputs,omitempty"`
-	Created time.Time `json:"created"`
+	Inputs []string `json:"inputs,omitempty"`
+	// Track is a motion version's roto: a matte tracked through its clip.
+	Track   *SceneTrack `json:"track,omitempty"`
+	Created time.Time   `json:"created"`
 }
 
 // SceneJob is a layer's generation in flight (server-owned).
@@ -625,6 +628,9 @@ func reconcileScene(q *jobqueue.Queue, s *Scene) bool {
 			l.Queued = nil
 		}
 	}
+	if reconcileTracks(q, s) {
+		changed = true
+	}
 	if r := s.Render; r != nil && (r.State == "pending" || r.State == "in_progress" || r.State == "paused") {
 		job, lines, ok := q.JobSnapshot(r.JobID, 3)
 		switch {
@@ -914,6 +920,10 @@ type sceneGraphLayer struct {
 	// sceneLayerTiming, which mutes a layer by leaving Audio off).
 	Offset float64
 	Volume float64
+	// Matte (motion): a folder of per-clip-frame mattes (00000.png ...) at
+	// MatteFPS, multiplied into the mask: the version's roto.
+	Matte    string
+	MatteFPS string
 }
 
 // sceneGraphArgs builds the ffmpeg inputs + filter graph compositing layers
@@ -921,6 +931,12 @@ type sceneGraphLayer struct {
 // stills and motion clips for dur seconds at sceneFPS. crop (non-empty)
 // crops the result. Returns the args up to (not including) the output path.
 func sceneGraphArgs(base string, w, h int, layers []sceneGraphLayer, video bool, dur float64, crop SceneRect) []string {
+	return sceneGraph(base, w, h, layers, video, dur, crop, false)
+}
+
+// sceneGraph is sceneGraphArgs; keepAlpha (one frame only) keeps the result's
+// alpha, for flattening layers onto a transparent base (collapseStills).
+func sceneGraph(base string, w, h int, layers []sceneGraphLayer, video bool, dur float64, crop SceneRect, keepAlpha bool) []string {
 	var args []string
 	still := func(p string) {
 		if video {
@@ -951,15 +967,41 @@ func sceneGraphArgs(base string, w, h int, layers []sceneGraphLayer, video bool,
 		ki := in + 1
 		still(l.Mask)
 		in += 2
+		// The roto: the clip's matte sequence, looped and phased like the clip.
+		ti := -1
+		if l.Motion && l.Matte != "" {
+			ti = in
+			if video {
+				args = append(args, "-stream_loop", "-1")
+				if ss := clipPhase(l); ss > 0.001 {
+					args = append(args, "-ss", strconv.FormatFloat(ss, 'f', 4, 64))
+				}
+			}
+			fps := l.MatteFPS
+			if fps == "" {
+				fps = strconv.Itoa(sceneFPS)
+			}
+			args = append(args, "-framerate", fps, "-i", filepath.Join(l.Matte, "%05d.png"))
+			in++
+		}
 		r := l.Region
 		retime := ""
 		if l.Motion && video && l.Speed > 0 && math.Abs(l.Speed-1) > 1e-4 {
 			retime = fmt.Sprintf("setpts=PTS*%.6f,", l.Speed)
 		}
+		alpha := fmt.Sprintf("a%d", i)
 		f = append(f,
 			fmt.Sprintf("[%d:v]%sscale=%d:%d:flags=lanczos,setsar=1,format=rgba[c%d]", mi, retime, r.W, r.H, i),
-			fmt.Sprintf("[%d:v]format=rgba,alphaextract,scale=%d:%d,crop=%d:%d:%d:%d,setsar=1[a%d]", ki, w, h, r.W, r.H, r.X, r.Y, i),
-			fmt.Sprintf("[c%d][a%d]alphamerge[l%d]", i, i, i),
+			fmt.Sprintf("[%d:v]format=rgba,alphaextract,scale=%d:%d,crop=%d:%d:%d:%d,setsar=1[a%d]", ki, w, h, r.W, r.H, r.X, r.Y, i))
+		if ti >= 0 {
+			// Mask times matte: what the static mask lets through, only where the roto keeps.
+			f = append(f,
+				fmt.Sprintf("[%d:v]%sformat=gray,scale=%d:%d,setsar=1[t%d]", ti, retime, r.W, r.H, i),
+				fmt.Sprintf("[a%d][t%d]blend=all_mode=multiply[am%d]", i, i, i))
+			alpha = fmt.Sprintf("am%d", i)
+		}
+		f = append(f,
+			fmt.Sprintf("[c%d][%s]alphamerge[l%d]", i, alpha, i),
 			fmt.Sprintf("[b%d][l%d]overlay=%d:%d:format=auto:eof_action=repeat[b%d]", i, i, r.X, r.Y, i+1),
 		)
 		if video && l.Motion && l.Audio {
@@ -986,7 +1028,11 @@ func sceneGraphArgs(base string, w, h int, layers []sceneGraphLayer, video bool,
 	if video {
 		f = append(f, last+tail+fmt.Sprintf("fps=%d,scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p[vout]", sceneFPS))
 	} else {
-		f = append(f, last+tail+"format=rgb24[vout]")
+		format := "rgb24"
+		if keepAlpha {
+			format = "rgba"
+		}
+		f = append(f, last+tail+"format="+format+"[vout]")
 	}
 	maps := []string{"-map", "[vout]"}
 	if len(audio) == 1 {
@@ -1038,6 +1084,13 @@ func sceneGraphLayers(dir string, w, h int, layers []*SceneLayer, stillsOnly boo
 			return nil, err
 		}
 		g := sceneGraphLayer{Media: v.Path, Motion: l.Kind == SceneKindMotion, Region: v.Region, Mask: mask, Duration: v.Duration, Speed: 1}
+		// The roto, unless the editor turned it off for this layer.
+		if t := v.Track; g.Motion && t != nil && t.State == "completed" && t.Frames > 0 && l.Options["matte"] != false {
+			g.Matte = t.Dir
+			if info, err := probeVideoInfo(context.Background(), v.Path); err == nil {
+				g.MatteFPS = info.FPS
+			}
+		}
 		if g.Motion {
 			g.Audio = v.Audio && sceneLayerSound(l.Options)
 			t := sceneLayerTiming(l.Options)
@@ -1048,6 +1101,71 @@ func sceneGraphLayers(dir string, w, h int, layers []*SceneLayer, stillsOnly boo
 		out = append(out, g)
 	}
 	return out, nil
+}
+
+// collapseStills flattens each run of consecutive still (and paint) graph
+// layers to one frame for a video export: the run below the first motion
+// layer becomes the base, every later run one full-frame layer through its
+// own alpha. A still layer is otherwise two endlessly looped full-frame image
+// inputs (picture and mask), and with a dozen of them the inputs outran the
+// graph without bound (an export reached 42 GB before it was killed).
+func collapseStills(ctx context.Context, dir, base string, w, h int, layers []sceneGraphLayer) (string, []sceneGraphLayer, error) {
+	var out, run []sceneGraphLayer
+	n := 0
+	flatten := func() error {
+		if len(run) == 0 {
+			return nil
+		}
+		n++
+		src := base
+		if len(out) > 0 {
+			// Above a motion layer: onto nothing, keeping the alpha.
+			src = filepath.Join(dir, "render-clear.png")
+			if !fileExists(src) {
+				if err := writeClearPNG(src, w, h); err != nil {
+					return err
+				}
+			}
+		}
+		dst := filepath.Join(dir, fmt.Sprintf("render-stills-%d.png", n))
+		if err := runSceneFFmpeg(ctx, append([]string{"-y"}, append(sceneGraph(src, w, h, run, false, 0, SceneRect{}, len(out) > 0), dst)...)); err != nil {
+			return err
+		}
+		if len(out) == 0 {
+			base = dst
+		} else {
+			out = append(out, sceneGraphLayer{Media: dst, Mask: dst, Region: SceneRect{W: w, H: h}, Speed: 1})
+		}
+		run = nil
+		return nil
+	}
+	for _, g := range layers {
+		if g.Motion {
+			if err := flatten(); err != nil {
+				return "", nil, err
+			}
+			out = append(out, g)
+			continue
+		}
+		run = append(run, g)
+	}
+	if err := flatten(); err != nil {
+		return "", nil, err
+	}
+	return base, out, nil
+}
+
+// writeClearPNG writes a fully transparent w×h PNG.
+func writeClearPNG(path string, w, h int) error {
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	if err := png.Encode(f, image.NewNRGBA(image.Rect(0, 0, w, h))); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
 }
 
 // sceneBelow names the stills a layer above layers is generated from, bottom
@@ -2094,6 +2212,12 @@ func sceneRenderTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 	if err != nil {
 		return fail(err.Error(), err)
 	}
+	base := s.Base
+	if format != "still" {
+		if base, layers, err = collapseStills(ctx, dir, s.Base, s.Width, s.Height, layers); err != nil {
+			return fail("flattening the still layers: "+err.Error(), err)
+		}
+	}
 	if len(layers) == 0 {
 		q.PushJobStdout(j.ID, tag+": no generated layers yet; exporting the base frame")
 	}
@@ -2123,7 +2247,7 @@ func sceneRenderTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 			}
 		}
 	}
-	args := sceneGraphArgs(s.Base, s.Width, s.Height, layers, video, dur, SceneRect{})
+	args := sceneGraphArgs(base, s.Width, s.Height, layers, video, dur, SceneRect{})
 	if video {
 		q.PushJobStdout(j.ID, fmt.Sprintf("%s: %d layer(s), %.2fs at %d fps -> %s", tag, len(layers), dur, sceneFPS, filepath.Base(output)))
 	} else {

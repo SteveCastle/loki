@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { invoke, isElectron, send } from '../../platform';
+import { invoke, isElectron, mediaUrl, send } from '../../platform';
 import { clampRect, imageOp, motionRegion, maskImagesReady, opsDeep, preloadMaskImages, rasterizeLayerMask, rasterizeProtect, regionAround, type MaskLookup, type MaskOp, type MaskOpts, type Rect } from './mask';
 import {
   generationsInFlight,
@@ -14,9 +14,12 @@ import {
   type Scene,
   type SceneLayer,
   type SceneSummary,
+  type SegPrompt,
   versionStale,
 } from './scene-api';
-import Stage, { isTyping, type MaskView, type Tool } from './stage';
+import Stage, { isTyping, type MaskView, type RotoView, type Tool } from './stage';
+import { pickOps, usePick, type PickTarget } from './pick';
+import { PickBar, RotoBar } from './pick-bar';
 import MaskPanel from './mask-panel';
 import PaintPanel from './paint-panel';
 import { Inspector, KEY_GENERATE, KEY_UNDO, LayerList } from './panel';
@@ -35,6 +38,12 @@ import { hasVoice, newRefId, refTokens, remapRefTokens, tokenIssues, type RefKin
 
 const TOOLS: Array<{ id: Tool; key: string; label: string; title: string }> = [
   { id: 'select', key: 'V', label: 'Select', title: 'Select a layer by clicking its area; drag to pan' },
+  {
+    id: 'pick',
+    key: 'Q',
+    label: 'Select object',
+    title: 'Click an object to select it (Alt-click: not this), drag a box round it, or find it by name; Tab: part / object / whole; Enter adds it to the mask',
+  },
   { id: 'box', key: 'B', label: 'Box', title: 'Box an area (Shift = square, Alt = subtract)' },
   { id: 'brush', key: 'P', label: 'Brush', title: 'Paint an area ([ and ] change the size, Alt = erase)' },
   { id: 'lasso', key: 'L', label: 'Lasso', title: 'Draw around an area (Alt = subtract)' },
@@ -70,6 +79,13 @@ function ToolIcon({ id }: { id: Tool }) {
       return (
         <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden>
           <path d="M9 3.5c3.6 0 6 1.8 6 4s-2.4 4-6 4-6-1.8-6-4 2.4-4 6-4zM5.5 10.5c-.5 1.3-.2 2.5.8 3.2s1 1.8.2 2.3" {...p} />
+        </svg>
+      );
+    case 'pick':
+      return (
+        <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden>
+          <path d="M3 15l7-7M10.5 3v2.5M14.5 7H12M13.3 4.2l-1.8 1.8M7 4.2l1.8 1.8" {...p} />
+          <circle cx="10.5" cy="7.5" r="1.2" {...p} />
         </svg>
       );
     case 'pen':
@@ -412,6 +428,7 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
       mutate((d) => ({ ...d, layers: [...d.layers, layer] }));
       setSelectedId(layer.id);
       setTool(kind === 'still' ? 'box' : 'brush');
+      return layer.id;
     },
     [mutate]
   );
@@ -726,6 +743,164 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
     [doc.id, serverAction]
   );
 
+  // ---- selecting objects (Select tool) and roto ------------------------------------------
+
+  const picker = usePick(doc.id, useCallback((msg: string) => flash('error', `Could not select: ${msg}`), [flash]));
+  const { pick } = picker;
+  // A roto: picking on a motion version's clip, frame by frame, then tracking it.
+  const [roto, setRoto] = useState<{ layerId: string; n: number; frame: number } | null>(null);
+  const [rotoPrompts, setRotoPrompts] = useState<SegPrompt[]>([]);
+  const [showMatte, setShowMatte] = useState(true);
+  const rotoLayer = roto ? doc.layers.find((l) => l.id === roto.layerId) || null : null;
+  const rotoVersion = roto && rotoLayer ? rotoLayer.versions[roto.n] || null : null;
+  const ROTO_FPS = 24;
+  const rotoFrames = rotoVersion ? rotoVersion.track?.frames || Math.max(1, Math.round((rotoVersion.duration || 5) * ROTO_FPS)) : 0;
+  // The clip's own pixel size (picks on it are in clip pixels).
+  const [clipSize, setClipSize] = useState<{ path: string; w: number; h: number } | null>(null);
+  useEffect(() => {
+    if (!rotoVersion || clipSize?.path === rotoVersion.path) return;
+    const v = document.createElement('video');
+    v.preload = 'metadata';
+    v.muted = true;
+    v.onloadedmetadata = () => setClipSize({ path: rotoVersion.path, w: v.videoWidth, h: v.videoHeight });
+    v.src = mediaUrl(rotoVersion.path);
+  }, [rotoVersion, clipSize]);
+
+  const pickTarget = useCallback((): PickTarget => (roto ? { kind: 'clip', layer: roto.layerId, version: roto.n, frame: roto.frame } : { kind: 'picture' }), [roto]);
+
+  /** Frame pixels -> what is picked on (clip pixels in a roto); null when outside the clip. */
+  const toTarget = useCallback(
+    (x: number, y: number): [number, number] | null => {
+      if (!roto || !rotoVersion) return [x, y];
+      const r = rotoVersion.region;
+      if (!clipSize || x < r.x || y < r.y || x > r.x + r.w || y > r.y + r.h) return null;
+      return [((x - r.x) * clipSize.w) / r.w, ((y - r.y) * clipSize.h) / r.h];
+    },
+    [roto, rotoVersion, clipSize]
+  );
+
+  const onPickClick = useCallback(
+    (x: number, y: number, keep: boolean) => {
+      const t = toTarget(x, y);
+      if (t) picker.click(pickTarget(), t[0], t[1], keep);
+      else flash('info', 'Click on the clip (inside its area) to pick in it.');
+    },
+    [toTarget, picker, pickTarget, flash]
+  );
+  const onPickBox = useCallback(
+    (r: Rect) => {
+      const a = toTarget(r.x, r.y);
+      const b = toTarget(r.x + r.w, r.y + r.h);
+      if (a && b) picker.box(pickTarget(), { x: a[0], y: a[1], w: b[0] - a[0], h: b[1] - a[1] });
+      else flash('info', 'Box inside the clip’s area to pick in it.');
+    },
+    [toTarget, picker, pickTarget, flash]
+  );
+
+  /** The selection into the selected layer's mask (added, or cut). */
+  const commitPick = useCallback(
+    (cut: boolean) => {
+      if (!pick || pick.busy || !selected) return;
+      const ops = pickOps(pick, cut, doc.width, doc.height);
+      if (!ops.length) return;
+      setShapes([...(selected.shapes || []), ...ops]);
+      picker.clear();
+      flash('info', `${cut ? 'Cut from' : 'Added to'} ${selected.name}’s mask (${KEY_UNDO} to undo).`);
+    },
+    [pick, selected, doc.width, doc.height, setShapes, picker, flash]
+  );
+
+  /** The selection as the mask of a new layer. */
+  const pickToLayer = useCallback(
+    (kind: 'still' | 'motion') => {
+      if (!pick || pick.busy) return;
+      const ops = pickOps(pick, false, doc.width, doc.height);
+      if (!ops.length) return;
+      const id = addLayer(kind);
+      patchLayer(id, { shapes: ops }, true);
+      picker.clear();
+    },
+    [pick, doc.width, doc.height, addLayer, patchLayer, picker]
+  );
+
+  const enterRoto = useCallback(
+    (layerId: string, n: number) => {
+      const l = docRef.current.layers.find((x) => x.id === layerId);
+      setRoto({ layerId, n, frame: 0 });
+      setRotoPrompts(l?.versions[n]?.track?.prompts || []);
+      setTool('pick');
+      setPlaying(false);
+      picker.clear();
+    },
+    [picker]
+  );
+  const rotoFrame = useCallback(
+    (f: number) => {
+      setRoto((r) => r && { ...r, frame: Math.max(0, Math.min(rotoFrames - 1, Math.round(f))) });
+      picker.clear();
+    },
+    [rotoFrames, picker]
+  );
+  /** Keep the pending pick as prompts on its frame. */
+  const keepPick = useCallback(() => {
+    if (!pick || pick.busy || !roto || pick.target.kind !== 'clip') return;
+    const p: SegPrompt = { obj: 1, frame: pick.target.frame };
+    if (pick.text) p.text = pick.text;
+    else {
+      if (pick.points.length) p.points = pick.points;
+      if (pick.box) p.box = pick.box;
+      // The reading chosen with Tab is the one tracked.
+      if (pick.candidate > 0) p.candidate = pick.candidate;
+    }
+    setRotoPrompts((list) => [...list, p]);
+    picker.clear();
+  }, [pick, roto, picker]);
+  const trackRoto = useCallback(() => {
+    if (!roto || !rotoPrompts.length) return;
+    serverAction(() => sceneApi.track(doc.id, roto.layerId, roto.n, rotoPrompts), 'Could not start tracking');
+  }, [roto, rotoPrompts, doc.id, serverAction]);
+  const leaveRoto = useCallback(() => {
+    setRoto(null);
+    picker.clear();
+    setTool('select');
+    setPlaying(true);
+  }, [picker]);
+
+  const rotoView: RotoView | null =
+    roto && rotoVersion
+      ? (() => {
+          const t = rotoVersion.track;
+          let matte = '';
+          if (showMatte && t?.state === 'completed' && t.dir) {
+            const sep = t.dir.includes('\\') ? '\\' : '/';
+            matte = `${t.dir}${sep}${String(roto.frame).padStart(5, '0')}.png`;
+          }
+          return { layerId: roto.layerId, version: rotoVersion, frame: roto.frame, fps: ROTO_FPS, matte };
+        })()
+      : null;
+
+  // The keys of the Select tool and the roto, read through a ref so the key handler needn't re-register.
+  const pickKeys = useRef<{ enter: (cut: boolean) => void; cycle: () => void; clear: () => void; pending: () => boolean; step: (d: number) => void; inRoto: () => boolean }>({
+    enter: () => undefined,
+    cycle: () => undefined,
+    clear: () => undefined,
+    pending: () => false,
+    step: () => undefined,
+    inRoto: () => false,
+  });
+  pickKeys.current = {
+    enter: (cut: boolean) => (roto ? keepPick() : commitPick(cut)),
+    cycle: picker.cycle,
+    clear: picker.clear,
+    pending: () => !!pick,
+    step: (d: number) => {
+      if (roto) rotoFrame(roto.frame + d);
+    },
+    inRoto: () => !!roto,
+  };
+  const toolRef = useRef(tool);
+  toolRef.current = tool;
+
   // ---- keyboard -----------------------------------------------------------------------
 
   useEffect(() => {
@@ -738,6 +913,27 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
         return;
       }
       if (typing) return;
+      const pk = pickKeys.current;
+      if (toolRef.current === 'pick') {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          pk.enter(e.altKey);
+          return;
+        }
+        if (e.key === 'Tab') {
+          e.preventDefault();
+          pk.cycle();
+          return;
+        }
+        if (e.key === 'Escape' && pk.pending()) {
+          pk.clear();
+          return;
+        }
+      }
+      if (pk.inRoto() && (e.key === ',' || e.key === '.')) {
+        pk.step(e.key === ',' ? -1 : 1);
+        return;
+      }
       if (mod && (e.key === 'z' || e.key === 'Z')) {
         e.preventDefault();
         if (e.shiftKey) stepHistory(redo, undo);
@@ -1018,6 +1214,11 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
               if (!selected) return;
               setShapes((selected.shapes || []).map((x, j) => (j === i ? op : x)));
             }}
+            pick={tool === 'pick' ? pick : null}
+            pickArea={roto && rotoVersion ? rotoVersion.region : null}
+            onPickClick={onPickClick}
+            onPickBox={onPickBox}
+            roto={rotoView}
             compare={compare}
             playing={playing}
             soundOn={soundOn}
@@ -1028,6 +1229,36 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
             onCommit={commitOp}
             onSelect={setSelectedId}
           />
+          {tool === 'pick' && (
+            <PickBar
+              pick={pick}
+              roto={!!roto}
+              hasLayer={!!selected && selected.kind !== 'paint'}
+              onFind={(text) => picker.find(pickTarget(), text)}
+              onPreset={(which) => picker.preset(pickTarget(), which)}
+              onCycle={picker.cycle}
+              onToggle={picker.toggle}
+              onAdd={commitPick}
+              onNewLayer={pickToLayer}
+              onKeep={keepPick}
+              onClear={picker.clear}
+            />
+          )}
+          {roto && rotoVersion && (
+            <RotoBar
+              frame={roto.frame}
+              frames={rotoFrames}
+              fps={ROTO_FPS}
+              prompts={rotoPrompts}
+              track={rotoVersion.track}
+              showMatte={showMatte}
+              onFrame={rotoFrame}
+              onRemovePrompt={(i) => setRotoPrompts((list) => list.filter((_, j) => j !== i))}
+              onTrack={trackRoto}
+              onShowMatte={setShowMatte}
+              onDone={leaveRoto}
+            />
+          )}
           {notice && (
             <div className={`sc-notice ${notice.tone}`} role="status">
               {notice.text}
@@ -1103,6 +1334,9 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
               onChooseVoice={chooseVoice}
               onPickLibrary={(kinds) => requestLibraryPick(kinds, `${selected.name || 'a layer'} · ${doc.name}`)}
               onPickFiles={pickFiles}
+              onRoto={(n) => enterRoto(selected.id, n)}
+              rotoActive={!!roto && roto.layerId === selected.id}
+              onUntrack={(n) => serverAction(() => sceneApi.untrack(doc.id, selected.id, n), 'Could not remove the roto')}
             />
           ) : (
             <section className="sc-section sc-help">

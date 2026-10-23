@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { mediaUrl } from '../../platform';
 import { mapOp, moveVertex, opBox, pointInRect, simplifyPath, type MaskOp, type Rect } from './mask';
-import { jobPhase, layerRate, layerTiming, type Scene, type SceneLayer } from './scene-api';
+import { jobPhase, layerRate, layerTiming, type Scene, type SceneLayer, type SceneVersion } from './scene-api';
+import { selectedObjects, type PickState } from './pick';
 
 // The canvas of the Scene editor: the base frame with every generated layer
 // composited live the way the export will be (each result placed over the
@@ -10,7 +11,7 @@ import { jobPhase, layerRate, layerTiming, type Scene, type SceneLayer } from '.
 // selected layer's mask and the Shape tool that moves, scales and reshapes
 // one of its shapes. Coordinates handed out are base-frame pixels.
 
-export type Tool = 'select' | 'box' | 'brush' | 'lasso' | 'pen' | 'erase' | 'protect' | 'shape' | 'hand';
+export type Tool = 'select' | 'pick' | 'box' | 'brush' | 'lasso' | 'pen' | 'erase' | 'protect' | 'shape' | 'hand';
 
 /**
  * Whether a key event goes to a field the user types in: text inputs, text areas, selects, editable content. Sliders,
@@ -21,6 +22,19 @@ export function isTyping(target: EventTarget | null): boolean {
   const el = target.closest('input, textarea, select, [contenteditable]');
   if (!el) return false;
   return !(el instanceof HTMLInputElement) || !['range', 'color', 'checkbox', 'radio', 'button', 'submit', 'reset', 'file'].includes(el.type);
+}
+
+/**
+ * A roto in progress: the motion layer's version shown paused on one frame of its clip (clip time = (frame + 0.5) /
+ * fps), with the tracked matte of that frame tinted over it when there is one.
+ */
+export interface RotoView {
+  layerId: string;
+  version: SceneVersion;
+  frame: number;
+  fps: number;
+  /** The matte PNG of this frame (a gray image: white = kept), or '' */
+  matte: string;
 }
 
 /** How the selected layer's mask is shown: tinted over the picture, as a black-and-white matte, or not at all. */
@@ -39,6 +53,7 @@ type Draft =
   | { t: 'rect'; x0: number; y0: number; x1: number; y1: number; erase: boolean; keep?: boolean }
   | { t: 'lasso' | 'stroke'; pts: number[]; erase: boolean; keep?: boolean }
   | { t: 'pen'; pts: number[]; erase: boolean; keep?: undefined }
+  | { t: 'pick'; x0: number; y0: number; x1: number; y1: number; erase: boolean; keep?: undefined }
   | null;
 
 /**
@@ -69,6 +84,13 @@ export interface StageProps {
   onSelectShape: (i: number | null) => void;
   /** Replace shape i of the selected layer (a Shape tool edit). */
   onReplaceOp: (i: number, op: MaskOp) => void;
+  /** The pending Select-tool pick, and where its pixels sit in the frame (a clip's region; null = frame pixels). */
+  pick: PickState | null;
+  pickArea: Rect | null;
+  /** Select tool: a click (keep = this, else not this) or a dragged box, in frame pixels. */
+  onPickClick: (x: number, y: number, keep: boolean) => void;
+  onPickBox: (r: Rect) => void;
+  roto: RotoView | null;
   /** Hide every layer (hold-to-compare with the base). */
   compare: boolean;
   playing: boolean;
@@ -175,6 +197,7 @@ function MotionMedia({ src, playing, muted, syncKey, style, rate, offset, clock:
 
 export default function Stage(props: StageProps) {
   const { scene, selected, tool, brush, hardness, ink, maskView, selectedShape, compare, playing, soundOn, syncKey, fitKey, protectMask, motionOverlay, onCommit, onSelect } = props;
+  const { pick, pickArea, roto } = props;
   const clock = useRef<SceneClock>({ t0: performance.now(), pausedAt: null });
   useEffect(() => {
     const c = clock.current;
@@ -291,6 +314,12 @@ export default function Stage(props: StageProps) {
     ctx.fillStyle = fill;
     ctx.strokeStyle = line;
     ctx.lineWidth = 1.5;
+    if (d.t === 'pick') {
+      ctx.strokeStyle = '#2ec5ff';
+      ctx.setLineDash([5, 4]);
+      ctx.strokeRect(X(Math.min(d.x0, d.x1)), Y(Math.min(d.y0, d.y1)), Math.abs(d.x1 - d.x0) * view.zoom, Math.abs(d.y1 - d.y0) * view.zoom);
+      return;
+    }
     if (d.t === 'rect') {
       const x = Math.min(d.x0, d.x1);
       const y = Math.min(d.y0, d.y1);
@@ -457,6 +486,11 @@ export default function Stage(props: StageProps) {
       drag.current = { kind: 'pan', sx: e.clientX, sy: e.clientY, vx: view.x, vy: view.y };
       return;
     }
+    if (tool === 'pick') {
+      drag.current = { kind: 'draw' };
+      draft.current = { t: 'pick', x0: p.x, y0: p.y, x1: p.x, y1: p.y, erase: e.altKey };
+      return;
+    }
     if (!selected) return;
     if (tool === 'shape') {
       const hit = shapeHit(p.x, p.y);
@@ -506,6 +540,12 @@ export default function Stage(props: StageProps) {
     }
     const dr = draft.current;
     if (!dr || dr.t === 'pen') return;
+    if (dr.t === 'pick') {
+      dr.x1 = p.x;
+      dr.y1 = p.y;
+      paintDraft();
+      return;
+    }
     if (dr.t === 'rect') {
       dr.x1 = p.x;
       dr.y1 = p.y;
@@ -539,6 +579,15 @@ export default function Stage(props: StageProps) {
     draft.current = null;
     paintDraft();
     if (!d || d.kind !== 'draw' || !dr || !view) return;
+    if (dr.t === 'pick') {
+      // A drag is a box round the object; a click is a click (Alt: not this).
+      if (Math.abs(dr.x1 - dr.x0) * view.zoom > 5 && Math.abs(dr.y1 - dr.y0) * view.zoom > 5) {
+        props.onPickBox({ x: Math.min(dr.x0, dr.x1), y: Math.min(dr.y0, dr.y1), w: Math.abs(dr.x1 - dr.x0), h: Math.abs(dr.y1 - dr.y0) });
+      } else {
+        props.onPickClick(dr.x0, dr.y0, !dr.erase);
+      }
+      return;
+    }
     const clampX = (v: number) => Math.min(scene.width, Math.max(0, v));
     const clampY = (v: number) => Math.min(scene.height, Math.max(0, v));
     if (dr.t === 'rect') {
@@ -578,7 +627,7 @@ export default function Stage(props: StageProps) {
 
   let cursorClass = 'default';
   if (panning) cursorClass = drag.current?.kind === 'pan' ? 'grabbing' : 'grab';
-  else if (drawTool && selected) cursorClass = 'crosshair';
+  else if ((drawTool && selected) || tool === 'pick') cursorClass = 'crosshair';
   else if (tool === 'shape' && selected) cursorClass = 'move';
   const shown = shapeLive && shapeLive.i === selectedShape ? shapeLive.op : editOp;
   const sel = selected;
@@ -611,8 +660,10 @@ export default function Stage(props: StageProps) {
               return <img key={l.id} className={`sc-paint${l.options?.guide ? ' guide' : ''}`} src={l.mask} alt="" draggable={false} />;
             }
             const v = l.versions[l.active];
-            if (l.hidden || !v || !l.mask) return null;
-            const src = mediaUrl(v.path);
+            if (l.hidden || !v || !l.mask || (roto && roto.layerId === l.id)) return null;
+            // A tracked roto plays as the clip with its matte as alpha.
+            const matted = l.kind === 'motion' && v.track?.state === 'completed' && v.track.video && l.options?.matte !== false;
+            const src = mediaUrl(matted ? (v.track?.video as string) : v.path);
             const style = regionStyle(v.region, scene);
             return (
               <div key={l.id} className="sc-layer" style={maskStyle(l.mask)}>
@@ -661,6 +712,8 @@ export default function Stage(props: StageProps) {
             )
         )}
         {sel && shown && view && !compare && <ShapeOutline op={shown} scene={scene} zoom={view.zoom} handles={tool === 'shape'} />}
+        {roto && !compare && <RotoClip roto={roto} scene={scene} mask={scene.layers.find((l) => l.id === roto.layerId)?.mask || ''} />}
+        {pick && !compare && view && <PickPreview pick={pick} area={pickArea} scene={scene} zoom={view.zoom} />}
       </div>
       <canvas ref={draftRef} className="sc-draft" style={{ width: size.w, height: size.h }} />
       {cursor && view && sel && (tool === 'brush' || tool === 'erase' || tool === 'protect') && !panning && (
@@ -686,6 +739,65 @@ export default function Stage(props: StageProps) {
         </div>
       )}
     </div>
+  );
+}
+
+/** A roto's frame: the version's clip paused on it (through the layer's mask), and that frame's matte tinted. */
+function RotoClip({ roto, scene, mask }: { roto: RotoView; scene: Scene; mask: string }) {
+  const ref = useRef<HTMLVideoElement>(null);
+  const v = roto.version;
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const t = (roto.frame + 0.5) / roto.fps;
+    if (Math.abs(el.currentTime - t) > 0.5 / roto.fps) el.currentTime = t;
+  }, [roto.frame, roto.fps, v.path]);
+  const r = regionStyle(v.region, scene);
+  const lum = (url: string) =>
+    ({
+      maskImage: `url("${url}")`,
+      WebkitMaskImage: `url("${url}")`,
+      maskSize: '100% 100%',
+      WebkitMaskSize: '100% 100%',
+      maskMode: 'luminance',
+      WebkitMaskSourceType: 'luminance',
+    } as React.CSSProperties);
+  return (
+    <>
+      <div className="sc-layer" style={mask ? maskStyle(mask) : undefined}>
+        <video ref={ref} className="sc-media" src={mediaUrl(v.path)} style={r} muted playsInline preload="auto" />
+      </div>
+      {roto.matte && <div className="sc-roto-matte" style={{ ...r, ...lum(mediaUrl(roto.matte)) }} />}
+    </>
+  );
+}
+
+/** The pending pick: what it would add (tinted), its clicks (+ this, − not this) and its box. */
+function PickPreview({ pick, area, scene, zoom }: { pick: PickState; area: Rect | null; scene: Scene; zoom: number }) {
+  // Pick pixels -> frame pixels (a clip's pixels sit in its region).
+  const sx = area && pick.width ? area.w / pick.width : 1;
+  const sy = area && pick.height ? area.h / pick.height : 1;
+  const map = (r: Rect): Rect => (area ? { x: area.x + r.x * sx, y: area.y + r.y * sy, w: r.w * sx, h: r.h * sy } : r);
+  const pt = (x: number, y: number) => (area ? [area.x + x * (area.w / Math.max(1, pick.width || area.w)), area.y + y * (area.h / Math.max(1, pick.height || area.h))] : [x, y]);
+  const objs = selectedObjects(pick);
+  const dot = 7 / zoom;
+  return (
+    <>
+      {objs.map((o) => (
+        <div key={`${o.id}-${o.rect.x}-${o.rect.y}`} className={`sc-pick-tint${pick.preset === 'background' ? ' inverse' : ''}`} style={{ ...regionStyle(map(o.rect), scene), ...maskStyle(o.mask) }} />
+      ))}
+      <svg className="sc-pick-marks" viewBox={`0 0 ${scene.width} ${scene.height}`} preserveAspectRatio="none" aria-hidden>
+        {pick.box &&
+          (() => {
+            const b = map({ x: pick.box[0], y: pick.box[1], w: pick.box[2], h: pick.box[3] });
+            return <rect x={b.x} y={b.y} width={b.w} height={b.h} className="sc-pick-box" />;
+          })()}
+        {pick.points.map(([x, y, keep]) => {
+          const [px, py] = pt(x, y);
+          return <circle key={`${x},${y}`} cx={px} cy={py} r={dot} className={keep ? 'sc-pick-yes' : 'sc-pick-no'} />;
+        })}
+      </svg>
+    </>
   );
 }
 

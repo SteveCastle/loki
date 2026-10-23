@@ -343,6 +343,8 @@ func LoopVersion(ctx context.Context, id, lid string, n int, kind string) (*Scen
 		if l.ID == lid {
 			v := src
 			v.Path, v.JobID, v.Created, v.Note = out, "", time.Now().UTC(), note
+			// A loop is a different clip: the source's roto doesn't fit it.
+			v.Track = nil
 			v.Duration = probeVideoDuration(ctx, out)
 			l.Versions = append(l.Versions, v)
 			l.Active = len(l.Versions) - 1

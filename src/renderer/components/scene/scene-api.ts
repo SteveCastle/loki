@@ -20,7 +20,68 @@ export interface SceneVersion {
   below?: string[];
   /** The images the engine was given: the crop, then the references in order (generations only). */
   inputs?: string[];
+  /** motion: its roto (a matte tracked through the clip) */
+  track?: SceneTrack | null;
   created: string;
+}
+
+/** A prompt for loki-segment, in the pixels of what is segmented (clip pixels for a roto). */
+export interface SegPrompt {
+  obj: number;
+  frame: number;
+  text?: string;
+  /** [x, y, 1 = this | 0 = not this] */
+  points?: Array<[number, number, number]>;
+  /** [x, y, w, h] */
+  box?: [number, number, number, number];
+  /** clicks/box: which of SAM's readings to track (0 = best; the one chosen with Tab) */
+  candidate?: number;
+}
+
+/** A motion version's roto (server-owned): the job, what it was tracked from, and the matte it made. */
+export interface SceneTrack {
+  jobId: string;
+  state: string;
+  done: number;
+  total: number;
+  error?: string;
+  prompts: SegPrompt[];
+  /** The matte: <dir>/00000.png ... one per clip frame */
+  dir?: string;
+  frames?: number;
+  /** The clip with the matte as alpha (VP9 webm), for the stage */
+  video?: string;
+}
+
+/** One pick: on the picture (frame pixels), or with layer + version on a motion clip's frame (clip pixels). */
+export interface SegmentRequest {
+  text?: string;
+  points?: Array<[number, number, number]>;
+  box?: [number, number, number, number];
+  everything?: boolean;
+  multimask?: boolean;
+  layer?: string;
+  version?: number;
+  frame?: number;
+}
+
+/** An object found: its mask (white, alpha = coverage) as a PNG data URL covering rect, and its box. */
+export interface SegmentObject {
+  id: number;
+  label: string;
+  score: number;
+  bbox: Rect;
+  mask: string;
+  rect: Rect;
+  /** clicks/boxes: the other readings (part / object / whole), best first */
+  candidates?: SegmentObject[];
+}
+
+export interface SegmentResult {
+  width: number;
+  height: number;
+  objects: SegmentObject[] | null;
+  ms: number;
 }
 
 export interface SceneJob {
@@ -79,6 +140,8 @@ export interface LayerOptions {
   speed?: number;
   /** motion: seconds of scene time its loop is shifted by, so layers don't pulse together (default 0) */
   offset?: number;
+  /** motion: composite through the shown version's roto matte (default on when it has one) */
+  matte?: boolean;
   /** motion: soundtrack gain (0-2, default 1; 0 mutes it) */
   volume?: number;
   /** motion: what its generated sound should be ("crackling fire, soft wind"); empty = the ambience of what moves */
@@ -276,6 +339,11 @@ export const sceneApi = {
   motionMap: (id: string, layer: string, n: number) =>
     call<{ dataUrl: string; region: Rect }>('POST', `/api/scenes/${enc(id)}/layers/${enc(layer)}/versions/${n}/motion`, {}, 120000),
   render: (id: string, format: 'video' | 'still') => call<Scene>('POST', `/api/scenes/${enc(id)}/render`, { format }),
+  // The first pick loads the model and encodes the picture: allow it longer.
+  segment: (id: string, req: SegmentRequest) => call<SegmentResult>('POST', `/api/scenes/${enc(id)}/segment`, req, 120000),
+  track: (id: string, layer: string, n: number, prompts: SegPrompt[]) =>
+    call<Scene>('POST', `/api/scenes/${enc(id)}/layers/${enc(layer)}/versions/${n}/track`, { prompts }),
+  untrack: (id: string, layer: string, n: number) => call<Scene>('POST', `/api/scenes/${enc(id)}/layers/${enc(layer)}/versions/${n}/untrack`, {}),
 };
 
 /**
@@ -374,7 +442,8 @@ export function generationsInFlight(l: SceneLayer): number {
 
 /** Whether a layer (or the scene's export) has server work in flight. */
 export function sceneBusy(s: Scene): boolean {
-  return s.layers.some((l) => !!l.job) || (!!s.render && ['pending', 'in_progress', 'paused'].includes(s.render.state));
+  const live = (st: string | undefined) => !!st && ['pending', 'in_progress', 'paused'].includes(st);
+  return s.layers.some((l) => !!l.job || l.versions.some((v) => live(v.track?.state))) || live(s.render?.state);
 }
 
 /**

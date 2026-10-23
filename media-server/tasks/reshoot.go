@@ -268,6 +268,8 @@ func planReshootInputs(paths []string, p reshootParams, logf func(string)) (imag
 }
 
 func reshootTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
+	// Selection sessions (loki-segment) let go of their VRAM while this runs.
+	defer beginGPUHeavy()()
 	const tag = "reshoot"
 	ctx := j.Ctx
 	if ctx == nil {

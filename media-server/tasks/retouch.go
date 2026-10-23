@@ -399,6 +399,8 @@ func absPath(p string) string {
 }
 
 func retouchTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
+	// Selection sessions (loki-segment) let go of their VRAM while this runs.
+	defer beginGPUHeavy()()
 	p := retouchParamsFromOptions(ParseOptions(j, retouchOptions))
 	return runRetouchJob(j, q, "retouch", p)
 }

@@ -244,6 +244,12 @@ export interface InspectorProps {
   /** References: pick in a picker window, or with a file dialog. */
   onPickLibrary: (kinds: RefKind[]) => { result: Promise<string[] | null>; cancel: () => void };
   onPickFiles: (kinds: RefKind[]) => Promise<string[]>;
+  /** Motion: open the roto of version n (pick what to keep, track it through the clip). */
+  onRoto: (n: number) => void;
+  /** Whether this layer's roto is open now. */
+  rotoActive: boolean;
+  /** Motion: drop version n's roto. */
+  onUntrack: (n: number) => void;
 }
 
 const LENGTHS = [5, 8, 10, 15];
@@ -835,6 +841,43 @@ export function Inspector(props: InspectorProps) {
                     >
                       Re-finish
                     </button>
+                  </div>
+                  <div className="sc-version-actions">
+                    <span className="sc-label" title="Rotoscope: what of this clip is kept, frame by frame (tracked with SAM 3.1)">
+                      Roto
+                    </span>
+                    {(() => {
+                      const t = version.track;
+                      const live = !!t && ['pending', 'in_progress', 'paused'].includes(t.state);
+                      return (
+                        <>
+                          <button type="button" className={`sc-btn${props.rotoActive ? ' on' : ''}`} disabled={busy} onClick={() => props.onRoto(l.active)} title="Pick what to keep on any frame of the clip, then track it through the clip">
+                            {t ? 'Edit roto' : 'Roto…'}
+                          </button>
+                          {live && t && <span className="sc-faint">{t.state === 'pending' ? 'waiting for the GPU' : `tracking ${t.total ? Math.round((t.done / t.total) * 100) : 0}%`}</span>}
+                          {t?.state === 'error' && (
+                            <span className="sc-pick-error" title={t.error}>
+                              failed
+                            </span>
+                          )}
+                          {t?.state === 'completed' && (
+                            <button
+                              type="button"
+                              className={`sc-btn${o.matte === false ? '' : ' on'}`}
+                              onClick={() => props.onOptions({ matte: o.matte === false })}
+                              title="Composite this layer through its roto matte (preview and export)"
+                            >
+                              {o.matte === false ? 'Matte off' : 'Matte on'}
+                            </button>
+                          )}
+                          {t && (
+                            <button type="button" className="sc-btn sc-btn-quiet" disabled={busy} onClick={() => props.onUntrack(l.active)} title="Drop this version’s roto">
+                              Remove
+                            </button>
+                          )}
+                        </>
+                      );
+                    })()}
                   </div>
                   <div className="sc-version-actions">
                     <span className="sc-label">Motion</span>

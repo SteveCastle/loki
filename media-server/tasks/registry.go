@@ -130,6 +130,8 @@ func init() {
 	// Splat training holds the GPU for minutes too; it shares the bucket so
 	// it never contends with a diffusion run for VRAM.
 	RegisterHostResolver("splat", gpuDiffusion)
+	// Roto tracking holds ~5 GB of VRAM for minutes: never beside a diffusion run.
+	RegisterHostResolver("scene-track", gpuDiffusion)
 
 	RegisterTask("ffmpeg", "ffmpeg", ffmpegCustomOptions, ffmpegTask)
 	RegisterTask("ffmpeg-scale", "FFmpeg Scale", ffmpegScaleOptions, ffmpegScaleTask)
@@ -150,6 +152,7 @@ func init() {
 	RegisterTask("splat", "Gaussian Splat (3D scene)", splatOptions, splatTask)
 	RegisterTask("scene-render", "Render Scene", sceneRenderOptions, sceneRenderTask)
 	RegisterTask("scene-lock", "Lock Scene Motion Edges", sceneLockOptions, sceneLockTask)
+	RegisterTask("scene-track", "Track Scene Roto", sceneTrackOptions, sceneTrackTask)
 	// Deprecated alias of retouch --preset 4kify|4kify-phone (saved workflows).
 	RegisterTask("4kify", "4K Upscale + Outpaint", fourKifyOptions, fourKifyTask)
 	RegisterTask("ffmpeg-caption","FFmpeg Caption", ffmpegCaptionOptions, ffmpegCaptionTask)

@@ -1766,3 +1766,146 @@ body.sc-body {
 .sc-input-thumb:hover video {
   border-color: var(--sc-accent);
 }
+
+/* ---- Select tool (loki-segment) and roto ---- */
+
+.sc-pickbar,
+.sc-rotobar {
+  position: absolute;
+  left: 50%;
+  z-index: 5;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  max-width: calc(100% - 32px);
+  padding: 6px 10px;
+  background: rgba(12, 12, 12, 0.92);
+  border: 1px solid var(--sc-hairline);
+  border-radius: 8px;
+  transform: translateX(-50%);
+  backdrop-filter: blur(6px);
+}
+
+.sc-pickbar {
+  top: 10px;
+}
+
+.sc-rotobar {
+  bottom: 10px;
+}
+
+.sc-pick-find .sc-input {
+  width: 220px;
+}
+
+.sc-pick-presets,
+.sc-pick-objects,
+.sc-pick-actions,
+.sc-roto-prompts {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+}
+
+.sc-pick-status {
+  min-width: 120px;
+  font-size: 12px;
+}
+
+.sc-pick-error {
+  color: var(--sc-danger);
+  font-size: 12px;
+}
+
+.sc-pick-reading {
+  margin-left: 6px;
+}
+
+.sc-chip.on {
+  color: #fff;
+  background: var(--sc-accent-strong);
+  border-color: var(--sc-accent);
+}
+
+/* What the pick would add: cyan through its mask; Background is the inverse (shown as what it leaves out). */
+.sc-pick-tint {
+  position: absolute;
+  background: #2ec5ff;
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.sc-pick-tint.inverse {
+  background: #ff6b9a;
+}
+
+.sc-pick-marks {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.sc-pick-yes,
+.sc-pick-no {
+  stroke: #fff;
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.sc-pick-yes {
+  fill: #2ec5ff;
+}
+
+.sc-pick-no {
+  fill: #ff4d6d;
+}
+
+.sc-pick-box {
+  fill: none;
+  stroke: #2ec5ff;
+  stroke-width: 1.5;
+  stroke-dasharray: 5 4;
+  vector-effect: non-scaling-stroke;
+}
+
+/* A roto frame's matte (gray PNG, white = kept), tinted over the paused clip. */
+.sc-roto-matte {
+  position: absolute;
+  background: #ff2bd6;
+  opacity: 0.5;
+  mix-blend-mode: hard-light;
+  pointer-events: none;
+}
+
+.sc-roto-scrub {
+  width: 220px;
+  accent-color: var(--sc-accent);
+}
+
+.sc-roto-time {
+  min-width: 96px;
+  color: var(--sc-dim);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.sc-roto-go {
+  color: inherit;
+  font: inherit;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.sc-roto-show {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  color: var(--sc-dim);
+  font-size: 12px;
+}

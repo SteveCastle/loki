@@ -42,6 +42,9 @@ func TestMain(m *testing.M) {
 	if os.Getenv("LOKI_FAKE_CHATTY") == "1" {
 		os.Exit(fakeChattyMain())
 	}
+	if os.Getenv("LOKI_FAKE_SEG") == "1" {
+		os.Exit(fakeSegMain())
+	}
 	os.Exit(m.Run())
 }
 
