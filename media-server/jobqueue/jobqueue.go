@@ -752,9 +752,10 @@ func (q *Queue) ErrorJob(id string) error {
 		log.Printf("Failed to save job error state to database: %v", err)
 	}
 
-	err := serializeListUpdate("update", job)
-	if err != nil {
-		return nil
+	// A broadcast failure must not skip cancelling dependents, or they sit
+	// pending forever behind a job that will never succeed.
+	if err := serializeListUpdate("update", job); err != nil {
+		log.Printf("Failed to broadcast job error state: %v", err)
 	}
 
 	// Cancel pending dependents in the same workflow

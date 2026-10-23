@@ -3,6 +3,9 @@ package runners
 import (
 	"context"
 	"errors"
+	"fmt"
+	"log"
+	"runtime/debug"
 	"sync"
 
 	"github.com/stevecastle/shrike/jobqueue"
@@ -76,11 +79,23 @@ func (r *Runners) runJob(j *jobqueue.Job) {
 			r.tryFetchJobAndRun()
 			r.mu.Unlock()
 		}()
+		// A panicking task must fail its job, not take the whole server (and
+		// every other running job) down with it.
+		defer func() {
+			if rec := recover(); rec != nil {
+				log.Printf("task %s (job %s) panicked: %v\n%s", j.Command, j.ID, rec, debug.Stack())
+				_ = r.queue.PushJobStdout(j.ID, fmt.Sprintf("Task panicked: %v", rec))
+				_ = r.queue.ErrorJob(j.ID)
+			}
+		}()
 
 		tasksMap := tasks.GetTasks()
 		if task, exists := tasksMap[j.Command]; exists {
-			// Ensure job state is finalized even if task forgets
-			if err := task.Fn(j, r.queue, &r.mu); err != nil {
+			err := task.Fn(j, r.queue, &r.mu)
+			// Ensure job state is finalized even if the task forgets: a job
+			// left InProgress would hold its concurrency bucket forever.
+			defer r.finalizeIfRunning(j.ID, err)
+			if err != nil {
 				// A graceful pause is not a failure: park the job so it can
 				// be resumed with its progress intact.
 				if errors.Is(err, jobqueue.ErrPaused) {
@@ -102,6 +117,22 @@ func (r *Runners) runJob(j *jobqueue.Job) {
 			return
 		}
 	}()
+}
+
+// finalizeIfRunning settles a job its task returned from without finishing.
+// Every terminal transition is a no-op on a job that is no longer InProgress,
+// so this only acts when the task really forgot.
+func (r *Runners) finalizeIfRunning(id string, taskErr error) {
+	snap, _, ok := r.queue.JobSnapshot(id, 0)
+	if !ok || snap.State != jobqueue.StateInProgress {
+		return
+	}
+	if taskErr != nil {
+		_ = r.queue.ErrorJob(id)
+		return
+	}
+	log.Printf("task %s (job %s) returned without finishing; marking completed", snap.Command, id)
+	_ = r.queue.CompleteJob(id)
 }
 
 // tryFetchJobAndRun tries to fetch a new job if capacity allows.
