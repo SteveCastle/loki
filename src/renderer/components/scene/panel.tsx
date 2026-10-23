@@ -5,6 +5,11 @@ import References from './references';
 import type { RefKind } from './refs';
 import { DIALOGUE_LANGUAGES, dialogueSeconds, jobPhase, layerTiming, type DialogueLine, type LayerOptions, type LoopKind, type SceneLayer } from './scene-api';
 
+// Shortcut labels: ⌃/↵ have no glyph in Windows' UI fonts and render as junk.
+const IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
+export const KEY_UNDO = IS_MAC ? '⌘Z' : 'Ctrl+Z';
+export const KEY_GENERATE = IS_MAC ? '⌘↵' : 'Ctrl+Enter';
+
 // The Scene editor's right-hand panel: the layer stack (top of the list = top
 // of the picture) and the selected layer's settings, generation and versions.
 
@@ -568,9 +573,9 @@ export function Inspector(props: InspectorProps) {
             className="sc-btn sc-btn-primary sc-btn-wide"
             disabled={busy || !painted || needPrompt}
             onClick={props.onGenerate}
-            title={!painted ? 'Paint or box the area first' : needPrompt ? 'Describe the edit first' : 'Ctrl+Enter'}
+            title={!painted ? 'Paint or box the area first' : needPrompt ? 'Describe the edit first' : KEY_GENERATE}
           >
-            {!painted ? 'Paint the area first' : needPrompt ? 'Describe the edit first' : `${l.versions.length ? 'Generate again' : motion ? 'Animate this area' : 'Generate'}  ⌃↵`}
+            {!painted ? 'Paint the area first' : needPrompt ? 'Describe the edit first' : `${l.versions.length ? 'Generate again' : motion ? 'Animate this area' : 'Generate'}  ${KEY_GENERATE}`}
           </button>
         )}
         {l.error && <div className="sc-error">{l.error}</div>}

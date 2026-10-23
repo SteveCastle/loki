@@ -14,7 +14,7 @@ import {
   type SceneSummary,
 } from './scene-api';
 import Stage, { type Tool } from './stage';
-import { Inspector, LayerList } from './panel';
+import { Inspector, KEY_GENERATE, KEY_UNDO, LayerList } from './panel';
 import { requestLibraryPick } from './pick-bridge';
 import { hasVoice, tokenIssues, type RefKind } from './refs';
 
@@ -816,7 +816,7 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
           {saveState === 'saving' ? 'Saving…' : saveState === 'dirty' ? 'Unsaved changes' : saveState === 'error' ? 'Not saved (retrying on the next change)' : 'Saved'}
         </span>
         {generating > 0 && <span>{generating} generating</span>}
-        <span className="sc-keys">V select · B box · P brush · L lasso · E erase · S protect · [ ] size · Alt subtract · Space pan · F fit · \ compare · K play · ⌃Z undo · ⌃↵ generate</span>
+        <span className="sc-keys">V select · B box · P brush · L lasso · E erase · S protect · [ ] size · Alt subtract · Space pan · F fit · \ compare · K play · {KEY_UNDO} undo · {KEY_GENERATE} generate</span>
       </footer>
     </div>
   );
