@@ -188,3 +188,48 @@ describe('scene job phases', () => {
     expect(jobPhase(job({ state: 'paused', done: 3, total: 10 }))).toEqual({ label: 'Paused', percent: 30 });
   });
 });
+
+describe('scene references', () => {
+  // eslint-disable-next-line global-require
+  const { refTokens, remapRefTokens, tokenIssues, hasVoice } = require('../renderer/components/scene/refs');
+  // eslint-disable-next-line global-require
+  const { pickable } = require('../renderer/components/scene/pick-bridge');
+  // eslint-disable-next-line global-require
+  const { refKind } = require('../renderer/components/scene/refs');
+  const r = (id: string, path: string) => ({ id, path });
+  const refs = [r('a', 'C:/x/jacket.png'), r('b', 'C:/x/walk.mp4'), r('c', 'C:/x/rain.mp3'), r('d', 'C:/x/hat.jpg')];
+
+  it('numbers references like the server (TestSceneRefTokensAndChecks)', () => {
+    expect(refTokens('motion', refs, false)).toEqual(['<Picture 2>', '<Video 1>', '<Audio 1>', '<Picture 3>']);
+    expect(refTokens('motion', refs, true)[2]).toBe('<Audio 2>');
+    expect(refTokens('still', refs, false)).toEqual(['<image2>', null, null, '<image3>']);
+  });
+
+  it('keeps the prompt pointing at the same files when references move or go', () => {
+    const prompt = 'put the hat from <Picture 3> on the man, he wears <Picture 2>';
+    const swapped = [refs[3], refs[1], refs[2], refs[0]];
+    expect(remapRefTokens(prompt, 'motion', refs, swapped, false)).toBe('put the hat from <Picture 2> on the man, he wears <Picture 3>');
+    // Removing the jacket renumbers the hat to <Picture 2>; the jacket's own token must not silently become the hat.
+    const removed = refs.filter((x) => x.id !== 'a');
+    const after = remapRefTokens(prompt, 'motion', refs, removed, false);
+    expect(after).toBe('put the hat from <Picture 2> on the man, he wears <removed: jacket.png>');
+    expect(tokenIssues(after, 'motion', removed, false)).toEqual(['<removed: jacket.png>']);
+    const win = [{ id: 'w', path: 'C:\\lib\\coats\\parka.jpg' }];
+    expect(remapRefTokens('wear <image2>', 'still', win, [], false)).toBe('wear <removed: parka.jpg>');
+    expect(remapRefTokens('wear <image2>', 'still', [{ ...win[0], note: 'the parka' }], [], false)).toBe('wear <removed: the parka>');
+    expect(tokenIssues('use <image4> and <image2>', 'still', refs, false)).toEqual(['<image4>']);
+    expect(tokenIssues('<Picture 1> with <Audio 1>', 'motion', [], false)).toEqual(['<Audio 1>']);
+    expect(tokenIssues('<Picture 1> with <Audio 1>', 'motion', [], true)).toEqual([]);
+  });
+
+  it('only counts the dialogue voice when there is dialogue', () => {
+    expect(hasVoice({ voiceRef: 'v.wav' })).toBe(false);
+    expect(hasVoice({ voiceRef: 'v.wav', dialogue: [{ text: 'hi' }] })).toBe(true);
+  });
+
+  it('a pick keeps what the layer can use, in order, once', () => {
+    const req = { id: 'p', kinds: ['image'], label: 'x' };
+    expect(pickable(['a.png', 'b.mp4', 'a.png', 'c.jpg', ''], req, refKind)).toEqual(['a.png', 'c.jpg']);
+    expect(pickable(['a.png'], null, refKind)).toEqual([]);
+  });
+});

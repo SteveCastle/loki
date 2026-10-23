@@ -24,6 +24,7 @@ import type { Predicate } from '../../query/types';
 import useOnClickOutside from '../../hooks/useOnClickOutside';
 import { absorbNextClick } from '../../absorb-next-click';
 import filter from '../../filter';
+import { ScenePickPaletteSection } from '../scene/pick-banner';
 import LoginWidget from './login-widget';
 import SelectionTags from './selection-tags';
 import {
@@ -1675,6 +1676,8 @@ export default function ContextPalette() {
           </span>
         </div>
       )}
+
+      <ScenePickPaletteSection paths={transformCandidates.filter(Boolean) as string[]} onDone={() => libraryService.send('HIDE_CONTEXT_PALETTE')} />
 
       {canTransform && (
         <TransformSection

@@ -15,6 +15,8 @@ import {
 } from './scene-api';
 import Stage, { type Tool } from './stage';
 import { Inspector, LayerList } from './panel';
+import { requestLibraryPick } from './pick-bridge';
+import { hasVoice, tokenIssues, type RefKind } from './refs';
 
 // The Scene editor: one picture, built up a masked region at a time. Each
 // layer is an Edit (a still change of its area) or Motion (its area brought to
@@ -398,6 +400,11 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
       flash('info', 'Describe the edit first.');
       return;
     }
+    const bad = tokenIssues(l.prompt, l.kind, l.options?.refs || [], hasVoice(l.options));
+    if (bad.length) {
+      flash('error', `${bad.join(', ')} in the prompt ${bad.length > 1 ? "don't" : "doesn't"} name any reference of this layer.`);
+      return;
+    }
     serverAction(() => sceneApi.generate(doc.id, l.id), 'Could not start the generation');
   }, [selected, doc.id, serverAction, flash]);
 
@@ -477,6 +484,18 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
       return (await openFileBrowser('file')) || null;
     } catch {
       return null;
+    }
+  }, []);
+
+  // References from outside the library: a native multi-file dialog, or the server's file browser on the web.
+  const pickFiles = useCallback(async (kinds: RefKind[]): Promise<string[]> => {
+    try {
+      if (isElectron) return ((await invoke('select-reference-files', [kinds])) as string[]) || [];
+      const { openFileBrowser } = await import('../controls/file-browser-modal');
+      const p = await openFileBrowser('file');
+      return p ? [p] : [];
+    } catch {
+      return [];
     }
   }, []);
 
@@ -768,6 +787,8 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
               onGrowToMotion={() => growToMotion(selected)}
               loopSpeed={layerRate(doc, selected)}
               onChooseVoice={chooseVoice}
+              onPickLibrary={(kinds) => requestLibraryPick(kinds, `${selected.name || 'a layer'} · ${doc.name}`)}
+              onPickFiles={pickFiles}
             />
           ) : (
             <section className="sc-section sc-help">

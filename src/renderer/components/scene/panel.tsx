@@ -1,6 +1,8 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { mediaUrl } from '../../platform';
 import { maskBounds, rectContains, type ContextSize } from './mask';
+import References from './references';
+import type { RefKind } from './refs';
 import { DIALOGUE_LANGUAGES, dialogueSeconds, jobPhase, layerTiming, type DialogueLine, type LayerOptions, type LoopKind, type SceneLayer } from './scene-api';
 
 // The Scene editor's right-hand panel: the layer stack (top of the list = top
@@ -165,6 +167,9 @@ export interface InspectorProps {
   loopSpeed: number;
   /** Pick an audio or video file whose voice the first speaker uses; resolves to its path, or null. */
   onChooseVoice: () => Promise<string | null>;
+  /** References: pick in the viewer, or with a file dialog. */
+  onPickLibrary: (kinds: RefKind[]) => { result: Promise<string[] | null>; cancel: () => void };
+  onPickFiles: (kinds: RefKind[]) => Promise<string[]>;
 }
 
 const LENGTHS = [5, 8, 10, 15];
@@ -287,6 +292,23 @@ export function Inspector(props: InspectorProps) {
   const needPrompt = !motion && !l.prompt.trim();
   const outside = version && painted && !rectContains(version.region, painted);
   const ideas = motion ? MOTION_IDEAS : STILL_IDEAS;
+  const promptRef = useRef<HTMLTextAreaElement>(null);
+  // A reference token goes in at the prompt's cursor (or the end), spaced from its neighbours.
+  const insertToken = (token: string) => {
+    const el = promptRef.current;
+    const text = l.prompt;
+    const at = el && document.activeElement === el ? el.selectionStart : text.length;
+    const before = text.slice(0, at);
+    const after = text.slice(at);
+    const pre = before && !/\s$/.test(before) ? ' ' : '';
+    const post = after && !/^\s/.test(after) ? ' ' : '';
+    props.onPatch({ prompt: before + pre + token + post + after });
+    const caret = (before + pre + token).length;
+    window.setTimeout(() => {
+      el?.focus();
+      el?.setSelectionRange(caret, caret);
+    }, 0);
+  };
   const timing = layerTiming(o);
   // An offset of one loop is no offset: the slider spans one loop as the layer plays it.
   const offsetMax = Math.max(0.5, Math.round((version?.duration || o.duration || 5) * (props.loopSpeed || 1) * 20) / 20);
@@ -315,11 +337,22 @@ export function Inspector(props: InspectorProps) {
       </label>
       <textarea
         id="sc-prompt"
+        ref={promptRef}
         className="sc-prompt"
         value={l.prompt}
         rows={4}
         placeholder={motion ? 'e.g. the waterfall flows and mist drifts up (leave empty for natural ambient motion)' : 'e.g. replace the sky with a stormy sunset'}
         onChange={(e) => props.onPatch({ prompt: e.target.value })}
+      />
+      <References
+        layer={l}
+        onInsert={insertToken}
+        onChange={(refs, prompt) => {
+          props.onOptions({ refs });
+          if (prompt !== l.prompt) props.onPatch({ prompt });
+        }}
+        onPickLibrary={props.onPickLibrary}
+        onPickFiles={props.onPickFiles}
       />
       <div className="sc-ideas">
         {ideas.map((idea) => (

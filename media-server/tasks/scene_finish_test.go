@@ -573,3 +573,124 @@ func TestSceneRefinishVersion(t *testing.T) {
 		t.Error("an unrelated file has no crop")
 	}
 }
+
+func TestSceneRefTokensAndChecks(t *testing.T) {
+	dir := t.TempDir()
+	mk := func(name string) string {
+		p := filepath.Join(dir, name)
+		_ = os.WriteFile(p, []byte("x"), 0644)
+		return p
+	}
+	opts := map[string]any{"refs": []any{
+		map[string]any{"path": mk("jacket.png"), "note": "the jacket"},
+		map[string]any{"path": mk("walk.mp4")},
+		map[string]any{"path": mk("rain.mp3"), "note": "rain on a tin roof"},
+		map[string]any{"path": mk("hat.jpg")},
+		map[string]any{"path": mk("notes.txt")}, // not media: dropped
+		map[string]any{"path": ""},
+	}}
+	refs := sceneRefs(opts)
+	if len(refs) != 4 || refs[1].Kind != "video" || refs[2].Kind != "audio" || refs[0].Note != "the jacket" {
+		t.Fatalf("refs %+v", refs)
+	}
+	if got := sceneRefTokens(SceneKindMotion, refs, false); strings.Join(got, ",") != "<Picture 2>,<Video 1>,<Audio 1>,<Picture 3>" {
+		t.Fatalf("motion tokens %v", got)
+	}
+	if got := sceneRefTokens(SceneKindMotion, refs, true); got[2] != "<Audio 2>" {
+		t.Fatalf("after the dialogue voice the first audio reference is <Audio 2>: %v", got)
+	}
+	if got := sceneRefTokens(SceneKindStill, refs, false); strings.Join(got, ",") != "<image2>,,,<image3>" {
+		t.Fatalf("edit tokens %v", got)
+	}
+	if err := checkSceneRefs(SceneKindMotion, refs, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkSceneRefs(SceneKindStill, refs, false); err == nil || !strings.Contains(err.Error(), "image references only") {
+		t.Fatalf("edit layers take images only: %v", err)
+	}
+	audios := []sceneRef{{Path: mk("a.wav"), Kind: "audio"}, {Path: mk("b.wav"), Kind: "audio"}, {Path: mk("c.wav"), Kind: "audio"}}
+	if err := checkSceneRefs(SceneKindMotion, audios, true); err == nil {
+		t.Fatal("three audio references plus the voice is over the limit")
+	}
+	if err := checkSceneRefs(SceneKindMotion, []sceneRef{{Path: filepath.Join(dir, "gone.png"), Kind: "image"}}, false); err == nil {
+		t.Fatal("a missing reference is an error")
+	}
+
+	p := sceneMotionPrompt(sceneMotionPromptInput{Motion: "the man puts on the jacket from <Picture 2>", VoiceRef: true,
+		Lines: []dialogueLine{{Text: "Hi"}},
+		Refs:  []promptRef{{Token: "<Picture 2>", Kind: "image", Note: "the jacket"}, {Token: "<Audio 2>", Kind: "audio", Note: "rain"}}})
+	for _, w := range []string{
+		"<Picture 2> is a reference image: the jacket.",
+		"<Audio 2> is reference audio: rain.",
+		"<Audio 1> is the voice-timbre reference for the first speaker (S1).",
+		"[keyframe completion + reference generation + audio reference]",
+		"Apart from what the description takes from the references, nothing new enters the frame",
+	} {
+		if !strings.Contains(p, w) {
+			t.Errorf("prompt lacks %q:\n%s", w, p)
+		}
+	}
+	if strings.Count(p, "audio reference]") != 1 || strings.Contains(p, "no people, faces") {
+		t.Errorf("prompt task/frame rules:\n%s", p)
+	}
+}
+
+// What the engine is actually given: one refs list (voice first), the
+// soundtrack of reference videos off, and the template's tokens matching.
+func TestSceneGenerateWithRefs(t *testing.T) {
+	ffmpegTest(t)
+	withSceneRoot(t)
+	q := jobqueue.NewQueue()
+	src := filepath.Join(t.TempDir(), "photo.png")
+	solidPNG(t, src, 320, 240, color.RGBA{40, 80, 120, 255})
+	s, err := CreateScene(context.Background(), src, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	media := t.TempDir()
+	img, vid, voice := filepath.Join(media, "hat.png"), filepath.Join(media, "walk.mp4"), filepath.Join(media, "voice.mp4")
+	solidPNG(t, img, 64, 64, color.RGBA{200, 0, 0, 255})
+	for _, v := range []string{vid, voice} {
+		if err := runSceneFFmpeg(context.Background(), []string{"-f", "lavfi", "-i", "color=gray:s=64x48:r=24", "-f", "lavfi", "-i", "sine=frequency=200",
+			"-t", "2", "-c:v", "libx264", "-c:a", "aac", "-shortest", v}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mask := maskDataURL(t, 320, 240, SceneRect{X: 100, Y: 80, W: 100, H: 80})
+	in := *s
+	in.Layers = []*SceneLayer{{ID: "m", Kind: SceneKindMotion, Mask: mask, Region: SceneRect{X: 60, Y: 40, W: 200, H: 160}, Prompt: "the person puts on the hat from <Picture 2>",
+		Options: map[string]any{"refs": []any{map[string]any{"path": img, "note": "a red hat"}, map[string]any{"path": vid}},
+			"dialogue": []any{map[string]any{"text": "Nice hat"}}, "voiceRef": voice}}}
+	if _, err := UpdateScene(q, s.ID, &in); err != nil {
+		t.Fatal(err)
+	}
+	s2, err := GenerateLayer(context.Background(), q, s.ID, "m")
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, _, _ := q.JobSnapshot(s2.Layers[0].Job.Chain[0], 0)
+	var refsArg, prompt string
+	novideo := false
+	for _, a := range job.Arguments {
+		switch {
+		case strings.HasPrefix(a, "--refs="):
+			refsArg = strings.TrimPrefix(a, "--refs=")
+		case strings.HasPrefix(a, "--prompt="):
+			prompt = a
+		case a == "--novideoaudio=true":
+			novideo = true
+		}
+	}
+	paths := strings.Split(refsArg, "\n")
+	if len(paths) != 3 || !strings.HasSuffix(paths[0], "voice-m.wav") || paths[1] != img || paths[2] != vid {
+		t.Fatalf("refs %q", refsArg)
+	}
+	if !novideo {
+		t.Error("a reference video's soundtrack must stay out")
+	}
+	for _, w := range []string{"<Picture 2> is a reference image: a red hat.", "<Video 1> is a reference video", "<Audio 1> is the voice-timbre reference"} {
+		if !strings.Contains(prompt, w) {
+			t.Errorf("prompt lacks %q", w)
+		}
+	}
+}

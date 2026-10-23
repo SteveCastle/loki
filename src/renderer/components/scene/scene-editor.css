@@ -796,6 +796,126 @@ body.sc-body {
   accent-color: var(--sc-accent);
 }
 
+.sc-refs {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sc-refs-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.sc-refs-add {
+  display: flex;
+  gap: 4px;
+}
+
+.sc-ref-pending {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px;
+  font-size: 12px;
+  color: var(--sc-accent);
+  background: var(--sc-accent-soft);
+  border-radius: 5px;
+}
+
+.sc-ref-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sc-ref {
+  display: grid;
+  grid-template-columns: 36px auto 1fr auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.sc-ref.self {
+  grid-template-columns: 36px auto 1fr;
+}
+
+.sc-ref.unusable {
+  opacity: 0.55;
+}
+
+.sc-ref-thumb {
+  width: 36px;
+  height: 28px;
+  object-fit: cover;
+  background: var(--sc-field);
+  border: 1px solid var(--sc-hairline);
+  border-radius: 4px;
+}
+
+.sc-ref-audio,
+.sc-ref-self {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--sc-dim);
+  font-size: 13px;
+}
+
+.sc-token {
+  padding: 1px 6px;
+  color: var(--sc-accent);
+  font: inherit;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11px;
+  white-space: nowrap;
+  background: var(--sc-accent-soft);
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.sc-token:hover {
+  border-color: var(--sc-accent);
+}
+
+.sc-token.off {
+  color: var(--sc-faint);
+  background: var(--sc-field);
+  cursor: default;
+}
+
+.sc-ref-note {
+  min-width: 0;
+  height: 24px;
+  font-size: 12px;
+}
+
+.sc-ref-tools {
+  display: flex;
+  align-items: center;
+}
+
+.sc-ref-tools button:not(.sc-row-x) {
+  width: 20px;
+  height: 22px;
+  padding: 0;
+  color: var(--sc-dim);
+  font-size: 9px;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.sc-ref-tools button:disabled {
+  opacity: 0.25;
+  cursor: default;
+}
+
 .sc-dialogue {
   display: flex;
   flex-direction: column;

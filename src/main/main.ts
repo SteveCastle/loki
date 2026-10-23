@@ -25,7 +25,7 @@ import { logEvent, installGlobalErrorHandlers } from './errorLog';
 import { withTimeout } from './async-timeout';
 import { isValidFilePath, filePathFromArgv } from './file-handling';
 import { registerStudioProtocol, openStudioWindow } from './studio-window';
-import { openSceneWindow } from './scene-window';
+import { openSceneWindow, registerScenePickRelay } from './scene-window';
 import { registerWallpaperHandlers } from './wallpaper';
 import { heicDisplayFile, isHeicPath } from './heic';
 import {
@@ -272,6 +272,7 @@ ipcMain.on('minimize', async (event) => {
 });
 
 registerWallpaperHandlers();
+registerScenePickRelay();
 
 ipcMain.on('open-external', async (event, args) => {
   const url = args[0];

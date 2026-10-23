@@ -3,6 +3,7 @@
 // the web build rides the session cookie.
 import { isElectron, mediaServerBase, store } from '../../platform';
 import type { MaskOp, Rect } from './mask';
+import type { SceneRefItem } from './refs';
 
 export type LayerKind = 'still' | 'motion';
 
@@ -81,6 +82,8 @@ export interface LayerOptions {
   dialogue?: DialogueLine[];
   /** motion: an audio or video file whose voice the first speaker speaks in */
   voiceRef?: string;
+  /** extra images (and for motion videos / audio) the generation is given; see refs.ts */
+  refs?: SceneRefItem[];
   /** motion: lock the static parts to the still (default on; see media-server/tasks/scene_lock.go) */
   lock?: boolean;
   /** motion: output at the region's size with the still's fine detail (default on) */

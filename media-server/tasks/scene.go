@@ -1020,6 +1020,125 @@ type sceneMotionPromptInput struct {
 	Lines     []dialogueLine
 	VoiceRef  bool
 	LockEdges bool
+	// Refs are the layer's own references, with the tokens the prompt uses
+	// for them (sceneRefTokens).
+	Refs []promptRef
+}
+
+// sceneRef is one reference a layer attaches to its generation (the crop
+// itself is always the first: <image1> / <Picture 1>). Kind comes from the
+// file's extension, never the client.
+type sceneRef struct {
+	Path string
+	Kind string // image | video | audio
+	Note string // what it is, in the user's words
+}
+
+// promptRef is a reference as the prompt template sees it.
+type promptRef struct {
+	Token, Kind, Note string
+}
+
+// Reference limits (besides the crop): the engines' own (loki-reshoot: 9
+// images, 3 videos, 3 audio clips in all) and a sane cap for retouch.
+const (
+	sceneMaxStillRefs = 6
+	sceneMaxRefImages = reshootMaxImages - 1
+	sceneMaxRefVideos = reshootMaxVideos
+	sceneMaxRefAudios = reshootMaxAudios
+)
+
+// sceneRefs reads a layer's references option (a JSON array of {path,
+// note}); kinds come from the extensions and unknown files are dropped.
+func sceneRefs(opts map[string]any) []sceneRef {
+	raw, ok := opts["refs"].([]any)
+	if !ok {
+		return nil
+	}
+	var out []sceneRef
+	for _, r := range raw {
+		m, ok := r.(map[string]any)
+		if !ok {
+			continue
+		}
+		p := strings.TrimSpace(optString(m, "path"))
+		kind := ""
+		switch {
+		case p == "":
+		case mediaext.IsImage(p):
+			kind = "image"
+		case mediaext.IsVideo(p):
+			kind = "video"
+		case mediaext.IsAudio(p):
+			kind = "audio"
+		}
+		if kind != "" {
+			out = append(out, sceneRef{Path: p, Kind: kind, Note: strings.TrimSpace(optString(m, "note"))})
+		}
+	}
+	return out
+}
+
+// sceneRefTokens is the token each reference answers to in a layer's prompt
+// ("" = not usable by this kind of layer). Edit layers (loki-retouch) number
+// images after the crop: <image2>, <image3>... Motion layers (loki-reshoot)
+// number per kind: <Picture 2>... after the crop, <Video 1>..., and <Audio N>
+// after the dialogue voice when there is one (it is <Audio 1>). Mirrored by
+// refTokens in the editor (scene-api.ts).
+func sceneRefTokens(layerKind string, refs []sceneRef, voice bool) []string {
+	out := make([]string, len(refs))
+	img, vid, aud := 2, 1, 1
+	if voice {
+		aud = 2
+	}
+	for i, r := range refs {
+		switch {
+		case layerKind != SceneKindMotion:
+			if r.Kind == "image" {
+				out[i] = fmt.Sprintf("<image%d>", img)
+				img++
+			}
+		case r.Kind == "image":
+			out[i] = fmt.Sprintf("<Picture %d>", img)
+			img++
+		case r.Kind == "video":
+			out[i] = fmt.Sprintf("<Video %d>", vid)
+			vid++
+		case r.Kind == "audio":
+			out[i] = fmt.Sprintf("<Audio %d>", aud)
+			aud++
+		}
+	}
+	return out
+}
+
+// checkSceneRefs validates a layer's references before a generation: the
+// files exist, the kinds suit the layer and the engine's limits hold.
+func checkSceneRefs(layerKind string, refs []sceneRef, voice bool) error {
+	n := map[string]int{}
+	for _, r := range refs {
+		if _, err := os.Stat(r.Path); err != nil {
+			return fmt.Errorf("reference not found: %s", filepath.Base(r.Path))
+		}
+		if layerKind != SceneKindMotion && r.Kind != "image" {
+			return fmt.Errorf("an Edit layer takes image references only (%s)", filepath.Base(r.Path))
+		}
+		n[r.Kind]++
+	}
+	if voice {
+		n["audio"]++
+	}
+	switch {
+	case layerKind != SceneKindMotion && n["image"] > sceneMaxStillRefs:
+		return fmt.Errorf("at most %d reference images", sceneMaxStillRefs)
+	case n["image"] > sceneMaxRefImages:
+		return fmt.Errorf("at most %d reference images", sceneMaxRefImages)
+	case n["video"] > sceneMaxRefVideos:
+		return fmt.Errorf("at most %d reference videos", sceneMaxRefVideos)
+	case n["audio"] > sceneMaxRefAudios:
+		return fmt.Errorf("at most %d audio references (the dialogue voice counts)", sceneMaxRefAudios)
+	}
+	return nil
 }
 
 // dialogueLine is one spoken line of a motion layer: who says it (empty =
@@ -1143,11 +1262,50 @@ func sceneMotionPrompt(in sceneMotionPromptInput) string {
 		"<Subject 1> (appears in [Shot 1]): fully_preserved - content, appearance, style and framing are retained.",
 		"<Picture 1> ([Shot 1] first frame): fully_preserved - the video begins from this exact composition and keeps its look.",
 	}
+	hasVisual, hasAudio := false, false
+	for _, r := range in.Refs {
+		note := strings.TrimRight(strings.TrimSpace(r.Note), ". ")
+		switch r.Kind {
+		case "image":
+			hasVisual = true
+			if note == "" {
+				note = "used as the description says"
+			}
+			defs = append(defs, r.Token+" is a reference image: "+note+".")
+			retain = append(retain, r.Token+": reference - only what the description takes from it appears.")
+		case "video":
+			hasVisual = true
+			if note == "" {
+				note = "its motion, style or content used as the description says"
+			}
+			defs = append(defs, r.Token+" is a reference video: "+note+".")
+			retain = append(retain, r.Token+": reference - followed only as the description says.")
+		case "audio":
+			hasAudio = true
+			if note == "" {
+				note = "used as the description says"
+			}
+			defs = append(defs, r.Token+" is reference audio: "+note+".")
+			retain = append(retain, r.Token+": reference - its sound is used only as the description says.")
+		}
+	}
+	if hasVisual {
+		task = strings.TrimSuffix(task, "]") + " + reference generation]"
+	}
+	if hasAudio && !strings.Contains(task, "audio reference") {
+		task = strings.TrimSuffix(task, "]") + " + audio reference]"
+	}
+	unchanged := " Nothing new enters the frame: no people, faces, animals or objects appear that are not already in <Picture 1>, and nothing is replaced."
+	if hasVisual {
+		unchanged = " Apart from what the description takes from the references, nothing new enters the frame and nothing else is replaced."
+	}
 	speech := ""
 	if talking {
 		if in.VoiceRef {
 			defs = append(defs, "<Audio 1> is the voice-timbre reference for the first speaker (S1).")
-			task = "[keyframe completion + audio reference]"
+			if !strings.Contains(task, "audio reference") {
+				task = strings.TrimSuffix(task, "]") + " + audio reference]"
+			}
 			retain = append(retain, "<Audio 1>: reference - the first speaker (S1) follows <Audio 1>'s voice timbre and delivery without copying the original signal or its words.")
 		}
 		speech = " " + dialogueText(in.Lines) + " Their lips, jaw and face move naturally and in sync with every word, with natural pauses; apart from speaking they keep their pose and expression."
@@ -1164,7 +1322,7 @@ func sceneMotionPrompt(in sceneMotionPromptInput) string {
 		"",
 		"detailed_description:",
 		"The target video keeps the exact look, rendering style, colors, lighting and framing of <Picture 1>.",
-		"[Shot 1] The shot begins exactly from <Picture 1> and stays one uninterrupted, unedited take with the same composition. " + action + speech + " Nothing new enters the frame: no people, faces, animals or objects appear that are not already in <Picture 1>, and nothing is replaced. The edges of the frame stay continuous with what surrounds them. The camera is perfectly steady, locked off on a tripod, with no movement, zoom or shake at all. " + soundLine,
+		"[Shot 1] The shot begins exactly from <Picture 1> and stays one uninterrupted, unedited take with the same composition. " + action + speech + unchanged + " The edges of the frame stay continuous with what surrounds them. The camera is perfectly steady, locked off on a tripod, with no movement, zoom or shake at all. " + soundLine,
 		"",
 		"overall_soundscape:",
 		scape,
@@ -1264,6 +1422,17 @@ func GenerateLayer(ctx context.Context, q *jobqueue.Queue, id, lid string) (*Sce
 	case SceneKindStill:
 		command = "retouch"
 		opt("prompt", prompt)
+		if refs := sceneRefs(l.Options); len(refs) > 0 {
+			if err := checkSceneRefs(SceneKindStill, refs, false); err != nil {
+				os.Remove(input)
+				return nil, err
+			}
+			paths := make([]string, len(refs))
+			for i, r := range refs {
+				paths[i] = r.Path
+			}
+			opt("refs", strings.Join(paths, "\n"))
+		}
 		if le := sceneStillLongEdge(region); le > 0 {
 			opt("longedge", strconv.Itoa(le))
 		}
@@ -1289,12 +1458,38 @@ func GenerateLayer(ctx context.Context, q *jobqueue.Queue, id, lid string) (*Sce
 				return nil, err
 			}
 			voice = v
-			opt("refs", voice)
+		}
+		refs := sceneRefs(l.Options)
+		if err := checkSceneRefs(SceneKindMotion, refs, voice != ""); err != nil {
+			os.Remove(input)
+			return nil, err
+		}
+		// One list for the engine; it numbers each kind in list order, so the
+		// voice goes first (<Audio 1>) and the rest follow sceneRefTokens.
+		var paths []string
+		if voice != "" {
+			paths = append(paths, voice)
+		}
+		tokens := sceneRefTokens(SceneKindMotion, refs, voice != "")
+		var prefs []promptRef
+		hasVideo := false
+		for i, r := range refs {
+			paths = append(paths, r.Path)
+			prefs = append(prefs, promptRef{Token: tokens[i], Kind: r.Kind, Note: r.Note})
+			hasVideo = hasVideo || r.Kind == "video"
+		}
+		if len(paths) > 0 {
+			opt("refs", strings.Join(paths, "\n"))
+		}
+		// A reference video is a visual reference: its soundtrack would become
+		// an <Audio N> of its own and shift the numbering.
+		if hasVideo {
+			opt("novideoaudio", "true")
 		}
 		opt("prompt", sceneMotionPrompt(sceneMotionPromptInput{
 			Motion: prompt, Subject: optString(l.Options, "describe"),
 			Sound: optBool(l.Options, "sound"), SoundDesc: optString(l.Options, "soundPrompt"), Voices: optBool(l.Options, "voices"),
-			Lines: lines, VoiceRef: voice != "",
+			Lines: lines, VoiceRef: voice != "", Refs: prefs,
 			LockEdges: l.Options["lock"] != false,
 		}))
 		dur := optFloat(l.Options, "duration")

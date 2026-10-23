@@ -12,6 +12,7 @@ import { Loader } from './components/layout/loader';
 import HotKeyController from './components/controls/hotkey-controller';
 import DragChipLayer from './components/controls/drag-layer';
 import { ToastSystem } from './components/controls/toast-system';
+import ScenePickBanner from './components/scene/pick-banner';
 import AutoPlayController from './components/controls/autoplay-controller';
 import { PERFORMANCE_CONSTANTS } from './constants/performance';
 import { OnboardingGate } from './onboarding/OnboardingGate';
@@ -82,6 +83,7 @@ export default function App(): JSX.Element {
         {autoPlay && <AutoPlayController />}
         <DragChipLayer />
         <ToastSystem />
+        <ScenePickBanner />
         <OnboardingGate />
       </DndProvider>
     </QueryClientProvider>
