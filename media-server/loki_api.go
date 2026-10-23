@@ -14,7 +14,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -162,48 +161,6 @@ func httpError(w http.ResponseWriter, msg string, code int) {
 
 // ---- Media handlers ----
 
-// scanMediaItem scans a row from a media query with tag join into a map
-// matching the Electron Item type: { path, weight, mtimeMs, timeStamp, elo, battles, tagLabel, height, width }
-func scanMediaItem(rows *sql.Rows) (map[string]any, error) {
-	var path string
-	var tagLabel, categoryLabel sql.NullString
-	var weight, timeStamp sql.NullFloat64
-	var createdAt sql.NullInt64
-	var height, width sql.NullInt64
-	var elo sql.NullFloat64
-	var battles sql.NullInt64
-	err := rows.Scan(&path, &tagLabel, &categoryLabel, &weight, &timeStamp, &createdAt, &height, &width, &elo, &battles)
-	if err != nil {
-		return nil, err
-	}
-	item := map[string]any{
-		"path":    path,
-		"mtimeMs": createdAt.Int64,
-	}
-	if tagLabel.Valid {
-		item["tagLabel"] = tagLabel.String
-	}
-	if weight.Valid {
-		item["weight"] = weight.Float64
-	}
-	if timeStamp.Valid {
-		item["timeStamp"] = timeStamp.Float64
-	}
-	if height.Valid {
-		item["height"] = height.Int64
-	}
-	if width.Valid {
-		item["width"] = width.Int64
-	}
-	if elo.Valid {
-		item["elo"] = elo.Float64
-	}
-	if battles.Valid {
-		item["battles"] = battles.Int64
-	}
-	return item, nil
-}
-
 func lokiMediaHandler(deps *Dependencies) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req mediaRequest
@@ -214,7 +171,7 @@ func lokiMediaHandler(deps *Dependencies) http.HandlerFunc {
 
 		if len(req.Tags) == 0 {
 			// No tags: return all media with full item fields
-			rows, err := deps.DB.Query(`
+			rows, err := deps.DB.QueryContext(r.Context(), `
 				SELECT m.path, '' AS tag_label, '' AS category_label,
 					0 AS weight, 0 AS time_stamp, 0 AS created_at,
 					m.height, m.width, m.elo, m.battles
@@ -224,19 +181,7 @@ func lokiMediaHandler(deps *Dependencies) http.HandlerFunc {
 				return
 			}
 			defer rows.Close()
-
-			var items []map[string]any
-			for rows.Next() {
-				item, err := scanMediaItem(rows)
-				if err != nil {
-					continue
-				}
-				items = append(items, item)
-			}
-			if items == nil {
-				items = []map[string]any{}
-			}
-			writeJSON(w, items)
+			streamMediaRows(w, rows, scanTagJoinItem)
 			return
 		}
 
@@ -278,25 +223,13 @@ func lokiMediaHandler(deps *Dependencies) http.HandlerFunc {
 				ORDER BY mtbc.media_path`, ph)
 		}
 
-		rows, err := deps.DB.Query(query, args...)
+		rows, err := deps.DB.QueryContext(r.Context(), query, args...)
 		if err != nil {
 			httpError(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		defer rows.Close()
-
-		var items []map[string]any
-		for rows.Next() {
-			item, err := scanMediaItem(rows)
-			if err != nil {
-				continue
-			}
-			items = append(items, item)
-		}
-		if items == nil {
-			items = []map[string]any{}
-		}
-		writeJSON(w, items)
+		streamMediaRows(w, rows, scanTagJoinItem)
 	}
 }
 
@@ -312,25 +245,13 @@ func lokiMediaSearchHandler(deps *Dependencies) http.HandlerFunc {
 			0 AS weight, 0 AS time_stamp, 0 AS created_at,
 			m.height, m.width, m.elo, m.battles
 			FROM media m WHERE m.description LIKE ? ORDER BY m.path`
-		rows, err := deps.DB.Query(query, "%"+req.Description+"%")
+		rows, err := deps.DB.QueryContext(r.Context(), query, "%"+req.Description+"%")
 		if err != nil {
 			httpError(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		defer rows.Close()
-
-		var items []map[string]any
-		for rows.Next() {
-			item, err := scanMediaItem(rows)
-			if err != nil {
-				continue
-			}
-			items = append(items, item)
-		}
-		if items == nil {
-			items = []map[string]any{}
-		}
-		writeJSON(w, items)
+		streamMediaRows(w, rows, scanTagJoinItem)
 	}
 }
 
@@ -463,18 +384,6 @@ func searchComposite(ctx context.Context, db *sql.DB, p Predicate, terms []tasks
 
 // sortItemsByScore orders items (each a map with "path") by descending score
 // from scoreByPath, attaching item["score"]. Stable for equal scores.
-func sortItemsByScore(items []map[string]any, scoreByPath map[string]float32) {
-	for _, it := range items {
-		p, _ := it["path"].(string)
-		it["score"] = scoreByPath[p]
-	}
-	sort.SliceStable(items, func(a, b int) bool {
-		pa, _ := items[a]["path"].(string)
-		pb, _ := items[b]["path"].(string)
-		return scoreByPath[pa] > scoreByPath[pb]
-	})
-}
-
 // isVisualPredicate reports whether p is resolved via the embedding backend —
 // the same guard the resolution loop and platform.ts use: a visual type with a
 // non-empty value.
@@ -693,60 +602,28 @@ func lokiMediaQueryHandler(deps *Dependencies) http.HandlerFunc {
 		}
 
 		querySQL, params := BuildMediaQuery(req.Predicates, req.Mode)
-		rows, err := deps.DB.Query(querySQL, params...)
+		// QueryContext: a superseded query (the user edited a chip) stops
+		// scanning when its client goes away instead of running to the end.
+		rows, err := deps.DB.QueryContext(r.Context(), querySQL, params...)
 		if err != nil {
 			httpError(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		defer rows.Close()
 
-		items := []map[string]any{}
-		for rows.Next() {
-			var path string
-			var elo sql.NullFloat64
-			var height, width sql.NullInt64
-			var weight sql.NullFloat64
-			var tagLabel sql.NullString
-			var timeStamp sql.NullFloat64
-			var createdAt sql.NullInt64
-			var battles sql.NullInt64
-			// 9 columns, matching BuildMediaQuery — description is filtered but
-			// never selected: path, elo, height, width, weight, tag_label,
-			// time_stamp, created_at, battles.
-			if err := rows.Scan(&path, &elo, &height, &width,
-				&weight, &tagLabel, &timeStamp, &createdAt, &battles); err != nil {
-				continue
-			}
-			item := map[string]any{"path": path, "mtimeMs": createdAt.Int64}
-			if elo.Valid {
-				item["elo"] = elo.Float64
-			}
-			if battles.Valid {
-				item["battles"] = battles.Int64
-			}
-			if height.Valid {
-				item["height"] = height.Int64
-			}
-			if width.Valid {
-				item["width"] = width.Int64
-			}
-			if weight.Valid {
-				item["weight"] = weight.Float64
-			}
-			if tagLabel.Valid {
-				item["tagLabel"] = tagLabel.String
-			}
-			if timeStamp.Valid {
-				item["timeStamp"] = timeStamp.Float64
-			}
-			items = append(items, item)
+		if !hasVisual {
+			// Plain SQL order: stream it, so a million-row result never sits
+			// in memory.
+			streamMediaRows(w, rows, scanQueryItem)
+			return
 		}
-
-		if hasVisual {
-			sortItemsByScore(items, scoreByPath)
+		items, err := collectMediaRows(rows, scanQueryItem)
+		if err != nil {
+			httpError(w, err.Error(), http.StatusInternalServerError)
+			return
 		}
-
-		writeJSON(w, items)
+		sortMediaItemsByScore(items, scoreByPath)
+		writeMediaItems(w, items)
 	}
 }
 
