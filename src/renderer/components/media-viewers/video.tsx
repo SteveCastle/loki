@@ -42,21 +42,22 @@ const fetchMediaPreview =
     cache: 'thumbnail_path_1200' | 'thumbnail_path_600' | false,
     timeStamp: number
   ) =>
-  async (): Promise<string | null> => {
+  async ({ signal }: { signal?: AbortSignal }): Promise<string | null> => {
     const path = await platformFetchMediaPreview(
       item,
       cache,
-      timeStamp
+      timeStamp,
+      signal
     );
     return path;
   };
 
-// return true if the input is a valid value for currentTime
 function shallowEqualPlayer<T extends Record<string, unknown>>(a: T, b: T) {
   for (const k in a) if (a[k] !== b[k]) return false;
   return true;
 }
 
+// return true if the input is a valid value for currentTime
 function validateCurrentTime(currentTime: number) {
   return !isNaN(currentTime) && currentTime >= 0 && currentTime !== Infinity;
 }

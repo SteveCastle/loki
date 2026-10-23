@@ -26,8 +26,8 @@ type Props = {
 
 const fetchMediaPreview =
   (item: string, cache: 'thumbnail_path_1200' | 'thumbnail_path_600' | false) =>
-  async (): Promise<string | null> => {
-    const path = await platformFetchMediaPreview(item, cache);
+  async ({ signal }: { signal?: AbortSignal }): Promise<string | null> => {
+    const path = await platformFetchMediaPreview(item, cache, undefined, signal);
     return path;
   };
 

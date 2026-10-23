@@ -144,11 +144,12 @@ async function handleResponse(res: Response): Promise<any> {
   return text ? JSON.parse(text) : undefined;
 }
 
-function jsonPost(url: string, body: any): Promise<any> {
+function jsonPost(url: string, body: any, signal?: AbortSignal): Promise<any> {
   return authFetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
+    signal,
   }).then(handleResponse);
 }
 
@@ -464,7 +465,10 @@ export let loadMediaByQuery: (
 export let fetchMediaPreview: (
   path: string,
   cache: ImageCache,
-  timeStamp?: number
+  timeStamp?: number,
+  // Web only: aborts the request when the tile unmounts, which also stops
+  // the server queueing a thumbnail nobody will see.
+  signal?: AbortSignal
 ) => Promise<string | null>;
 
 export let fetchTagPreview: (tag: string) => Promise<string | null>;
@@ -597,7 +601,9 @@ if (isElectron) {
     const library = await res.json();
     return { library: library || [], cursor: 0 };
   };
-  fetchMediaPreview = window.electron.fetchMediaPreview;
+  // Three args only: an AbortSignal can't cross IPC.
+  fetchMediaPreview = (path, cache, timeStamp) =>
+    window.electron.fetchMediaPreview(path, cache, timeStamp);
   fetchTagPreview = window.electron.fetchTagPreview;
   fetchTagCount = window.electron.fetchTagCount;
   listThumbnails = window.electron.listThumbnails;
@@ -848,8 +854,8 @@ if (isElectron) {
     return { library: library || [], cursor: 0 };
   };
 
-  fetchMediaPreview = (path, cache, timeStamp) =>
-    jsonPost('/api/media/preview', { path, cache, timeStamp });
+  fetchMediaPreview = (path, cache, timeStamp, signal) =>
+    jsonPost('/api/media/preview', { path, cache, timeStamp }, signal);
 
   fetchTagPreview = (tag) =>
     jsonPost('/api/tags/preview', { label: tag });
