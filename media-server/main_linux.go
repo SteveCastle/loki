@@ -2493,13 +2493,19 @@ func main() {
 	startAutoScheduler(deps)
 
 	// â€“â€“â€“ embedding vector index (best-effort, non-fatal) â€“â€“â€“
-	log.Printf("Building embedding search indexâ€¦")
-	if model, n, err := tasks.RebuildActiveIndex(db, indexProgressFn("embedding index")); err == nil {
-		log.Printf("embedding index loaded: %d vectors (model %s)", n, model)
-	} else {
-		log.Printf("embedding index unavailable (model %s), using brute-force: %v", model, err)
-	}
-	buildFaceIndexAtStartup(db)
+	//
+	// Built in the background: on a large library loading every vector takes
+	// a long time, and the HTTP server used to stay down for all of it.
+	// Searches brute-force until each index is installed.
+	go func() {
+		log.Printf("Building embedding search indexâ€¦")
+		if model, n, err := tasks.RebuildActiveIndex(db, indexProgressFn("embedding index")); err == nil {
+			log.Printf("embedding index loaded: %d vectors (model %s)", n, model)
+		} else {
+			log.Printf("embedding index unavailable (model %s), using brute-force: %v", model, err)
+		}
+		buildFaceIndexAtStartup(db)
+	}()
 
 	// Initialize renderer auth middleware
 	renderer.AuthMiddleware = func(next http.Handler, role renderer.AuthRole) http.Handler {

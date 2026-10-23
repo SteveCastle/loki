@@ -2530,13 +2530,19 @@ func main() {
 	// Build the in-memory index from all stored vectors so SimilarByPath
 	// searches RAM instead of re-reading the DB on every request.  If the
 	// media_embedding table is empty (or missing) this logs and continues.
-	log.Printf("Building embedding search index…")
-	if model, n, err := tasks.RebuildActiveIndex(db, indexProgressFn("embedding index")); err == nil {
-		log.Printf("embedding index loaded: %d vectors (model %s)", n, model)
-	} else {
-		log.Printf("embedding index unavailable (model %s), using brute-force: %v", model, err)
-	}
-	buildFaceIndexAtStartup(db)
+	//
+	// Built in the background: on a large library loading every vector takes
+	// a long time, and the HTTP server used to stay down for all of it.
+	// Searches brute-force until each index is installed.
+	go func() {
+		log.Printf("Building embedding search index…")
+		if model, n, err := tasks.RebuildActiveIndex(db, indexProgressFn("embedding index")); err == nil {
+			log.Printf("embedding index loaded: %d vectors (model %s)", n, model)
+		} else {
+			log.Printf("embedding index unavailable (model %s), using brute-force: %v", model, err)
+		}
+		buildFaceIndexAtStartup(db)
+	}()
 
 	// Initialize renderer auth middleware
 	renderer.AuthMiddleware = func(next http.Handler, role renderer.AuthRole) http.Handler {
