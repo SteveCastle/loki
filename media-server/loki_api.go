@@ -161,6 +161,53 @@ func httpError(w http.ResponseWriter, msg string, code int) {
 	http.Error(w, fmt.Sprintf(`{"error":%q}`, msg), code)
 }
 
+// ---- Transactions ----
+
+type sqlStmt struct {
+	query string
+	args  []any
+}
+
+func stmt(query string, args ...any) sqlStmt { return sqlStmt{query, args} }
+
+func execEach(tx *sql.Tx, stmts ...sqlStmt) error {
+	for _, s := range stmts {
+		if _, err := tx.Exec(s.query, s.args...); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// runTx runs fn in a transaction and commits only if every statement
+// succeeded; otherwise it rolls back and writes the error response
+// (409 for a uniqueness conflict, e.g. renaming onto an existing label).
+// Reports whether the transaction committed. The multi-statement handlers
+// used to ignore each Exec and commit regardless, so a rename onto an
+// existing label could move the assignments while the label update failed,
+// and still answer 200.
+func runTx(w http.ResponseWriter, db *sql.DB, fn func(tx *sql.Tx) error) bool {
+	tx, err := db.Begin()
+	if err != nil {
+		httpError(w, err.Error(), http.StatusInternalServerError)
+		return false
+	}
+	if err := fn(tx); err != nil {
+		_ = tx.Rollback()
+		code := http.StatusInternalServerError
+		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
+			code = http.StatusConflict
+		}
+		httpError(w, err.Error(), code)
+		return false
+	}
+	if err := tx.Commit(); err != nil {
+		httpError(w, err.Error(), http.StatusInternalServerError)
+		return false
+	}
+	return true
+}
+
 // ---- Media handlers ----
 
 func lokiMediaHandler(deps *Dependencies) http.HandlerFunc {
@@ -1567,14 +1614,13 @@ func lokiRenameTagHandler(deps *Dependencies) http.HandlerFunc {
 			httpError(w, "bad request", http.StatusBadRequest)
 			return
 		}
-		tx, err := deps.DB.Begin()
-		if err != nil {
-			httpError(w, err.Error(), http.StatusInternalServerError)
+		if !runTx(w, deps.DB, func(tx *sql.Tx) error {
+			return execEach(tx,
+				stmt("UPDATE tag SET label = ? WHERE label = ?", req.NewLabel, req.Label),
+				stmt("UPDATE media_tag_by_category SET tag_label = ? WHERE tag_label = ?", req.NewLabel, req.Label))
+		}) {
 			return
 		}
-		tx.Exec("UPDATE tag SET label = ? WHERE label = ?", req.NewLabel, req.Label)
-		tx.Exec("UPDATE media_tag_by_category SET tag_label = ? WHERE tag_label = ?", req.NewLabel, req.Label)
-		tx.Commit()
 		writeJSON(w, map[string]string{})
 	}
 }
@@ -1598,14 +1644,13 @@ func lokiDeleteTagHandler(deps *Dependencies) http.HandlerFunc {
 			httpError(w, "bad request", http.StatusBadRequest)
 			return
 		}
-		tx, err := deps.DB.Begin()
-		if err != nil {
-			httpError(w, err.Error(), http.StatusInternalServerError)
+		if !runTx(w, deps.DB, func(tx *sql.Tx) error {
+			return execEach(tx,
+				stmt("DELETE FROM media_tag_by_category WHERE tag_label = ?", req.Label),
+				stmt("DELETE FROM tag WHERE label = ?", req.Label))
+		}) {
 			return
 		}
-		tx.Exec("DELETE FROM media_tag_by_category WHERE tag_label = ?", req.Label)
-		tx.Exec("DELETE FROM tag WHERE label = ?", req.Label)
-		tx.Commit()
 		// Cascade may have removed paths from the swipe pool.
 		media.InvalidateRandomSampleCache()
 		writeJSON(w, map[string]string{})
@@ -1619,15 +1664,16 @@ func lokiOrderTagsHandler(deps *Dependencies) http.HandlerFunc {
 			httpError(w, "bad request", http.StatusBadRequest)
 			return
 		}
-		tx, err := deps.DB.Begin()
-		if err != nil {
-			httpError(w, err.Error(), http.StatusInternalServerError)
+		if !runTx(w, deps.DB, func(tx *sql.Tx) error {
+			for i, label := range req.Labels {
+				if _, err := tx.Exec("UPDATE tag SET weight = ? WHERE label = ?", float64(i), label); err != nil {
+					return err
+				}
+			}
+			return nil
+		}) {
 			return
 		}
-		for i, label := range req.Labels {
-			tx.Exec("UPDATE tag SET weight = ? WHERE label = ?", float64(i), label)
-		}
-		tx.Commit()
 		writeJSON(w, map[string]string{})
 	}
 }
@@ -1767,15 +1813,14 @@ func lokiRenameCategoryHandler(deps *Dependencies) http.HandlerFunc {
 			httpError(w, "bad request", http.StatusBadRequest)
 			return
 		}
-		tx, err := deps.DB.Begin()
-		if err != nil {
-			httpError(w, err.Error(), http.StatusInternalServerError)
+		if !runTx(w, deps.DB, func(tx *sql.Tx) error {
+			return execEach(tx,
+				stmt("UPDATE category SET label = ? WHERE label = ?", req.NewLabel, req.Label),
+				stmt("UPDATE tag SET category_label = ? WHERE category_label = ?", req.NewLabel, req.Label),
+				stmt("UPDATE media_tag_by_category SET category_label = ? WHERE category_label = ?", req.NewLabel, req.Label))
+		}) {
 			return
 		}
-		tx.Exec("UPDATE category SET label = ? WHERE label = ?", req.NewLabel, req.Label)
-		tx.Exec("UPDATE tag SET category_label = ? WHERE category_label = ?", req.NewLabel, req.Label)
-		tx.Exec("UPDATE media_tag_by_category SET category_label = ? WHERE category_label = ?", req.NewLabel, req.Label)
-		tx.Commit()
 		writeJSON(w, map[string]string{})
 	}
 }
@@ -1812,15 +1857,14 @@ func lokiDeleteCategoryHandler(deps *Dependencies) http.HandlerFunc {
 			httpError(w, "bad request", http.StatusBadRequest)
 			return
 		}
-		tx, err := deps.DB.Begin()
-		if err != nil {
-			httpError(w, err.Error(), http.StatusInternalServerError)
+		if !runTx(w, deps.DB, func(tx *sql.Tx) error {
+			return execEach(tx,
+				stmt("DELETE FROM media_tag_by_category WHERE category_label = ?", req.Label),
+				stmt("DELETE FROM tag WHERE category_label = ?", req.Label),
+				stmt("DELETE FROM category WHERE label = ?", req.Label))
+		}) {
 			return
 		}
-		tx.Exec("DELETE FROM media_tag_by_category WHERE category_label = ?", req.Label)
-		tx.Exec("DELETE FROM tag WHERE category_label = ?", req.Label)
-		tx.Exec("DELETE FROM category WHERE label = ?", req.Label)
-		tx.Commit()
 		// Cascade may have removed paths from the swipe pool.
 		media.InvalidateRandomSampleCache()
 		writeJSON(w, map[string]string{})
@@ -1903,23 +1947,26 @@ func lokiCreateAssignmentHandler(deps *Dependencies) http.HandlerFunc {
 			httpError(w, "missing required fields", http.StatusBadRequest)
 			return
 		}
-		tx, err := deps.DB.Begin()
-		if err != nil {
-			httpError(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		// Get current count for weight calculation
+		// Get current count for weight calculation. Read outside the write
+		// transaction: a read-then-write transaction in WAL fails with
+		// SQLITE_BUSY_SNAPSHOT (no busy wait) if another writer commits between.
 		var count int
 		deps.DB.QueryRow("SELECT COUNT(*) FROM media_tag_by_category WHERE tag_label = ?", req.TagLabel).Scan(&count)
-		for _, p := range paths {
-			tx.Exec(`INSERT INTO media_tag_by_category
-				(media_path, tag_label, category_label, weight, time_stamp, created_at)
-				VALUES (?, ?, ?, ?, ?, strftime('%s','now'))
-				ON CONFLICT(media_path, tag_label, category_label, time_stamp) DO NOTHING`,
-				p, req.TagLabel, req.CategoryLabel, count, req.TimeStamp)
-			count++
+		if !runTx(w, deps.DB, func(tx *sql.Tx) error {
+			for _, p := range paths {
+				if _, err := tx.Exec(`INSERT INTO media_tag_by_category
+					(media_path, tag_label, category_label, weight, time_stamp, created_at)
+					VALUES (?, ?, ?, ?, ?, strftime('%s','now'))
+					ON CONFLICT(media_path, tag_label, category_label, time_stamp) DO NOTHING`,
+					p, req.TagLabel, req.CategoryLabel, count, req.TimeStamp); err != nil {
+					return err
+				}
+				count++
+			}
+			return nil
+		}) {
+			return
 		}
-		tx.Commit()
 		// New assignments may add previously-untagged paths to the swipe pool.
 		media.InvalidateRandomSampleCache()
 
