@@ -13,6 +13,7 @@ type CachedConcept = {
   weight: number;
   description?: string;
   thumbnail_path_600?: string | null;
+  group?: string | null;
 };
 
 type Props = {
@@ -20,6 +21,9 @@ type Props = {
   handleClose: () => void;
   currentValue?: string;
   currentDescription?: string;
+  // Create flow only: the tag group the new tag goes into ("+" on a group
+  // header). Absent = ungrouped, as before groups existed.
+  groupLabel?: string;
 };
 
 export default function NewTagModal({
@@ -27,6 +31,7 @@ export default function NewTagModal({
   handleClose,
   currentValue = '',
   currentDescription = '',
+  groupLabel,
 }: Props) {
   const [newLabel, setNewLabel] = useState<string>(currentValue);
   const [description, setDescription] = useState<string>(currentDescription);
@@ -118,6 +123,7 @@ export default function NewTagModal({
           weight: maxWeight + 1,
           description,
           thumbnail_path_600: null,
+          group: groupLabel ?? null,
         };
       };
 
@@ -144,6 +150,9 @@ export default function NewTagModal({
 
       try {
         await invoke('create-tag', [submittedLabel, categoryLabel, 0]);
+        if (groupLabel) {
+          await invoke('set-tag-group', [submittedLabel, groupLabel]);
+        }
         if (description) {
           await invoke('update-tag-description', [submittedLabel, description]);
         }

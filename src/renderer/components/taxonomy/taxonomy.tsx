@@ -7,7 +7,7 @@ import {
   useMemo,
 } from 'react';
 import { useSelector } from '@xstate/react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { debounce } from 'lodash';
 import { Tooltip } from 'react-tooltip';
 import { GlobalStateContext } from '../../state';
@@ -21,6 +21,10 @@ import 'react-loading-skeleton/dist/skeleton.css';
 import Tag from './tag';
 import VirtualizedTagGrid from './virtualized-tag-grid';
 import TagListView from './tag-list-view';
+import GroupedTagView from './grouped-tag-view';
+import TagGroupModal from './tag-group-modal';
+import { TagGroup, TagGrouping } from './tag-groups';
+import { setCategoryTagGrouping } from './tag-group-actions';
 import NewTagModal from './new-tag-modal';
 import NewCategoryModal from './new-category-modal';
 import PeopleGrid, {
@@ -55,6 +59,8 @@ type Concept = {
   // Optional so the shared useTagSearch results (TagConcept, description?:) are
   // assignable to Concept-typed row renderers.
   description?: string;
+  // Tag group within the category; only the per-category load carries it.
+  group?: string | null;
 };
 
 type TagViewMode = 'card' | 'list';
@@ -64,6 +70,9 @@ type Category = {
   weight: number;
   description: string;
   tagViewMode?: TagViewMode;
+  // 'off' lists the category's tags flat, ignoring its tag groups. Absent
+  // (older server) reads as 'on'.
+  tagGrouping?: TagGrouping;
   // Client-side entries that are not category rows (Duplicates): no tags,
   // no rename/delete/drop-to-move, no "+" — a panel behind a category label.
   synthetic?: boolean;
@@ -100,6 +109,12 @@ async function loadCategoryTags(categoryLabel: string): Promise<Concept[]> {
   if (!categoryLabel) return [];
   const result = await invoke('load-category-tags', [categoryLabel]);
   return (result as Concept[]) ?? [];
+}
+
+async function loadTagGroups(categoryLabel: string): Promise<TagGroup[]> {
+  if (!categoryLabel) return [];
+  const result = await invoke('load-tag-groups', [categoryLabel]);
+  return Array.isArray(result) ? (result as TagGroup[]) : [];
 }
 
 // The sidebar deliberately searches EVERYTHING, machine-suggested tags
@@ -200,6 +215,15 @@ export default function Taxonomy() {
   const [addingCategory, setAddingCategory] = useState<boolean>(false);
   const [editingTag, setEditingTag] = useState<string | null>(null);
   const [editingCategory, setEditingCategory] = useState<string | null>(null);
+  // Group header "+": the group a new tag goes into.
+  const [addingTagInGroup, setAddingTagInGroup] = useState<string | null>(
+    null
+  );
+  // Create (label '') or rename (label = current name) a tag group.
+  const [groupModal, setGroupModal] = useState<{ label: string } | null>(
+    null
+  );
+  const queryClient = useQueryClient();
   const activeCategory = useSelector(
     libraryService,
     (state) => state.context.activeCategory
@@ -249,6 +273,19 @@ export default function Taxonomy() {
       () => loadCategoryTags(activeCategory),
       { enabled: !!activeCategory && !!initSessionId, staleTime: Infinity }
     );
+
+  // Tag groups are a user-category feature: the machine-managed categories
+  // (Suggested, People, Duplicates) never show or fetch them.
+  const groupsSupported =
+    !!activeCategory && !SYSTEM_CATEGORIES.has(activeCategory);
+  const {
+    data: activeCategoryGroups,
+    isFetching: isFetchingCategoryGroups,
+  } = useQuery<TagGroup[], Error>(
+    ['taxonomy', 'tag-groups', activeCategory, initSessionId],
+    () => loadTagGroups(activeCategory),
+    { enabled: groupsSupported && !!initSessionId, staleTime: Infinity }
+  );
 
   // Warmed as soon as the search input gains focus (or, as a fallback, on the
   // first keystroke) so the fetch + worker indexing overlap with the user
@@ -306,6 +343,14 @@ export default function Taxonomy() {
     for (const c of categories) map[c.label] = c;
     return map;
   }, [categories]);
+
+  const activeTagGrouping: TagGrouping =
+    categoriesByLabel[activeCategory]?.tagGrouping === 'off' ? 'off' : 'on';
+  const hasTagGroups = groupsSupported && (activeCategoryGroups?.length ?? 0) > 0;
+  // Grouped layout only when browsing (search spans categories), the category
+  // has groups, and its toggle is on. Otherwise: the flat list, unchanged.
+  const groupingActive =
+    !tagFilter && hasTagGroups && activeTagGrouping === 'on';
 
   // Ensure activeCategory is valid; if not, reset to the first available category.
   // Suspended while a search is active — during search no category should be selected.
@@ -587,18 +632,59 @@ export default function Taxonomy() {
           </div>
         </div>
         {activeCategory && canWrite && activeCategory !== DUPLICATES_CATEGORY && (
-          <div
-            className={`new-tag`}
-            onClick={() =>
-              // People is face-managed: "+" creates a person (which creates
-              // its tag through the server bridge), not a bare tag — a bare
-              // tag in People would have no person row behind it.
-              activeCategory === PEOPLE_CATEGORY
-                ? setAddingPerson(true)
-                : setAddingTag(true)
-            }
-          >
-            <div className="tag-label">+</div>
+          <div className="new-tag-column">
+            <div
+              className={`new-tag`}
+              onClick={() =>
+                // People is face-managed: "+" creates a person (which creates
+                // its tag through the server bridge), not a bare tag — a bare
+                // tag in People would have no person row behind it.
+                activeCategory === PEOPLE_CATEGORY
+                  ? setAddingPerson(true)
+                  : setAddingTag(true)
+              }
+            >
+              <div className="tag-label">+</div>
+            </div>
+            {groupsSupported && !tagFilter && (
+              <button
+                className="tag-group-control"
+                data-tooltip-id="new-tag-group"
+                data-tooltip-delay-show={500}
+                onClick={() => setGroupModal({ label: '' })}
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+                  <path d="M12 10.5v5M9.5 13h5" />
+                </svg>
+              </button>
+            )}
+            {hasTagGroups && !tagFilter && (
+              <button
+                className={`tag-group-control ${
+                  activeTagGrouping === 'on' ? 'active' : ''
+                }`}
+                data-tooltip-id="toggle-tag-groups"
+                data-tooltip-content={
+                  activeTagGrouping === 'on'
+                    ? 'Groups on: click to list tags flat, ignoring groups'
+                    : 'Groups off: click to show tags under their groups'
+                }
+                data-tooltip-delay-show={500}
+                onClick={() =>
+                  setCategoryTagGrouping(
+                    queryClient,
+                    libraryService,
+                    activeCategory,
+                    activeTagGrouping === 'on' ? 'off' : 'on'
+                  )
+                }
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
+                  <path d="M4 5h16M7 9h13M7 12h13M4 16h16M7 20h13" />
+                </svg>
+              </button>
+            )}
           </div>
         )}
         {(() => {
@@ -658,9 +744,14 @@ export default function Taxonomy() {
             // means React Query hasn't returned yet; once a category is cached
             // or after an optimistic mutation we keep prior data and skip this
             // branch so the panel doesn't flash empty on refetch.
+            // Groups are waited for too, so a grouped category doesn't flash
+            // flat for a frame before its headers arrive.
             const isLoadingTags = tagFilter
               ? allTagsData === undefined && isFetchingAllTags
-              : activeCategoryTags === undefined && isFetchingCategoryTags;
+              : (activeCategoryTags === undefined && isFetchingCategoryTags) ||
+                (groupsSupported &&
+                  activeCategoryGroups === undefined &&
+                  isFetchingCategoryGroups);
             if (isLoadingTags) {
               if (activeViewMode === 'list') {
                 return (
@@ -685,6 +776,21 @@ export default function Taxonomy() {
                     ))}
                   </SkeletonTheme>
                 </div>
+              );
+            }
+            if (groupingActive) {
+              return (
+                <GroupedTagView
+                  category={activeCategory}
+                  tags={tags}
+                  groups={activeCategoryGroups ?? []}
+                  viewMode={activeViewMode}
+                  selectedTags={selectedTags}
+                  isDisabled={isDisabled}
+                  handleEditAction={setEditingTag}
+                  onAddTagToGroup={setAddingTagInGroup}
+                  onRenameGroup={(label) => setGroupModal({ label })}
+                />
               );
             }
             if (activeViewMode === 'list') {
@@ -866,6 +972,21 @@ export default function Taxonomy() {
           handleClose={() => setAddingTag(false)}
         />
       ) : null}
+      {activeCategory && addingTagInGroup !== null ? (
+        <NewTagModal
+          categoryLabel={activeCategory}
+          groupLabel={addingTagInGroup}
+          handleClose={() => setAddingTagInGroup(null)}
+        />
+      ) : null}
+      {activeCategory && groupModal ? (
+        <TagGroupModal
+          categoryLabel={activeCategory}
+          groups={activeCategoryGroups ?? []}
+          currentValue={groupModal.label}
+          handleClose={() => setGroupModal(null)}
+        />
+      ) : null}
       {addingPerson ? (
         <PersonEditModal
           person={null}
@@ -919,6 +1040,11 @@ export default function Taxonomy() {
             (categoriesByLabel[editingCategory]?.tagViewMode as TagViewMode) ||
             'card'
           }
+          currentTagGrouping={
+            categoriesByLabel[editingCategory]?.tagGrouping === 'off'
+              ? 'off'
+              : 'on'
+          }
         />
       ) : null}
       <Tooltip
@@ -931,6 +1057,12 @@ export default function Taxonomy() {
         content={`Apply tag to all media in list view.`}
         place="right"
       />
+      <Tooltip
+        id="new-tag-group"
+        content={`New tag group in this category.`}
+        place="right"
+      />
+      <Tooltip id="toggle-tag-groups" place="right" />
       <Tooltip
         id="apply-tag-preview"
         content={`Update tag image when aplying tag.`}

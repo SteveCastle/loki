@@ -260,6 +260,26 @@ func buildExportDB(deps *Dependencies, dbPath string, selected []string) (map[st
 		3); err != nil {
 		return nil, fmt.Errorf("tag: %w", err)
 	}
+	// Tag groups (visual only) ride along: the groups, each tag's group, and
+	// the per-category grouping toggle.
+	if err := copyRows(src, tx,
+		`SELECT category_label, label, weight FROM tag_group`,
+		`INSERT OR IGNORE INTO tag_group(category_label, label, weight) VALUES(?,?,?)`,
+		3); err != nil {
+		return nil, fmt.Errorf("tag_group: %w", err)
+	}
+	if err := copyRows(src, tx,
+		`SELECT group_label, label FROM tag WHERE group_label IS NOT NULL`,
+		`UPDATE tag SET group_label = ? WHERE label = ?`,
+		2); err != nil {
+		return nil, fmt.Errorf("tag group_label: %w", err)
+	}
+	if err := copyRows(src, tx,
+		`SELECT tag_grouping, label FROM category WHERE tag_grouping IS NOT NULL`,
+		`UPDATE category SET tag_grouping = ? WHERE label = ?`,
+		2); err != nil {
+		return nil, fmt.Errorf("category tag_grouping: %w", err)
+	}
 
 	// media (paths relativized, preview/thumbnails nulled)
 	mrows, err := src.Query(`

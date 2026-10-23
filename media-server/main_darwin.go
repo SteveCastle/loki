@@ -2627,6 +2627,7 @@ func main() {
 	mux.HandleFunc("/api/taxonomy/tags", renderer.ApplyMiddlewares(lokiTaxonomyTagsHandler(deps), renderer.RolePublicRead))
 	mux.HandleFunc("/api/taxonomy/tag", renderer.ApplyMiddlewares(lokiTaxonomyTagHandler(deps), renderer.RolePublicRead))
 	mux.HandleFunc("/api/taxonomy/category-count", renderer.ApplyMiddlewares(lokiCategoryCountHandler(deps), renderer.RolePublicRead))
+	mux.HandleFunc("/api/taxonomy/groups", renderer.ApplyMiddlewares(lokiTagGroupsHandler(deps), renderer.RolePublicRead))
 
 	mux.HandleFunc("/api/tags", renderer.ApplyMiddlewares(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
@@ -2640,6 +2641,7 @@ func main() {
 	mux.HandleFunc("/api/tags/move", renderer.ApplyMiddlewares(lokiMoveTagHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/tags/order", renderer.ApplyMiddlewares(lokiOrderTagsHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/tags/weight", renderer.ApplyMiddlewares(lokiUpdateTagWeightHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/tags/group", renderer.ApplyMiddlewares(lokiSetTagGroupHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/tags/timestamp", renderer.ApplyMiddlewares(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodPut:
@@ -2661,6 +2663,18 @@ func main() {
 	}, renderer.RoleAdmin))
 	mux.HandleFunc("/api/categories/rename", renderer.ApplyMiddlewares(lokiRenameCategoryHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/categories/tag-view-mode", renderer.ApplyMiddlewares(lokiUpdateCategoryTagViewModeHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/categories/tag-grouping", renderer.ApplyMiddlewares(lokiUpdateCategoryTagGroupingHandler(deps), renderer.RoleAdmin))
+
+	mux.HandleFunc("/api/tag-groups", renderer.ApplyMiddlewares(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPost:
+			lokiCreateTagGroupHandler(deps)(w, r)
+		case http.MethodDelete:
+			lokiDeleteTagGroupHandler(deps)(w, r)
+		}
+	}, renderer.RoleAdmin))
+	mux.HandleFunc("/api/tag-groups/rename", renderer.ApplyMiddlewares(lokiRenameTagGroupHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/tag-groups/weight", renderer.ApplyMiddlewares(lokiUpdateTagGroupWeightHandler(deps), renderer.RoleAdmin))
 
 	mux.HandleFunc("/api/assignments", renderer.ApplyMiddlewares(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {

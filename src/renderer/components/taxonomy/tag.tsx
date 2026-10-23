@@ -23,6 +23,9 @@ type Concept = {
   // Bundled in the taxonomy load so we don't have to issue a separate
   // fetchTagPreview IPC per tag at startup.
   thumbnail_path_600?: string | null;
+  // Tag group within the category (null = ungrouped). Only the per-category
+  // load carries it.
+  group?: string | null;
 };
 
 type Props = {
@@ -32,6 +35,9 @@ type Props = {
   tags: Concept[];
   handleEditAction: (tag: string) => void;
   disableReorder?: boolean;
+  // Set only when rendered under a group header (grouped-tag-view): the
+  // group this card sits in. A same-category tag dropped here joins it.
+  group?: string | null;
 };
 
 const fetchTagPreviewFn = (tag: string) => async (): Promise<string> => {
@@ -46,6 +52,7 @@ export default function Tag({
   handleEditAction,
   isDisabled,
   disableReorder = false,
+  group,
 }: Props) {
   const { libraryService } = useContext(GlobalStateContext);
   const showTagCount = useSelector(
@@ -139,6 +146,13 @@ export default function Tag({
           const newWeight = isLeft
             ? (previousItemWeight + targetWeight) / 2
             : (nextItemWeight + targetWeight) / 2;
+          if (
+            group !== undefined &&
+            droppedTag.category === tag.category &&
+            (droppedTag.group ?? null) !== group
+          ) {
+            await invoke('set-tag-group', [droppedTag.label, group]);
+          }
           await invoke('update-tag-weight', [
             droppedTag.label,
             newWeight,
@@ -148,7 +162,7 @@ export default function Tag({
         updateWeight();
       },
     }),
-    [tag, disableReorder]
+    [tag, tags, disableReorder, group]
   );
   drag(drop(ref));
   return (

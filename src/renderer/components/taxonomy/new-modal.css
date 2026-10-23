@@ -233,3 +233,13 @@
 .input-modal-footer .btn-save:hover {
   background-color: rgb(65, 120, 170);
 }
+
+.input-modal-footer .btn-save:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.input-modal-properties .input-modal-hint {
+  font-size: 0.75rem;
+  color: rgb(230, 150, 120);
+}

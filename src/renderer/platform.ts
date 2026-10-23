@@ -351,6 +351,51 @@ function channelToEndpoint(channel: string): EndpointMapping | null {
       method: 'PUT',
       argsToBody: (args) => ({ label: args[0], mode: args[1] }),
     },
+    'update-category-tag-grouping': {
+      url: '/api/categories/tag-grouping',
+      method: 'PUT',
+      argsToBody: (args) => ({ label: args[0], mode: args[1] }),
+    },
+    // Tag groups: a visual level between a category and its tags.
+    'load-tag-groups': {
+      url: '/api/taxonomy/groups',
+      method: 'GET',
+      argsToBody: (args) => ({ category: args[0] }),
+    },
+    'create-tag-group': {
+      url: '/api/tag-groups',
+      method: 'POST',
+      argsToBody: (args) => ({ categoryLabel: args[0], label: args[1] }),
+    },
+    'rename-tag-group': {
+      url: '/api/tag-groups/rename',
+      method: 'PUT',
+      argsToBody: (args) => ({
+        categoryLabel: args[0],
+        label: args[1],
+        newLabel: args[2],
+      }),
+    },
+    'delete-tag-group': {
+      url: '/api/tag-groups',
+      method: 'DELETE',
+      argsToBody: (args) => ({ categoryLabel: args[0], label: args[1] }),
+    },
+    'update-tag-group-weight': {
+      url: '/api/tag-groups/weight',
+      method: 'PUT',
+      argsToBody: (args) => ({
+        categoryLabel: args[0],
+        label: args[1],
+        weight: args[2],
+      }),
+    },
+    // groupLabel null ungroups the tag.
+    'set-tag-group': {
+      url: '/api/tags/group',
+      method: 'PUT',
+      argsToBody: (args) => ({ label: args[0], groupLabel: args[1] ?? '' }),
+    },
     'delete-category': {
       url: '/api/categories',
       method: 'DELETE',

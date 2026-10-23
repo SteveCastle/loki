@@ -243,6 +243,17 @@ export async function initDB(db: Database) {
   FOREIGN KEY (category_label) REFERENCES category (label)
 )`);
 
+  // Tag groups: a purely visual level between a category and its tags. Tags
+  // point at one by tag.group_label (NULL = ungrouped); nothing in the query
+  // paths reads either, so a library with no groups behaves exactly as before.
+  // Mirrored in the Go media-server's InitializeSchema.
+  await db.run(`CREATE TABLE IF NOT EXISTS tag_group (
+  category_label TEXT NOT NULL,
+  label TEXT NOT NULL,
+  weight REAL,
+  PRIMARY KEY (category_label, label)
+)`);
+
   // Create media table
   await db.run(`CREATE TABLE IF NOT EXISTS media (
   path TEXT PRIMARY KEY,
@@ -355,6 +366,8 @@ export async function initDB(db: Database) {
       { name: 'preview', type: 'BLOB' },
       { name: 'thumbnail_path_600', type: 'INTEGER' },
       { name: 'description', type: 'TEXT' },
+      // The tag_group (within its category) this tag is listed under.
+      { name: 'group_label', type: 'TEXT' },
     ];
     for (const column of columnsToMigrate) {
       const columnExists = tableInfo.some(
@@ -377,6 +390,9 @@ export async function initDB(db: Database) {
     const columnsToMigrate = [
       { name: 'description', type: 'TEXT' },
       { name: 'tag_view_mode', type: 'TEXT' },
+      // 'off' lists the category's tags flat, ignoring groups; NULL/'on'
+      // honours them.
+      { name: 'tag_grouping', type: 'TEXT' },
     ];
     for (const column of columnsToMigrate) {
       const columnExists = tableInfo.some(

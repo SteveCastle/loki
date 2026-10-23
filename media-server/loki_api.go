@@ -1377,7 +1377,8 @@ func lokiCategoriesHandler(deps *Dependencies) http.HandlerFunc {
 			SELECT label,
 			       COALESCE(weight, 0) AS weight,
 			       COALESCE(description, '') AS description,
-			       COALESCE(tag_view_mode, 'card') AS tag_view_mode
+			       COALESCE(tag_view_mode, 'card') AS tag_view_mode,
+			       CASE WHEN tag_grouping = 'off' THEN 'off' ELSE 'on' END AS tag_grouping
 			FROM category
 			ORDER BY weight`)
 		if err != nil {
@@ -1391,11 +1392,12 @@ func lokiCategoriesHandler(deps *Dependencies) http.HandlerFunc {
 			Weight      float64 `json:"weight"`
 			Description string  `json:"description"`
 			TagViewMode string  `json:"tagViewMode"`
+			TagGrouping string  `json:"tagGrouping"`
 		}
 		result := []categoryInfo{}
 		for rows.Next() {
 			var c categoryInfo
-			if err := rows.Scan(&c.Label, &c.Weight, &c.Description, &c.TagViewMode); err != nil {
+			if err := rows.Scan(&c.Label, &c.Weight, &c.Description, &c.TagViewMode, &c.TagGrouping); err != nil {
 				httpError(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
@@ -1422,17 +1424,16 @@ func lokiTaxonomyTagsHandler(deps *Dependencies) http.HandlerFunc {
 			}
 		}
 
+		// One category's tags also carry the tag group each is listed under.
+		// The all-tags list (search index, ~190K rows) stays thin.
+		if category != "" {
+			lokiCategoryTags(w, deps, category)
+			return
+		}
+
 		var rows *sql.Rows
 		var err error
 		switch {
-		case category != "":
-			rows, err = deps.DB.Query(`
-				SELECT label,
-				       COALESCE(category_label, '') AS category_label,
-				       COALESCE(weight, 0) AS weight
-				FROM tag
-				WHERE category_label = ?
-				ORDER BY weight`, category)
 		case len(exclude) > 0:
 			rows, err = deps.DB.Query(`
 				SELECT label,
@@ -1472,6 +1473,44 @@ func lokiTaxonomyTagsHandler(deps *Dependencies) http.HandlerFunc {
 		}
 		writeJSON(w, result)
 	}
+}
+
+func lokiCategoryTags(w http.ResponseWriter, deps *Dependencies, category string) {
+	rows, err := deps.DB.Query(`
+		SELECT label,
+		       COALESCE(category_label, '') AS category_label,
+		       COALESCE(weight, 0) AS weight,
+		       group_label
+		FROM tag
+		WHERE category_label = ?
+		ORDER BY weight`, category)
+	if err != nil {
+		httpError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	type tagInfo struct {
+		Label    string  `json:"label"`
+		Category string  `json:"category"`
+		Weight   float64 `json:"weight"`
+		Group    *string `json:"group"`
+	}
+	result := []tagInfo{}
+	for rows.Next() {
+		var t tagInfo
+		var group sql.NullString
+		if err := rows.Scan(&t.Label, &t.Category, &t.Weight, &group); err != nil {
+			httpError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if group.Valid && group.String != "" {
+			g := group.String
+			t.Group = &g
+		}
+		result = append(result, t)
+	}
+	writeJSON(w, result)
 }
 
 // lokiTaxonomyTagHandler returns full detail for a SINGLE tag.
@@ -1639,7 +1678,8 @@ func lokiMoveTagHandler(deps *Dependencies) http.HandlerFunc {
 			httpError(w, "bad request", http.StatusBadRequest)
 			return
 		}
-		deps.DB.Exec("UPDATE tag SET category_label = ? WHERE label = ?", req.CategoryLabel, req.Label)
+		// Groups belong to a category, so a tag leaves its group when it moves.
+		deps.DB.Exec("UPDATE tag SET category_label = ?, group_label = NULL WHERE label = ?", req.CategoryLabel, req.Label)
 		writeJSON(w, map[string]string{})
 	}
 }
@@ -1824,6 +1864,7 @@ func lokiRenameCategoryHandler(deps *Dependencies) http.HandlerFunc {
 			return execEach(tx,
 				stmt("UPDATE category SET label = ? WHERE label = ?", req.NewLabel, req.Label),
 				stmt("UPDATE tag SET category_label = ? WHERE category_label = ?", req.NewLabel, req.Label),
+				stmt("UPDATE tag_group SET category_label = ? WHERE category_label = ?", req.NewLabel, req.Label),
 				stmt("UPDATE media_tag_by_category SET category_label = ? WHERE category_label = ?", req.NewLabel, req.Label))
 		}) {
 			return
@@ -1857,6 +1898,35 @@ func lokiUpdateCategoryTagViewModeHandler(deps *Dependencies) http.HandlerFunc {
 	}
 }
 
+func lokiUpdateCategoryTagGroupingHandler(deps *Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Label string `json:"label"`
+			Mode  string `json:"mode"`
+		}
+		if err := readJSON(r, &req); err != nil {
+			httpError(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		if req.Label == "" {
+			httpError(w, "missing label", http.StatusBadRequest)
+			return
+		}
+		mode := "on"
+		if req.Mode == "off" {
+			mode = "off"
+		}
+		if _, err := deps.DB.Exec(
+			"UPDATE category SET tag_grouping = ? WHERE label = ?",
+			mode, req.Label,
+		); err != nil {
+			httpError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, map[string]string{})
+	}
+}
+
 func lokiDeleteCategoryHandler(deps *Dependencies) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req labelRequest
@@ -1868,12 +1938,173 @@ func lokiDeleteCategoryHandler(deps *Dependencies) http.HandlerFunc {
 			return execEach(tx,
 				stmt("DELETE FROM media_tag_by_category WHERE category_label = ?", req.Label),
 				stmt("DELETE FROM tag WHERE category_label = ?", req.Label),
+				stmt("DELETE FROM tag_group WHERE category_label = ?", req.Label),
 				stmt("DELETE FROM category WHERE label = ?", req.Label))
 		}) {
 			return
 		}
 		// Cascade may have removed paths from the swipe pool.
 		media.InvalidateRandomSampleCache()
+		writeJSON(w, map[string]string{})
+	}
+}
+
+// ---- Tag group handlers ----
+//
+// Tag groups are a visual level between a category and its tags: a tag_group
+// row per (category, label) and tag.group_label on each grouped tag. Nothing
+// in the query paths reads them. Mirrors the tag-group IPC handlers in the
+// desktop viewer (src/main/taxonomy.ts).
+
+type tagGroupRequest struct {
+	CategoryLabel string  `json:"categoryLabel"`
+	Label         string  `json:"label"`
+	NewLabel      string  `json:"newLabel"`
+	Weight        float64 `json:"weight"`
+}
+
+func readTagGroupRequest(w http.ResponseWriter, r *http.Request) (tagGroupRequest, bool) {
+	var req tagGroupRequest
+	if err := readJSON(r, &req); err != nil {
+		httpError(w, "bad request", http.StatusBadRequest)
+		return req, false
+	}
+	if req.CategoryLabel == "" || req.Label == "" {
+		httpError(w, "missing categoryLabel or label", http.StatusBadRequest)
+		return req, false
+	}
+	return req, true
+}
+
+// GET /api/taxonomy/groups?category=<label> — the category's groups in order.
+func lokiTagGroupsHandler(deps *Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		category := r.URL.Query().Get("category")
+		type groupInfo struct {
+			Label  string  `json:"label"`
+			Weight float64 `json:"weight"`
+		}
+		result := []groupInfo{}
+		if category == "" {
+			writeJSON(w, result)
+			return
+		}
+		rows, err := deps.DB.Query(`
+			SELECT label, COALESCE(weight, 0)
+			FROM tag_group
+			WHERE category_label = ?
+			ORDER BY weight, label`, category)
+		if err != nil {
+			httpError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var g groupInfo
+			if err := rows.Scan(&g.Label, &g.Weight); err != nil {
+				httpError(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			result = append(result, g)
+		}
+		writeJSON(w, result)
+	}
+}
+
+func lokiCreateTagGroupHandler(deps *Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		req, ok := readTagGroupRequest(w, r)
+		if !ok {
+			return
+		}
+		// New groups go to the end of the category's list.
+		if _, err := deps.DB.Exec(`
+			INSERT INTO tag_group (category_label, label, weight)
+			VALUES (?, ?, (SELECT COALESCE(MAX(weight), 0) + 1
+			               FROM tag_group WHERE category_label = ?))
+			ON CONFLICT(category_label, label) DO NOTHING`,
+			req.CategoryLabel, req.Label, req.CategoryLabel); err != nil {
+			httpError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, map[string]string{"label": req.Label})
+	}
+}
+
+func lokiRenameTagGroupHandler(deps *Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		req, ok := readTagGroupRequest(w, r)
+		if !ok {
+			return
+		}
+		if req.NewLabel == "" || req.NewLabel == req.Label {
+			writeJSON(w, map[string]string{})
+			return
+		}
+		if !runTx(w, deps.DB, func(tx *sql.Tx) error {
+			return execEach(tx,
+				stmt("UPDATE tag_group SET label = ? WHERE category_label = ? AND label = ?", req.NewLabel, req.CategoryLabel, req.Label),
+				stmt("UPDATE tag SET group_label = ? WHERE category_label = ? AND group_label = ?", req.NewLabel, req.CategoryLabel, req.Label))
+		}) {
+			return
+		}
+		writeJSON(w, map[string]string{})
+	}
+}
+
+// Deleting a group never deletes its tags — they become ungrouped.
+func lokiDeleteTagGroupHandler(deps *Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		req, ok := readTagGroupRequest(w, r)
+		if !ok {
+			return
+		}
+		if !runTx(w, deps.DB, func(tx *sql.Tx) error {
+			return execEach(tx,
+				stmt("DELETE FROM tag_group WHERE category_label = ? AND label = ?", req.CategoryLabel, req.Label),
+				stmt("UPDATE tag SET group_label = NULL WHERE category_label = ? AND group_label = ?", req.CategoryLabel, req.Label))
+		}) {
+			return
+		}
+		writeJSON(w, map[string]string{})
+	}
+}
+
+func lokiUpdateTagGroupWeightHandler(deps *Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		req, ok := readTagGroupRequest(w, r)
+		if !ok {
+			return
+		}
+		if _, err := deps.DB.Exec(
+			"UPDATE tag_group SET weight = ? WHERE category_label = ? AND label = ?",
+			req.Weight, req.CategoryLabel, req.Label); err != nil {
+			httpError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, map[string]string{})
+	}
+}
+
+// PUT /api/tags/group {label, groupLabel} — an empty groupLabel ungroups.
+func lokiSetTagGroupHandler(deps *Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Label      string `json:"label"`
+			GroupLabel string `json:"groupLabel"`
+		}
+		if err := readJSON(r, &req); err != nil || req.Label == "" {
+			httpError(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		var group interface{}
+		if req.GroupLabel != "" {
+			group = req.GroupLabel
+		}
+		if _, err := deps.DB.Exec("UPDATE tag SET group_label = ? WHERE label = ?", group, req.Label); err != nil {
+			httpError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 		writeJSON(w, map[string]string{})
 	}
 }

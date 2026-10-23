@@ -14,7 +14,7 @@ import { getFileType } from '../file-types';
 const loadCategories = (db: Database) => async () => {
   try {
     const rows = await db.all(
-      `SELECT label, weight, description, tag_view_mode
+      `SELECT label, weight, description, tag_view_mode, tag_grouping
          FROM category
          ORDER BY weight`
     );
@@ -23,6 +23,7 @@ const loadCategories = (db: Database) => async () => {
       weight: row.weight,
       description: row.description || '',
       tagViewMode: row.tag_view_mode || 'card',
+      tagGrouping: row.tag_grouping === 'off' ? 'off' : 'on',
     }));
   } catch (e) {
     console.log(e);
@@ -39,7 +40,8 @@ const loadCategoryTags =
     try {
       const [categoryLabel] = args;
       const rows = await db.all(
-        `SELECT label, category_label, weight, description, thumbnail_path_600
+        `SELECT label, category_label, weight, description, thumbnail_path_600,
+                group_label
            FROM tag
            WHERE category_label = $1
            ORDER BY weight`,
@@ -51,6 +53,7 @@ const loadCategoryTags =
         weight: row.weight,
         description: row.description || '',
         thumbnail_path_600: row.thumbnail_path_600 || null,
+        group: row.group_label || null,
       }));
     } catch (e) {
       console.log(e);
@@ -394,6 +397,10 @@ const renameCategory =
       'UPDATE tag SET category_label = $1 WHERE category_label = $2',
       [newCategoryLabel, oldCategoryLabel]
     );
+    await db.run(
+      'UPDATE tag_group SET category_label = $1 WHERE category_label = $2',
+      [newCategoryLabel, oldCategoryLabel]
+    );
   };
 type DeleteCategoryInput = [string];
 const deleteCategory =
@@ -406,6 +413,9 @@ const deleteCategory =
       [categoryLabel]
     );
     await db.run('DELETE FROM tag WHERE category_label = $1', [categoryLabel]);
+    await db.run('DELETE FROM tag_group WHERE category_label = $1', [
+      categoryLabel,
+    ]);
   };
 
 type RenameTagInput = [string, string];
@@ -426,10 +436,11 @@ type MoveTagInput = [string, string];
 const moveTag =
   (db: Database) => async (_: IpcMainInvokeEvent, args: MoveTagInput) => {
     const [tagLabel, categoryLabel] = args;
-    await db.run(`UPDATE tag SET category_label = $1 WHERE label = $2`, [
-      categoryLabel,
-      tagLabel,
-    ]);
+    // Groups belong to a category, so a tag leaves its group when it moves.
+    await db.run(
+      `UPDATE tag SET category_label = $1, group_label = NULL WHERE label = $2`,
+      [categoryLabel, tagLabel]
+    );
     await db.run(
       'UPDATE media_tag_by_category SET category_label = $1 WHERE tag_label = $2',
       [categoryLabel, tagLabel]
@@ -650,6 +661,112 @@ const updateCategoryTagViewMode =
     ]);
   };
 
+type UpdateCategoryTagGroupingInput = [string, 'on' | 'off'];
+const updateCategoryTagGrouping =
+  (db: Database) =>
+  async (_: IpcMainInvokeEvent, args: UpdateCategoryTagGroupingInput) => {
+    const [label, mode] = args;
+    await db.run(`UPDATE category SET tag_grouping = $1 WHERE label = $2`, [
+      mode === 'off' ? 'off' : 'on',
+      label,
+    ]);
+  };
+
+// ---- Tag groups ----
+// A visual level between a category and its tags (see tag_group in
+// database.ts). Mirrored by the /api/tag-groups handlers in
+// media-server/loki_api.go.
+
+type LoadTagGroupsInput = [string];
+const loadTagGroups =
+  (db: Database) =>
+  async (_: IpcMainInvokeEvent, args: LoadTagGroupsInput) => {
+    const [categoryLabel] = args;
+    if (!categoryLabel) return [];
+    try {
+      const rows = await db.all(
+        `SELECT label, weight FROM tag_group
+          WHERE category_label = $1
+          ORDER BY weight, label`,
+        [categoryLabel]
+      );
+      return rows.map((row) => ({ label: row.label, weight: row.weight ?? 0 }));
+    } catch (e) {
+      console.log(e);
+      return [];
+    }
+  };
+
+type CreateTagGroupInput = [string, string];
+const createTagGroup =
+  (db: Database) =>
+  async (_: IpcMainInvokeEvent, args: CreateTagGroupInput) => {
+    const [categoryLabel, label] = args;
+    // New groups go to the end of the category's list.
+    await db.run(
+      `INSERT INTO tag_group (category_label, label, weight)
+       VALUES ($1, $2, (SELECT COALESCE(MAX(weight), 0) + 1
+                          FROM tag_group WHERE category_label = $1))
+       ON CONFLICT(category_label, label) DO NOTHING`,
+      [categoryLabel, label]
+    );
+  };
+
+type RenameTagGroupInput = [string, string, string];
+const renameTagGroup =
+  (db: Database) =>
+  async (_: IpcMainInvokeEvent, args: RenameTagGroupInput) => {
+    const [categoryLabel, label, newLabel] = args;
+    if (!newLabel || newLabel === label) return;
+    await db.run(
+      `UPDATE tag_group SET label = $1 WHERE category_label = $2 AND label = $3`,
+      [newLabel, categoryLabel, label]
+    );
+    await db.run(
+      `UPDATE tag SET group_label = $1 WHERE category_label = $2 AND group_label = $3`,
+      [newLabel, categoryLabel, label]
+    );
+  };
+
+// Deleting a group never deletes its tags — they become ungrouped.
+type DeleteTagGroupInput = [string, string];
+const deleteTagGroup =
+  (db: Database) =>
+  async (_: IpcMainInvokeEvent, args: DeleteTagGroupInput) => {
+    const [categoryLabel, label] = args;
+    await db.run(
+      `DELETE FROM tag_group WHERE category_label = $1 AND label = $2`,
+      [categoryLabel, label]
+    );
+    await db.run(
+      `UPDATE tag SET group_label = NULL WHERE category_label = $1 AND group_label = $2`,
+      [categoryLabel, label]
+    );
+  };
+
+type UpdateTagGroupWeightInput = [string, string, number];
+const updateTagGroupWeight =
+  (db: Database) =>
+  async (_: IpcMainInvokeEvent, args: UpdateTagGroupWeightInput) => {
+    const [categoryLabel, label, weight] = args;
+    await db.run(
+      `UPDATE tag_group SET weight = $1 WHERE category_label = $2 AND label = $3`,
+      [weight, categoryLabel, label]
+    );
+  };
+
+// groupLabel null (or '') ungroups the tag.
+type SetTagGroupInput = [string, string | null];
+const setTagGroup =
+  (db: Database) =>
+  async (_: IpcMainInvokeEvent, args: SetTagGroupInput) => {
+    const [tagLabel, groupLabel] = args;
+    await db.run(`UPDATE tag SET group_label = $1 WHERE label = $2`, [
+      groupLabel || null,
+      tagLabel,
+    ]);
+  };
+
 type ApplyEloOrderingInput = [string];
 const applyEloOrdering =
   (db: Database) =>
@@ -855,6 +972,13 @@ export {
   updateTagDescription,
   updateCategoryDescription,
   updateCategoryTagViewMode,
+  updateCategoryTagGrouping,
+  loadTagGroups,
+  createTagGroup,
+  renameTagGroup,
+  deleteTagGroup,
+  updateTagGroupWeight,
+  setTagGroup,
   applyEloOrdering,
   consolidateTagFiles,
   consolidateCategoryFiles,

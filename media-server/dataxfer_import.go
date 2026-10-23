@@ -184,6 +184,18 @@ func mergeImport(ctx context.Context, deps *Dependencies, workDir string, dest s
 	mergeSimple(src, dst,
 		`SELECT label, category_label, weight FROM tag`,
 		`INSERT OR IGNORE INTO tag(label, category_label, weight) VALUES(?,?,?)`, 3)
+	// Tag groups. Archives exported before groups existed lack the table and
+	// columns; mergeSimple skips a failing query, so those import unchanged.
+	// Only fills a tag's/category's grouping where the destination has none.
+	mergeSimple(src, dst,
+		`SELECT category_label, label, weight FROM tag_group`,
+		`INSERT OR IGNORE INTO tag_group(category_label, label, weight) VALUES(?,?,?)`, 3)
+	mergeSimple(src, dst,
+		`SELECT group_label, label FROM tag WHERE group_label IS NOT NULL`,
+		`UPDATE tag SET group_label = ? WHERE label = ? AND group_label IS NULL`, 2)
+	mergeSimple(src, dst,
+		`SELECT tag_grouping, label FROM category WHERE tag_grouping IS NOT NULL`,
+		`UPDATE category SET tag_grouping = ? WHERE label = ? AND tag_grouping IS NULL`, 2)
 
 	// --- media items (the unit of merge) ---
 	newPaths := map[string]bool{}   // relkeys of items newly inserted this run
