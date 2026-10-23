@@ -52,7 +52,17 @@ function Seg<T extends string | number>(props: { value: T; options: Array<{ valu
   );
 }
 
-export function KindIcon({ kind, size = 14 }: { kind: 'still' | 'motion'; size?: number }) {
+export function KindIcon({ kind, size = 14 }: { kind: 'still' | 'motion' | 'paint'; size?: number }) {
+  if (kind === 'paint') {
+    return (
+      <svg width={size} height={size} viewBox="0 0 16 16" aria-hidden>
+        <path d="M8 2.5c3.3 0 5.5 2.2 5.5 4.8 0 1.8-1.3 2.7-2.6 2.7H9.6c-.8 0-1.2.9-.7 1.5.6.7.1 2-1 2C4.6 13.5 2.5 11 2.5 8S4.8 2.5 8 2.5z" fill="none" stroke="currentColor" strokeWidth="1.3" />
+        <circle cx="5.5" cy="7" r="1" fill="currentColor" />
+        <circle cx="8" cy="5" r="1" fill="currentColor" />
+        <circle cx="10.6" cy="6.6" r="1" fill="currentColor" />
+      </svg>
+    );
+  }
   return kind === 'motion' ? (
     <svg width={size} height={size} viewBox="0 0 16 16" aria-hidden>
       <path d="M2 8c1.5-3 3-3 4.5 0s3 3 4.5 0 3-3 3-3" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
@@ -81,6 +91,10 @@ function statusOf(l: SceneLayer, stale: boolean): { text: string; tone: 'busy' |
     const more = l.queued?.length ? ` +${l.queued.length}` : '';
     return { text: `${label.toLowerCase()}${percent !== null ? ` ${percent}%` : ''}${more}`, tone: 'busy' };
   }
+  if (l.kind === 'paint') {
+    if (!l.mask) return { text: 'paint something', tone: 'idle' };
+    return l.options?.guide ? { text: 'guide', tone: 'idle' } : { text: 'in picture', tone: 'ok' };
+  }
   if (l.error) return { text: 'failed', tone: 'error' };
   if (l.versions.length && stale) return { text: `v${l.active + 1} · below changed`, tone: 'warn' };
   if (l.versions.length) return { text: l.active >= 0 ? `v${l.active + 1}/${l.versions.length}` : 'off', tone: 'ok' };
@@ -93,7 +107,7 @@ export interface LayerListProps {
   selectedId: string | null;
   baseName: string;
   onSelect: (id: string | null) => void;
-  onAdd: (kind: 'still' | 'motion') => void;
+  onAdd: (kind: 'still' | 'motion' | 'paint') => void;
   onToggleHidden: (id: string) => void;
   onMove: (id: string, dir: 1 | -1) => void;
   /** Move a layer to index `to` of the stack (bottom = 0). */
@@ -130,6 +144,9 @@ export function LayerList(props: LayerListProps) {
           <button type="button" className="sc-btn" onClick={() => props.onAdd('motion')} title="Bring one area to life (loki-reshoot)">
             <KindIcon kind="motion" /> Motion
           </button>
+          <button type="button" className="sc-btn" onClick={() => props.onAdd('paint')} title="Paint in colour: rough colour or a sketch, in the picture or as a guide the AI follows">
+            <KindIcon kind="paint" /> Paint
+          </button>
         </div>
       </div>
       <ol className="sc-layer-list">
@@ -165,7 +182,7 @@ export function LayerList(props: LayerListProps) {
                 <span className={`sc-kind ${l.kind}`}>
                   <KindIcon kind={l.kind} />
                 </span>
-                <span className="sc-layer-name">{l.name || (l.kind === 'motion' ? 'Motion' : 'Edit')}</span>
+                <span className="sc-layer-name">{l.name || (l.kind === 'motion' ? 'Motion' : l.kind === 'paint' ? 'Paint' : 'Edit')}</span>
                 <span className={`sc-status ${st.tone}`}>{st.text}</span>
               </button>
               <span className="sc-row-tools">
@@ -200,6 +217,8 @@ export interface InspectorProps {
   stale: boolean;
   /** The Mask section (mask-panel.tsx). */
   maskPanel: React.ReactNode;
+  /** The scene's paint layers (references). */
+  paintLayers: SceneLayer[];
   onPatch: (patch: Partial<SceneLayer>) => void;
   onOptions: (patch: LayerOptions) => void;
   onGenerate: () => void;
@@ -420,6 +439,7 @@ export function Inspector(props: InspectorProps) {
         }}
         onPickLibrary={props.onPickLibrary}
         onPickFiles={props.onPickFiles}
+        paintLayers={props.paintLayers}
       />
       <div className="sc-ideas">
         {ideas.map((idea) => (

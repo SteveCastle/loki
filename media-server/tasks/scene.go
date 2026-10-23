@@ -50,6 +50,12 @@ import (
 const (
 	SceneKindStill  = "still"
 	SceneKindMotion = "motion"
+	// SceneKindPaint is a layer the user paints in colour: never generated,
+	// its Mask is the painting itself (RGBA, alpha = where it is painted,
+	// opacity baked in). In the picture it composites like a still, so the
+	// layers above are made from it; with the "guide" option it stays out of
+	// the picture and is only used as a reference (sceneRef.Layer).
+	SceneKindPaint = "paint"
 
 	sceneFPS = 24
 	// sceneMaskMax caps the long edge of the full-frame mask PNGs the editor
@@ -535,7 +541,7 @@ func UpdateScene(q *jobqueue.Queue, id string, in *Scene) (*Scene, error) {
 		}
 		l.Name = strings.TrimSpace(nl.Name)
 		l.Kind = nl.Kind
-		if l.Kind != SceneKindMotion {
+		if l.Kind != SceneKindMotion && l.Kind != SceneKindPaint {
 			l.Kind = SceneKindStill
 		}
 		l.Hidden = nl.Hidden
@@ -994,11 +1000,23 @@ func sceneGraphArgs(base string, w, h int, layers []sceneGraphLayer, video bool,
 	return args
 }
 
-// sceneGraphLayers turns the visible, generated layers of s (all of them, or
-// only stills when stillsOnly) into graph layers, writing their masks.
-func sceneGraphLayers(dir string, layers []*SceneLayer, stillsOnly bool) ([]sceneGraphLayer, error) {
+// sceneGraphLayers turns the visible, generated layers of a w×h scene (all of
+// them, or only stills and paint when stillsOnly) into graph layers, writing
+// their masks.
+func sceneGraphLayers(dir string, w, h int, layers []*SceneLayer, stillsOnly bool) ([]sceneGraphLayer, error) {
 	var out []sceneGraphLayer
 	for _, l := range layers {
+		if l.Kind == SceneKindPaint {
+			if !paintInPicture(l) {
+				continue
+			}
+			g, err := paintGraphLayer(dir, l, w, h)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, g)
+			continue
+		}
 		v := l.active()
 		if l.Hidden || v == nil || (stillsOnly && l.Kind != SceneKindStill) {
 			continue
@@ -1026,14 +1044,81 @@ func sceneGraphLayers(dir string, layers []*SceneLayer, stillsOnly bool) ([]scen
 // sceneBelow names the stills a layer above layers is generated from, bottom
 // up, as "<layer id>:<active version path>" (the visible stills
 // sceneGraphLayers flattens). Mirrors stackBelow in the editor's scene-api.ts.
+// A paint layer in the picture is "<layer id>:paint" (repainting it doesn't
+// count, moving or hiding it does).
 func sceneBelow(layers []*SceneLayer) []string {
 	out := []string{}
 	for _, l := range layers {
 		if v := l.active(); !l.Hidden && v != nil && l.Kind == SceneKindStill {
 			out = append(out, l.ID+":"+v.Path)
 		}
+		if paintInPicture(l) {
+			out = append(out, l.ID+":paint")
+		}
 	}
 	return out
+}
+
+// paintInPicture reports whether l is a paint layer that is part of the
+// picture: visible, painted, and not a guide.
+func paintInPicture(l *SceneLayer) bool {
+	return l.Kind == SceneKindPaint && !l.Hidden && l.Mask != "" && !optBool(l.Options, "guide")
+}
+
+// paintGraphLayer is a paint layer of a w×h scene as the compositing graph
+// sees it: its painting (the mask raster) over the whole frame, through its
+// own alpha.
+func paintGraphLayer(dir string, l *SceneLayer, w, h int) (sceneGraphLayer, error) {
+	p, err := writeSceneMask(dir, l)
+	if err != nil {
+		return sceneGraphLayer{}, err
+	}
+	return sceneGraphLayer{Media: p, Mask: p, Region: SceneRect{W: w, H: h}, Speed: 1}, nil
+}
+
+// resolveLayerRefs renders every reference to a paint layer (sceneRef.Layer)
+// for the layer at idx: the painting over the picture that layer is made
+// from, cropped to region, so it lines up pixel for pixel with the crop the
+// engine edits (<image1> / <Picture 1>).
+func resolveLayerRefs(ctx context.Context, s *Scene, idx int, dir string, region SceneRect, refs []sceneRef) ([]sceneRef, error) {
+	out := make([]sceneRef, len(refs))
+	copy(out, refs)
+	for i, r := range out {
+		if r.Layer == "" {
+			continue
+		}
+		var paint *SceneLayer
+		for _, l := range s.Layers {
+			if l.ID == r.Layer && l.Kind == SceneKindPaint {
+				paint = l
+			}
+		}
+		if paint == nil || paint.Mask == "" {
+			return nil, fmt.Errorf("the paint layer a reference names is gone or empty")
+		}
+		var below []*SceneLayer
+		for _, l := range s.Layers[:idx] {
+			if l.ID != paint.ID {
+				below = append(below, l)
+			}
+		}
+		layers, err := sceneGraphLayers(dir, s.Width, s.Height, below, true)
+		if err != nil {
+			return nil, err
+		}
+		g, err := paintGraphLayer(dir, paint, s.Width, s.Height)
+		if err != nil {
+			return nil, err
+		}
+		layers = append(layers, g)
+		dst := filepath.Join(dir, fmt.Sprintf("ref-%s-%s.png", safeLayerID(s.Layers[idx].ID), safeLayerID(paint.ID)))
+		args := sceneGraphArgs(s.Base, s.Width, s.Height, layers, false, 0, region)
+		if err := runSceneFFmpeg(ctx, append([]string{"-y"}, append(args, dst)...)); err != nil {
+			return nil, fmt.Errorf("rendering the paint reference: %w", err)
+		}
+		out[i].Path = dst
+	}
+	return out, nil
 }
 
 // sceneMotionSize picks loki-reshoot's --size for a region: the region's
@@ -1097,6 +1182,9 @@ type sceneRef struct {
 	Path string
 	Kind string // image | video | audio
 	Note string // what it is, in the user's words
+	// Layer names a paint layer instead of a file: Path is rendered at
+	// generation time (resolveLayerRefs).
+	Layer string
 }
 
 // promptRef is a reference as the prompt template sees it.
@@ -1124,6 +1212,10 @@ func sceneRefs(opts map[string]any) []sceneRef {
 	for _, r := range raw {
 		m, ok := r.(map[string]any)
 		if !ok {
+			continue
+		}
+		if lid := strings.TrimSpace(optString(m, "layer")); lid != "" {
+			out = append(out, sceneRef{Kind: "image", Layer: lid, Note: strings.TrimSpace(optString(m, "note"))})
 			continue
 		}
 		p := strings.TrimSpace(optString(m, "path"))
@@ -1448,6 +1540,9 @@ func GenerateLayer(ctx context.Context, q *jobqueue.Queue, id, lid string) (*Sce
 	if len(l.jobs()) >= sceneMaxGenerations {
 		return nil, ErrSceneBusy
 	}
+	if l.Kind == SceneKindPaint {
+		return nil, fmt.Errorf("a paint layer isn't generated: reference it from an Edit or Motion layer")
+	}
 	prompt := strings.TrimSpace(l.Prompt)
 	if l.Kind == SceneKindStill && prompt == "" {
 		return nil, fmt.Errorf("describe the edit first")
@@ -1458,7 +1553,7 @@ func GenerateLayer(ctx context.Context, q *jobqueue.Queue, id, lid string) (*Sce
 	}
 	dir, _ := sceneDir(id)
 
-	below, err := sceneGraphLayers(dir, s.Layers[:idx], true)
+	below, err := sceneGraphLayers(dir, s.Width, s.Height, s.Layers[:idx], true)
 	if err != nil {
 		return nil, err
 	}
@@ -1475,6 +1570,11 @@ func GenerateLayer(ctx context.Context, q *jobqueue.Queue, id, lid string) (*Sce
 	if err := runSceneFFmpeg(ctx, append(args, input)); err != nil {
 		return nil, fmt.Errorf("cropping the region: %w", err)
 	}
+	refs, err := resolveLayerRefs(ctx, s, idx, dir, region, sceneRefs(l.Options))
+	if err != nil {
+		os.Remove(input)
+		return nil, err
+	}
 
 	var command string
 	var jobArgs []string
@@ -1487,7 +1587,7 @@ func GenerateLayer(ctx context.Context, q *jobqueue.Queue, id, lid string) (*Sce
 	case SceneKindStill:
 		command = "retouch"
 		opt("prompt", prompt)
-		if refs := sceneRefs(l.Options); len(refs) > 0 {
+		if len(refs) > 0 {
 			if err := checkSceneRefs(SceneKindStill, refs, false); err != nil {
 				os.Remove(input)
 				return nil, err
@@ -1524,7 +1624,6 @@ func GenerateLayer(ctx context.Context, q *jobqueue.Queue, id, lid string) (*Sce
 			}
 			voice = v
 		}
-		refs := sceneRefs(l.Options)
 		if err := checkSceneRefs(SceneKindMotion, refs, voice != ""); err != nil {
 			os.Remove(input)
 			return nil, err
@@ -1919,7 +2018,7 @@ func sceneRenderTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 	}
 	dir, _ := sceneDir(id)
 	sceneMu.Lock()
-	layers, err := sceneGraphLayers(dir, s.Layers, false)
+	layers, err := sceneGraphLayers(dir, s.Width, s.Height, s.Layers, false)
 	sceneMu.Unlock()
 	if err != nil {
 		return fail(err.Error(), err)

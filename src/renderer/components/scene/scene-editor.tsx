@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { invoke, isElectron, send } from '../../platform';
-import { imageOp, maskImagesReady, opsDeep, preloadMaskImages, rasterizeLayerMask, rasterizeProtect, regionAround, type MaskLookup, type MaskOp, type MaskOpts, type Rect } from './mask';
+import { clampRect, imageOp, maskImagesReady, opsDeep, preloadMaskImages, rasterizeLayerMask, rasterizeProtect, regionAround, type MaskLookup, type MaskOp, type MaskOpts, type Rect } from './mask';
 import {
   generationsInFlight,
   layerRate,
@@ -18,9 +18,10 @@ import {
 } from './scene-api';
 import Stage, { type MaskView, type Tool } from './stage';
 import MaskPanel from './mask-panel';
+import PaintPanel from './paint-panel';
 import { Inspector, KEY_GENERATE, KEY_UNDO, LayerList } from './panel';
 import { requestLibraryPick } from './pick-bridge';
-import { hasVoice, tokenIssues, type RefKind } from './refs';
+import { hasVoice, newRefId, refTokens, remapRefTokens, tokenIssues, type RefKind } from './refs';
 
 // The Scene editor: one picture, built up a masked region at a time. Each
 // layer is an Edit (a still change of its area) or Motion (its area brought to
@@ -125,8 +126,11 @@ function lookupIn(s: Scene): MaskLookup {
  * image piece of the mask is still decoding it stays as it was (patchLayer re-rasterizes once it is ready).
  */
 function withMask(s: Scene, l: SceneLayer): SceneLayer {
-  const r = rasterizeLayerMask(l.shapes || [], l.maskOpts, s.width, s.height, l.feather, lookupIn(s), l.id);
+  const paint = l.kind === 'paint';
+  const r = rasterizeLayerMask(l.shapes || [], l.maskOpts, s.width, s.height, l.feather, lookupIn(s), l.id, paint);
   if (!r) return l;
+  // A paint layer is never generated: its region is just what is painted (for selecting it on the stage).
+  if (paint) return { ...l, mask: r.mask, region: r.bounds ? clampRect(r.bounds, s.width, s.height) : { x: 0, y: 0, w: 0, h: 0 } };
   const region = regionAround(r.bounds, s.width, s.height, {
     context: l.options?.context || 'normal',
     feather: l.feather,
@@ -148,11 +152,37 @@ const DEFAULTS_KEY = 'loki.scene.layerDefaults.v1';
 const REMEMBERED: Record<LayerKind, Array<keyof LayerOptions>> = {
   still: ['steps', 'context'],
   motion: ['duration', 'model', 'megapixels', 'sound', 'voices', 'lock', 'detail', 'context'],
+  paint: ['guide'],
 };
 const BASE_OPTIONS: Record<LayerKind, LayerOptions> = {
   still: { context: 'normal', steps: 25 },
   motion: { context: 'normal', duration: 5, model: 'h3', sound: false, megapixels: 0.5 },
+  paint: {},
 };
+
+// The screen colour picker (Chromium; TypeScript 5.0 has no types for it).
+const EyeDropperApi = (window as unknown as { EyeDropper?: new () => { open: () => Promise<{ sRGBHex: string }> } }).EyeDropper;
+
+// The paint colours used last (newest first), kept across scenes.
+const SWATCHES_KEY = 'loki.scene.swatches.v1';
+const START_SWATCHES = ['#e2533b', '#f2b33d', '#4caf50', '#3b82f6', '#8b5cf6', '#f5d0b5', '#ffffff', '#111111'];
+
+function loadSwatches(): string[] {
+  try {
+    const v = JSON.parse(window.localStorage.getItem(SWATCHES_KEY) || 'null');
+    return Array.isArray(v) && v.length ? v.slice(0, 8) : START_SWATCHES;
+  } catch {
+    return START_SWATCHES;
+  }
+}
+
+/** The prompt "Finish with AI" starts an Edit layer with: colour from a guide (its token), or finish paint in the picture. */
+function finishPrompt(token: string | null): string {
+  if (token) {
+    return `Colour <image1> the way the rough colours painted on ${token} show: keep every line, shape and detail of <image1> exactly as it is, fill each area with the colour painted over it, and finish it with clean, natural shading.`;
+  }
+  return 'Finish the rough colour painted on <image1>: keep every line, shape and detail exactly as it is, and turn the rough strokes into clean, evenly filled colour with natural shading.';
+}
 
 function layerDefaults(kind: LayerKind): LayerOptions {
   try {
@@ -197,6 +227,9 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
   const [brush, setBrush] = useState(() => Math.max(6, Math.round(Math.min(initial.width, initial.height) * 0.035)));
   const [maskView, setMaskView] = useState<MaskView>('tint');
   const [hardness, setHardness] = useState(1);
+  const [ink, setInk] = useState(() => loadSwatches()[0]);
+  const [inkAlpha, setInkAlpha] = useState(1);
+  const [swatches, setSwatches] = useState(loadSwatches);
   const [selectedShape, setSelectedShape] = useState<number | null>(null);
   const [compare, setCompare] = useState(false);
   const [playing, setPlaying] = useState(true);
@@ -363,18 +396,19 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
   // ---- layer operations ------------------------------------------------------------
 
   const addLayer = useCallback(
-    (kind: 'still' | 'motion') => {
+    (kind: LayerKind) => {
       const s = docRef.current;
       const n = s.layers.filter((l) => l.kind === kind).length + 1;
       const options = layerDefaults(kind);
+      const names: Record<LayerKind, string> = { still: 'Edit', motion: 'Motion', paint: 'Paint' };
       const layer: SceneLayer = {
         id: newId(),
-        name: kind === 'motion' ? `Motion ${n}` : `Edit ${n}`,
+        name: `${names[kind]} ${n}`,
         kind,
         region: { x: 0, y: 0, w: 0, h: 0 },
         mask: '',
         shapes: [],
-        feather: defaultFeather(s),
+        feather: kind === 'paint' ? 0 : defaultFeather(s),
         prompt: '',
         options,
         versions: [],
@@ -382,19 +416,79 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
       };
       mutate((d) => ({ ...d, layers: [...d.layers, layer] }));
       setSelectedId(layer.id);
-      setTool(kind === 'motion' ? 'brush' : 'box');
+      setTool(kind === 'still' ? 'box' : 'brush');
     },
     [mutate]
   );
 
+  /** A paint stroke takes the current colour, which becomes the newest swatch. */
+  const rememberInk = useCallback((c: string) => {
+    setInk(c);
+    setSwatches((prev) => {
+      const next = [c, ...prev.filter((x) => x.toLowerCase() !== c.toLowerCase())].slice(0, 8);
+      try {
+        window.localStorage.setItem(SWATCHES_KEY, JSON.stringify(next));
+      } catch {
+        // storage unavailable: swatches just don't stick
+      }
+      return next;
+    });
+  }, []);
+
   const commitOp = useCallback(
     (op: MaskOp) => {
       if (!selected) return;
+      let next = op;
+      if (selected.kind === 'paint') {
+        // Paint has no Protect; everything else is paint in the current colour, or erase.
+        if (op.keep) return;
+        if (!op.erase) {
+          next = { ...op, c: ink, a: inkAlpha < 1 ? inkAlpha : undefined };
+          rememberInk(ink);
+        }
+      }
       const before = selected.shapes || [];
       pushUndo(selected);
-      patchLayer(selected.id, { shapes: [...before, op] }, true);
+      patchLayer(selected.id, { shapes: [...before, next] }, true);
     },
-    [selected, patchLayer, pushUndo]
+    [selected, patchLayer, pushUndo, ink, inkAlpha, rememberInk]
+  );
+
+  /**
+   * "Finish with AI" on a paint layer: an Edit layer just above it, masked to what is painted (a live link, grown a
+   * little: rough paint stops short of edges), prompted to finish it. A guide is given to it as a reference.
+   */
+  const finishPaint = useCallback(
+    (paint: SceneLayer) => {
+      const s = docRef.current;
+      const guide = !!paint.options?.guide;
+      const refs = guide ? [{ id: newRefId(), path: '', layer: paint.id, note: 'the rough colour guide' }] : [];
+      const token = guide ? refTokens('still', refs, false)[0] : null;
+      const layer: SceneLayer = {
+        id: newId(),
+        name: `Finish ${paint.name || 'paint'}`,
+        kind: 'still',
+        region: { x: 0, y: 0, w: 0, h: 0 },
+        mask: '',
+        shapes: [{ t: 'layer', id: paint.id }],
+        maskOpts: { expand: Math.round(Math.min(s.width, s.height) * 0.01) || undefined },
+        feather: defaultFeather(s),
+        prompt: finishPrompt(token),
+        options: { ...layerDefaults('still'), refs },
+        versions: [],
+        active: -1,
+      };
+      mutate((d) => {
+        const at = d.layers.findIndex((l) => l.id === paint.id) + 1;
+        const layers = [...d.layers];
+        layers.splice(at > 0 ? at : layers.length, 0, layer);
+        return remask({ ...d, layers }, layer.id);
+      });
+      setSelectedId(layer.id);
+      setTool('select');
+      flash('info', guide ? 'Added an Edit layer that colours the picture from your guide: check the prompt, then generate.' : 'Added an Edit layer that finishes your paint: check the prompt, then generate.');
+    },
+    [mutate, flash]
   );
 
   /** Replace the selected layer's shapes (the mask panel, the Shape tool): one undo step. */
@@ -446,9 +540,19 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
       // Masks that linked it let go of it.
       mutate((s) => {
         const linked = (op: MaskOp) => op.t === 'layer' && op.id === id;
+        const unref = (l: SceneLayer): SceneLayer => {
+          const refs = l.options?.refs || [];
+          if (!refs.some((r) => r.layer === id)) return l;
+          const kept = refs.filter((r) => r.layer !== id);
+          const prompt = remapRefTokens(l.prompt, l.kind, refs, kept, hasVoice(l.options));
+          return { ...l, prompt, options: { ...l.options, refs: kept } };
+        };
         const next = {
           ...s,
-          layers: s.layers.filter((l) => l.id !== id).map((l) => ((l.shapes || []).some(linked) ? { ...l, shapes: (l.shapes || []).filter((op) => !linked(op)) } : l)),
+          layers: s.layers
+            .filter((l) => l.id !== id)
+            .map(unref)
+            .map((l) => ((l.shapes || []).some(linked) ? { ...l, shapes: (l.shapes || []).filter((op) => !linked(op)) } : l)),
         };
         return { ...next, layers: next.layers.map((l) => (linksMasks(l) || l !== s.layers.find((x) => x.id === l.id) ? withMask(next, l) : l)) };
       });
@@ -477,7 +581,7 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
 
   const generate = useCallback(() => {
     const l = selected;
-    if (!l || generationsInFlight(l) >= MAX_GENERATIONS) return;
+    if (!l || l.kind === 'paint' || generationsInFlight(l) >= MAX_GENERATIONS) return;
     if (!l.mask) {
       flash('info', 'Paint or box the area this layer should change first.');
       return;
@@ -667,6 +771,27 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
 
   // ---- render -----------------------------------------------------------------------------
 
+  const maskPanelFor = (l: SceneLayer) => (
+    <MaskPanel
+      layer={l}
+      layers={doc.layers}
+      paint={l.kind === 'paint'}
+      selectedShape={selectedShape}
+      onSelectShape={(i) => {
+        setSelectedShape(i);
+        if (i !== null && tool !== 'shape') setTool('shape');
+      }}
+      onShapes={setShapes}
+      onMaskOpts={(patch) => {
+        pushUndo(l, `opts:${Object.keys(patch).join(',')}`);
+        const next = { ...(l.maskOpts || {}), ...patch };
+        (Object.keys(next) as Array<keyof MaskOpts>).forEach((k) => next[k] === undefined && delete next[k]);
+        patchLayer(l.id, { maskOpts: next }, true);
+      }}
+      onFeather={(feather) => patchLayer(l.id, { feather }, true)}
+    />
+  );
+
   const motionCount = doc.layers.filter((l) => l.kind === 'motion' && l.versions.length && !l.hidden).length;
   const autoLength = useMemo(() => {
     let d = 0;
@@ -793,7 +918,14 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
       <div className="sc-body">
         <nav className="sc-tools" aria-label="Tools">
           {TOOLS.map((t) => (
-            <button key={t.id} type="button" className={tool === t.id ? 'on' : ''} title={`${t.label} (${t.key}) · ${t.title}`} onClick={() => setTool(t.id)}>
+            <button
+              key={t.id}
+              type="button"
+              className={tool === t.id ? 'on' : ''}
+              title={`${t.label} (${t.key}) · ${t.title}`}
+              onClick={() => setTool(t.id)}
+              disabled={t.id === 'protect' && selected?.kind === 'paint'}
+            >
               <ToolIcon id={t.id} />
             </button>
           ))}
@@ -802,6 +934,41 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
             <input type="range" min={2} max={400} value={brush} onChange={(e) => setBrush(Number(e.target.value))} aria-label="Brush size" />
             <span>{brush}</span>
           </div>
+          {selected?.kind === 'paint' && (
+            <div className="sc-ink" aria-label="Paint colour">
+              <label className="sc-ink-current" title="Paint colour" style={{ background: ink }}>
+                <input type="color" value={ink} onChange={(e) => setInk(e.target.value)} aria-label="Paint colour" />
+              </label>
+              {EyeDropperApi && (
+                <button
+                  type="button"
+                  className="sc-ink-pick"
+                  title="Pick a colour from the screen"
+                  onClick={async () => {
+                    try {
+                      const r = await new EyeDropperApi().open();
+                      if (r?.sRGBHex) rememberInk(r.sRGBHex);
+                    } catch {
+                      // cancelled
+                    }
+                  }}
+                >
+                  <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden>
+                    <path d="M10.5 2.5l3 3-1.5 1.5-3-3zM9.5 4.5l2 2L5 13H3v-2z" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
+                  </svg>
+                </button>
+              )}
+              <div className="sc-ink-swatches">
+                {swatches.map((c) => (
+                  <button key={c} type="button" className={c.toLowerCase() === ink.toLowerCase() ? 'on' : ''} style={{ background: c }} title={c} onClick={() => setInk(c)} aria-label={`Use ${c}`} />
+                ))}
+              </div>
+              <div className="sc-brush-size" title="Paint opacity">
+                <input type="range" min={5} max={100} value={Math.round(inkAlpha * 100)} onChange={(e) => setInkAlpha(Number(e.target.value) / 100)} aria-label="Paint opacity" />
+                <span>{Math.round(inkAlpha * 100)}%</span>
+              </div>
+            </div>
+          )}
           <div className="sc-brush-size" title="Brush hardness: 100 = a hard edge, lower = a soft one">
             <input type="range" min={0} max={100} value={Math.round(hardness * 100)} onChange={(e) => setHardness(Number(e.target.value) / 100)} aria-label="Brush hardness" />
             <span>{Math.round(hardness * 100)}</span>
@@ -815,6 +982,7 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
             tool={tool}
             brush={brush}
             hardness={hardness}
+            ink={selected?.kind === 'paint' ? ink : null}
             maskView={maskView}
             selectedShape={selectedShape}
             onSelectShape={setSelectedShape}
@@ -857,31 +1025,34 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
             onMoveTo={moveLayerTo}
             stale={new Set(doc.layers.filter((l) => versionStale(doc, l)).map((l) => l.id))}
           />
-          {selected ? (
+          {selected && selected.kind === 'paint' ? (
+            <PaintPanel
+              key={selected.id}
+              layer={selected}
+              maskPanel={maskPanelFor(selected)}
+              usedBy={doc.layers.flatMap((l) => {
+                const refs = l.options?.refs || [];
+                const i = refs.findIndex((r) => r.layer === selected.id);
+                return i < 0 ? [] : [{ id: l.id, name: l.name || l.kind, token: refTokens(l.kind, refs, hasVoice(l.options))[i] }];
+              })}
+              onPatch={(p) => patchLayer(selected.id, p)}
+              onOptions={(o) => {
+                const next = { ...(selected.options || {}), ...o };
+                patchLayer(selected.id, { options: next });
+                rememberLayerDefaults('paint', next);
+              }}
+              onFinish={() => finishPaint(selected)}
+              onSelectLayer={setSelectedId}
+              onDelete={() => deleteLayer(selected.id)}
+            />
+          ) : selected ? (
             <Inspector
               key={selected.id}
               layer={selected}
               busy={busy}
               stale={versionStale(doc, selected)}
-              maskPanel={
-                <MaskPanel
-                  layer={selected}
-                  layers={doc.layers}
-                  selectedShape={selectedShape}
-                  onSelectShape={(i) => {
-                    setSelectedShape(i);
-                    if (i !== null && tool !== 'shape') setTool('shape');
-                  }}
-                  onShapes={setShapes}
-                  onMaskOpts={(patch) => {
-                    pushUndo(selected, `opts:${Object.keys(patch).join(',')}`);
-                    const next = { ...(selected.maskOpts || {}), ...patch };
-                    (Object.keys(next) as Array<keyof MaskOpts>).forEach((k) => next[k] === undefined && delete next[k]);
-                    patchLayer(selected.id, { maskOpts: next }, true);
-                  }}
-                  onFeather={(feather) => patchLayer(selected.id, { feather }, true)}
-                />
-              }
+              maskPanel={maskPanelFor(selected)}
+              paintLayers={doc.layers.filter((l) => l.kind === 'paint')}
               onPatch={(p) => patchLayer(selected.id, p, 'feather' in p || 'kind' in p)}
               onOptions={(o) => {
                 const next = { ...(selected.options || {}), ...o };

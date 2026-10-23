@@ -20,6 +20,8 @@ export interface MaskPanelProps {
   /** Change whole-mask settings (a slider drag is one undo step). */
   onMaskOpts: (patch: MaskOpts) => void;
   onFeather: (px: number) => void;
+  /** A paint layer: strokes are paint (each in its colour) or erase; no links, expand or invert. */
+  paint?: boolean;
 }
 
 function OpIcon({ op }: { op: MaskOp }) {
@@ -65,7 +67,7 @@ function modeOf(op: MaskOp): 'add' | 'cut' | 'protect' {
 }
 
 export default function MaskPanel(props: MaskPanelProps) {
-  const { layer: l, layers, selectedShape } = props;
+  const { layer: l, layers, selectedShape, paint } = props;
   const ops = l.shapes || [];
   const mo = l.maskOpts || {};
   const nameOf = (id: string) => {
@@ -103,8 +105,8 @@ export default function MaskPanel(props: MaskPanelProps) {
   return (
     <div className="sc-maskpanel">
       <div className="sc-maskpanel-head">
-        <span className="sc-label">Mask</span>
-        <span className="sc-faint">{ops.length ? `${ops.length} shape${ops.length === 1 ? '' : 's'}` : 'nothing drawn yet'}</span>
+        <span className="sc-label">{paint ? 'Strokes' : 'Mask'}</span>
+        <span className="sc-faint">{ops.length ? `${ops.length} ${paint ? 'stroke' : 'shape'}${ops.length === 1 ? '' : 's'}` : 'nothing drawn yet'}</span>
       </div>
 
       {rows.length > 0 && (
@@ -119,7 +121,7 @@ export default function MaskPanel(props: MaskPanelProps) {
                   onClick={() => props.onSelectShape(selectedShape === i ? null : i)}
                   title={op.t === 'layer' ? 'Linked live to that layer’s mask' : 'Select it, then use the Shape tool (T) to move, scale or reshape it'}
                 >
-                  <OpIcon op={op} />
+                  {paint && !op.erase ? <span className="sc-swatch-dot" style={{ background: op.c || '#fff', opacity: op.a ?? 1 }} /> : <OpIcon op={op} />}
                   <span className="sc-shape-name">{opLabel(op, nameOf)}</span>
                 </button>
                 <button
@@ -129,7 +131,7 @@ export default function MaskPanel(props: MaskPanelProps) {
                   onClick={() => cycleMode(i)}
                   title={mode === 'protect' ? 'Protect: the layer leaves this exactly as the picture below' : mode === 'cut' ? 'Cuts the mask: click to add instead' : 'Adds to the mask: click to cut instead'}
                 >
-                  {mode === 'protect' ? 'protect' : mode === 'cut' ? '− cut' : '+ add'}
+                  {mode === 'protect' ? 'protect' : paint ? (mode === 'cut' ? '− erase' : '+ paint') : mode === 'cut' ? '− cut' : '+ add'}
                 </button>
                 <span className="sc-row-tools">
                   <button type="button" title="Earlier (drawn before the shapes below it in the list)" disabled={i === 0} onClick={() => moveOp(i, -1)}>
@@ -151,7 +153,7 @@ export default function MaskPanel(props: MaskPanelProps) {
         </ol>
       )}
 
-      {others.length > 0 && (
+      {!paint && others.length > 0 && (
         <div className="sc-mask-links">
           <select
             className="sc-select"
@@ -194,13 +196,15 @@ export default function MaskPanel(props: MaskPanelProps) {
       )}
 
       <div className="sc-grid sc-mask-grid">
-        <span className="sc-label" title="How softly the area blends into the picture around it">
-          Soft edge
+        <span className="sc-label" title={paint ? 'Blur the painting' : 'How softly the area blends into the picture around it'}>
+          {paint ? 'Soften' : 'Soft edge'}
         </span>
         <div className="sc-slider">
           <input type="range" min={0} max={160} step={1} value={l.feather} onChange={(e) => props.onFeather(Number(e.target.value))} aria-label="Soft edge" />
           <span>{Math.round(l.feather)} px</span>
         </div>
+{!paint && (
+<>
         <span className="sc-label" title="Grow the mask outward (+) or choke it inward (−), before the soft edge">
           Expand
         </span>
@@ -211,6 +215,8 @@ export default function MaskPanel(props: MaskPanelProps) {
             {mo.expand || 0} px
           </span>
         </div>
+</>
+)}
         <span className="sc-label" title="How strongly the layer shows through its mask">
           Opacity
         </span>
@@ -229,6 +235,8 @@ export default function MaskPanel(props: MaskPanelProps) {
           />
           <span>{Math.round((mo.opacity ?? 1) * 100)}%</span>
         </div>
+{!paint && (
+<>
         <span className="sc-label">Invert</span>
         <div className="sc-seg" role="radiogroup">
           <button type="button" role="radio" aria-checked={!mo.invert} className={mo.invert ? '' : 'on'} onClick={() => props.onMaskOpts({ invert: undefined })}>
@@ -245,6 +253,8 @@ export default function MaskPanel(props: MaskPanelProps) {
             Outside
           </button>
         </div>
+</>
+)}
       </div>
     </div>
   );

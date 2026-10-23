@@ -18,7 +18,8 @@
 // mask, live: what that layer covers (its own expand and invert applied,
 // before its feather) is added or, with `erase`, cut. That is how layers
 // that overlap are kept apart cleanly (the sky minus the people in front).
-// Any op can be switched `off` without losing it.
+// Any op can be switched `off` without losing it. On a paint layer ops carry
+// a colour `c` (CSS hex) and opacity `a` (0-1), and erase cuts the paint.
 export type MaskOp = (
   | { t: 'rect'; x: number; y: number; w: number; h: number }
   | { t: 'lasso'; pts: number[] }
@@ -26,7 +27,7 @@ export type MaskOp = (
   | { t: 'stroke'; pts: number[]; r: number; h?: number }
   | { t: 'image'; src: string; x: number; y: number; w: number; h: number; bx: number; by: number; bw: number; bh: number }
   | { t: 'layer'; id: string }
-) & { erase?: boolean; keep?: boolean; off?: boolean };
+) & { erase?: boolean; keep?: boolean; off?: boolean; c?: string; a?: number };
 
 /** Whole-mask settings, applied after the ops in this order: expand (px; < 0 chokes), invert, feather, opacity. */
 export interface MaskOpts {
@@ -188,14 +189,16 @@ export function maskImagesReady(ops: MaskOp[]): boolean {
 /**
  * Draw ops (white, alpha = coverage) onto ctx, whose pixels are frame pixels × scale. `erase` and `keep` ops cut
  * what is under them; with `keepAsPaint` only the keep ops are drawn, as paint (the Protect overlay). `layer` ops
- * draw what layerCoverage returns for them (a canvas the size of ctx's).
+ * draw what layerCoverage returns for them (a canvas the size of ctx's). `colored` draws each op in its own colour
+ * and opacity (a paint layer).
  */
 export function drawOps(
   ctx: CanvasRenderingContext2D,
   ops: MaskOp[],
   scale: number,
   keepAsPaint = false,
-  layerCoverage?: (id: string) => HTMLCanvasElement | null
+  layerCoverage?: (id: string) => HTMLCanvasElement | null,
+  colored = false
 ): void {
   ctx.save();
   ctx.fillStyle = '#fff';
@@ -206,6 +209,10 @@ export function drawOps(
     if (op.off || (keepAsPaint && !op.keep)) return;
     ctx.globalCompositeOperation = !keepAsPaint && (op.erase || op.keep) ? 'destination-out' : 'source-over';
     ctx.filter = 'none';
+    const ink = colored && !op.erase ? op.c || '#fff' : '#fff';
+    ctx.fillStyle = ink;
+    ctx.strokeStyle = ink;
+    ctx.globalAlpha = colored && op.a !== undefined ? Math.min(1, Math.max(0, op.a)) : 1;
     if (op.t === 'layer') {
       const c = layerCoverage?.(op.id);
       if (c) ctx.drawImage(c, 0, 0);
@@ -333,7 +340,8 @@ function coverage(
   scale: number,
   lookup: MaskLookup | undefined,
   seen: Set<string>,
-  cache: Map<string, HTMLCanvasElement | null>
+  cache: Map<string, HTMLCanvasElement | null>,
+  colored = false
 ): HTMLCanvasElement | null {
   const hard = canvas(w, h);
   const ctx = hard.getContext('2d', { willReadFrequently: true });
@@ -345,7 +353,7 @@ function coverage(
     const c = ref ? coverage((ref.shapes || []).filter((op) => !op.off), ref.maskOpts, w, h, scale, lookup, new Set([...seen, id]), cache) : null;
     cache.set(id, c);
     return c;
-  });
+  }, colored);
   if (opts?.expand) morphCoverage(hard, opts.expand * scale);
   if (!opts?.invert) return hard;
   const inv = canvas(w, h);
@@ -389,14 +397,16 @@ export function rasterizeLayerMask(
   frameH: number,
   feather: number,
   lookup?: MaskLookup,
-  selfId?: string
+  selfId?: string,
+  /** A paint layer: the raster is the painting in its colours, not white coverage. */
+  colored = false
 ): MaskRaster | null {
   const live = ops.filter((op) => !op.off);
   if (!live.length && !opts?.invert) return { mask: '', bounds: null };
   // An image piece not decoded yet would silently drop out of the mask.
   if (!maskImagesReady(opsDeep(live, lookup))) return null;
   const { w, h, scale } = maskSize(frameW, frameH);
-  const hard = coverage(live, opts, w, h, scale, lookup, new Set(selfId ? [selfId] : []), new Map());
+  const hard = coverage(live, opts, w, h, scale, lookup, new Set(selfId ? [selfId] : []), new Map(), colored);
   const hctx = hard?.getContext('2d', { willReadFrequently: true });
   const box = hard && hctx ? alphaBox(hctx.getImageData(0, 0, w, h).data, w, h, 8) : null;
   if (!hard || !box) return { mask: '', bounds: null };

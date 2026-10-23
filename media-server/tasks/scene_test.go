@@ -303,7 +303,7 @@ func TestSceneFlattenWithFFmpeg(t *testing.T) {
 	layer := &SceneLayer{ID: "a", Kind: SceneKindStill, Region: region,
 		Mask:     maskDataURL(t, 80, 60, SceneRect{X: 30, Y: 22, W: 20, H: 15}), // half-res mask: 60..100 × 44..74
 		Versions: []SceneVersion{{Path: edit, Region: region}}, Active: 0}
-	layers, err := sceneGraphLayers(dir, []*SceneLayer{layer}, true)
+	layers, err := sceneGraphLayers(dir, s.Width, s.Height, []*SceneLayer{layer}, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -355,7 +355,7 @@ func TestSceneFlattenWithFFmpeg(t *testing.T) {
 		Versions: []SceneVersion{{Path: clip, Region: mregion, Duration: 1, Audio: true}}, Active: 0}
 	s.Layers = []*SceneLayer{layer, motion}
 	writeTestScene(t, s)
-	all, err := sceneGraphLayers(dir, s.Layers, false)
+	all, err := sceneGraphLayers(dir, s.Width, s.Height, s.Layers, false)
 	if err != nil || len(all) != 2 || !all[1].Audio {
 		t.Fatalf("graph layers = %+v, %v", all, err)
 	}
@@ -702,5 +702,88 @@ func TestSceneCancelOneGeneration(t *testing.T) {
 	s, err = CancelLayer(q, id, "m", "")
 	if err != nil || s.Layers[0].Job != nil || len(s.Layers[0].Queued) != 0 || state(q, gen2) != jobqueue.StateCancelled {
 		t.Fatalf("cancel all: %v job %+v queued %d gen2 %v", err, s.Layers[0].Job, len(s.Layers[0].Queued), state(q, gen2))
+	}
+}
+
+// colourDataURL is a w×h RGBA PNG data URL painted c inside r (transparent
+// elsewhere): a paint layer's raster.
+func colourDataURL(t *testing.T, w, h int, r SceneRect, c color.NRGBA) string {
+	img := image.NewNRGBA(image.Rect(0, 0, w, h))
+	for y := r.Y; y < r.Y+r.H; y++ {
+		for x := r.X; x < r.X+r.W; x++ {
+			img.Set(x, y, c)
+		}
+	}
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatal(err)
+	}
+	return "data:image/png;base64," + base64.StdEncoding.EncodeToString(buf.Bytes())
+}
+
+// A paint layer in the picture is part of what the layers above are made
+// from; a guide one is not, but a reference to it renders the paint over that
+// picture, aligned to the referencing layer's crop.
+func TestScenePaintLayerWithFFmpeg(t *testing.T) {
+	if deps.BundledOrEmpty("ffmpeg") == "" {
+		t.Skip("bundled ffmpeg not available")
+	}
+	withSceneRoot(t)
+	src := filepath.Join(t.TempDir(), "lineart.png")
+	solidPNG(t, src, 160, 120, color.RGBA{0, 0, 255, 255})
+	s, err := CreateScene(context.Background(), src, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir, _ := sceneDir(s.ID)
+	// Painted red over frame 40..80 × 30..60 (the raster is half size).
+	paint := &SceneLayer{ID: "p", Kind: SceneKindPaint, Mask: colourDataURL(t, 80, 60, SceneRect{X: 20, Y: 15, W: 20, H: 15}, color.NRGBA{255, 0, 0, 255}),
+		Versions: []SceneVersion{}, Active: -1}
+	region := SceneRect{X: 20, Y: 20, W: 80, H: 60}
+	edit := &SceneLayer{ID: "e", Kind: SceneKindStill, Region: region, Mask: maskDataURL(t, 160, 120, region),
+		Options: map[string]any{"refs": []any{map[string]any{"layer": "p", "note": "colour guide"}}}, Versions: []SceneVersion{}, Active: -1}
+	s.Layers = []*SceneLayer{paint, edit}
+
+	flatten := func(name string) image.Image {
+		layers, err := sceneGraphLayers(dir, s.Width, s.Height, s.Layers[:1], true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := filepath.Join(dir, name)
+		if err := runSceneFFmpeg(context.Background(), append(sceneGraphArgs(s.Base, s.Width, s.Height, layers, false, 0, SceneRect{}), out)); err != nil {
+			t.Fatal(err)
+		}
+		return readPNG(t, out)
+	}
+	red := func(img image.Image, x, y int) bool {
+		r, g, b, _ := img.At(x, y).RGBA()
+		return r>>8 > 200 && g>>8 < 60 && b>>8 < 60
+	}
+	in := flatten("in.png")
+	if !red(in, 60, 45) || red(in, 20, 10) {
+		t.Fatalf("paint in the picture: (60,45)=%v (20,10)=%v", in.At(60, 45), in.At(20, 10))
+	}
+	if got := sceneBelow(s.Layers[:1]); len(got) != 1 || got[0] != "p:paint" {
+		t.Fatalf("sceneBelow = %v", got)
+	}
+
+	paint.Options = map[string]any{"guide": true}
+	if guide := flatten("guide.png"); red(guide, 60, 45) {
+		t.Fatalf("a guide paint layer is in the picture: %v", guide.At(60, 45))
+	}
+	refs, err := resolveLayerRefs(context.Background(), s, 1, dir, region, sceneRefs(edit.Options))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(refs) != 1 || refs[0].Path == "" || refs[0].Kind != "image" || refs[0].Note != "colour guide" {
+		t.Fatalf("refs = %+v", refs)
+	}
+	ref := readPNG(t, refs[0].Path)
+	if b := ref.Bounds(); b.Dx() != region.W || b.Dy() != region.H {
+		t.Fatalf("reference is %v, want the region's %dx%d", b, region.W, region.H)
+	}
+	// Frame (60,45) is (40,25) in the crop; frame (25,25) = (5,5) is the picture below.
+	if !red(ref, 40, 25) || red(ref, 5, 5) {
+		t.Fatalf("reference: (40,25)=%v (5,5)=%v", ref.At(40, 25), ref.At(5, 5))
 	}
 }

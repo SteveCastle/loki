@@ -5,7 +5,8 @@ import { isElectron, mediaServerBase, store } from '../../platform';
 import type { MaskOp, MaskOpts, Rect } from './mask';
 import type { SceneRefItem } from './refs';
 
-export type LayerKind = 'still' | 'motion';
+/** still = an edited area, motion = an animated one, paint = the user's own colour painting (never generated). */
+export type LayerKind = 'still' | 'motion' | 'paint';
 
 export interface SceneVersion {
   path: string;
@@ -88,6 +89,8 @@ export interface LayerOptions {
   voiceRef?: string;
   /** extra images (and for motion videos / audio) the generation is given; see refs.ts */
   refs?: SceneRefItem[];
+  /** paint: a guide only (used as a reference, never in the picture) */
+  guide?: boolean;
   /** motion: lock the static parts to the still (default on; see media-server/tasks/scene_lock.go) */
   lock?: boolean;
   /** motion: output at the region's size with the still's fine detail (default on) */
@@ -237,8 +240,14 @@ export function stackBelow(s: Scene, i: number): string[] {
   s.layers.slice(0, Math.max(0, i)).forEach((l) => {
     const v = l.versions[l.active];
     if (!l.hidden && v && l.kind === 'still') out.push(`${l.id}:${v.path}`);
+    if (paintInPicture(l)) out.push(`${l.id}:paint`);
   });
   return out;
+}
+
+/** A paint layer that is part of the picture (visible, painted, not a guide). Mirrors paintInPicture in scene.go. */
+export function paintInPicture(l: SceneLayer): boolean {
+  return l.kind === 'paint' && !l.hidden && !!l.mask && !l.options?.guide;
 }
 
 /**

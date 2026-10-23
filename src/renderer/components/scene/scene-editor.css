@@ -282,7 +282,11 @@ body.sc-body {
   flex-direction: column;
   align-items: center;
   gap: 4px;
+  min-height: 0;
   padding: 8px 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-width: none;
   background: var(--sc-surface);
   border-right: 1px solid var(--sc-hairline);
 }
@@ -328,8 +332,8 @@ body.sc-body {
 }
 
 .sc-brush-size input {
-  width: 110px;
-  margin: 50px 0;
+  width: 84px;
+  margin: 37px 0;
   transform: rotate(-90deg);
   accent-color: var(--sc-accent);
 }
@@ -1573,4 +1577,125 @@ body.sc-body {
 
 .sc-mask-grid {
   margin-top: 0;
+}
+
+/* ---- paint layers ---- */
+
+.sc-kind.paint {
+  color: #ff9f6b;
+  background: rgba(255, 159, 107, 0.15);
+}
+
+/* The painting over the picture; a guide is dimmed (it is never in the picture itself). */
+.sc-paint {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.sc-paint.guide {
+  opacity: 0.7;
+}
+
+.sc-ref-paint {
+  object-fit: contain;
+  background-color: #2a2a2a;
+  background-image: linear-gradient(45deg, #333 25%, transparent 25%, transparent 75%, #333 75%),
+    linear-gradient(45deg, #333 25%, transparent 25%, transparent 75%, #333 75%);
+  background-position: 0 0, 4px 4px;
+  background-size: 8px 8px;
+}
+
+.sc-swatch-dot {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 50%;
+}
+
+.sc-ink {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: center;
+  width: 100%;
+  padding: 4px 0;
+}
+
+.sc-ink-current {
+  position: relative;
+  display: block;
+  width: 30px;
+  height: 30px;
+  border: 2px solid rgba(255, 255, 255, 0.6);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.sc-ink-current input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.sc-ink-pick {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 24px;
+  color: var(--sc-dim);
+  background: var(--sc-field);
+  border: 1px solid var(--sc-hairline);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.sc-ink-pick:hover {
+  color: #fff;
+}
+
+.sc-ink-swatches {
+  display: grid;
+  grid-template-columns: repeat(2, 13px);
+  gap: 4px;
+}
+
+.sc-ink-swatches button {
+  width: 13px;
+  height: 13px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.sc-ink-swatches button.on {
+  outline: 2px solid #fff;
+  outline-offset: 1px;
+}
+
+.sc-paint-help {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.sc-paint-used {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin-top: 10px;
+}
+
+.sc-tools button:disabled {
+  opacity: 0.3;
+  cursor: default;
 }

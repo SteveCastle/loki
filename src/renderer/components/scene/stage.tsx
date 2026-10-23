@@ -50,6 +50,8 @@ export interface StageProps {
   brush: number;
   /** Brush hardness 0-1 (1 = hard edge). */
   hardness: number;
+  /** The paint colour while a paint layer is selected (strokes are drawn in it), else null. */
+  ink: string | null;
   maskView: MaskView;
   /** Index of the selected layer's shape being edited (Shape tool), or null. */
   selectedShape: number | null;
@@ -161,7 +163,7 @@ function MotionMedia({ src, playing, muted, syncKey, style, rate, offset, clock:
 }
 
 export default function Stage(props: StageProps) {
-  const { scene, selected, tool, brush, hardness, maskView, selectedShape, compare, playing, soundOn, syncKey, fitKey, protectMask, motionOverlay, onCommit, onSelect } = props;
+  const { scene, selected, tool, brush, hardness, ink, maskView, selectedShape, compare, playing, soundOn, syncKey, fitKey, protectMask, motionOverlay, onCommit, onSelect } = props;
   const clock = useRef<SceneClock>({ t0: performance.now(), pausedAt: null });
   useEffect(() => {
     const c = clock.current;
@@ -263,6 +265,11 @@ export default function Stage(props: StageProps) {
     const Y = (v: number) => view.y + v * view.zoom;
     let fill = 'rgba(0, 200, 150, 0.35)';
     let line = '#00c896';
+    if (ink && !d.erase) {
+      fill = ink;
+      line = ink;
+      ctx.globalAlpha = 0.75;
+    }
     if (d.erase) {
       fill = 'rgba(255, 90, 120, 0.35)';
       line = 'rgb(255, 120, 160)';
@@ -318,7 +325,7 @@ export default function Stage(props: StageProps) {
       if (p.length === 2) ctx.lineTo(X(p[0]) + 0.01, Y(p[1]));
       ctx.stroke();
     }
-  }, [view, size, brush]);
+  }, [view, size, brush, ink]);
 
   useEffect(() => paintDraft(), [paintDraft]);
 
@@ -587,6 +594,11 @@ export default function Stage(props: StageProps) {
         <img className="sc-base" src={mediaUrl(scene.base)} alt="" draggable={false} />
         {!compare &&
           scene.layers.map((l) => {
+            if (l.kind === 'paint') {
+              // A guide shows while you work (dimmed); it is never in the picture the engines or the export see.
+              if (l.hidden || !l.mask) return null;
+              return <img key={l.id} className={`sc-paint${l.options?.guide ? ' guide' : ''}`} src={l.mask} alt="" draggable={false} />;
+            }
             const v = l.versions[l.active];
             if (l.hidden || !v || !l.mask) return null;
             const src = mediaUrl(v.path);
@@ -614,12 +626,12 @@ export default function Stage(props: StageProps) {
         {sel && maskView === 'matte' && !compare && (
           <div className="sc-matte">{sel.mask && <div className="sc-matte-white" style={maskStyle(sel.mask)} />}</div>
         )}
-        {sel && maskView === 'tint' && sel.mask && !compare && <div className={`sc-mask-tint${sel.kind === 'motion' ? ' motion' : ''}`} style={maskStyle(sel.mask)} />}
+        {sel && sel.kind !== 'paint' && maskView === 'tint' && sel.mask && !compare && <div className={`sc-mask-tint${sel.kind === 'motion' ? ' motion' : ''}`} style={maskStyle(sel.mask)} />}
         {sel && maskView === 'tint' && protectMask && !compare && <div className="sc-mask-tint protect" style={maskStyle(protectMask)} />}
         {motionOverlay && !compare && (
           <div className="sc-motion-tint" style={{ ...regionStyle(motionOverlay.region, scene), ...maskStyle(motionOverlay.dataUrl) }} />
         )}
-        {sel && sel.region.w > 0 && !compare && (
+        {sel && sel.kind !== 'paint' && sel.region.w > 0 && !compare && (
           <div className={`sc-region${sel.kind === 'motion' ? ' motion' : ''}`} style={regionStyle(sel.region, scene)}>
             <span className="sc-region-label">{selVersion && !sameRect(selVersion.region, sel.region) ? 'next generation sees this' : 'the engine sees this'}</span>
           </div>
@@ -643,7 +655,13 @@ export default function Stage(props: StageProps) {
       {cursor && view && sel && (tool === 'brush' || tool === 'erase' || tool === 'protect') && !panning && (
         <div
           className={`sc-brush-cursor${tool === 'erase' ? ' erase' : ''}${tool === 'protect' ? ' protect' : ''}`}
-          style={{ left: view.x + cursor.x * view.zoom, top: view.y + cursor.y * view.zoom, width: brush * 2 * view.zoom, height: brush * 2 * view.zoom }}
+          style={{
+            left: view.x + cursor.x * view.zoom,
+            top: view.y + cursor.y * view.zoom,
+            width: brush * 2 * view.zoom,
+            height: brush * 2 * view.zoom,
+            ...(ink && tool === 'brush' ? { borderColor: ink } : {}),
+          }}
         />
       )}
       {view && (

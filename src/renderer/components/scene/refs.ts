@@ -13,7 +13,10 @@ export type RefKind = 'image' | 'video' | 'audio';
 export interface SceneRefItem {
   /** Stable id, so prompt tokens can follow a reference when the list changes. */
   id: string;
+  /** The file ('' for a paint layer). */
   path: string;
+  /** A paint layer of the scene instead of a file: the server renders it over the picture, aligned with the crop. */
+  layer?: string;
   /** What it is, in the user's words (motion prompts define the reference with it). */
   note?: string;
 }
@@ -21,6 +24,11 @@ export interface SceneRefItem {
 export function refKind(path: string): RefKind | null {
   const k = mediaKind(path);
   return k === 'image' || k === 'video' || k === 'audio' ? k : null;
+}
+
+/** What kind of reference an item is (a paint layer is an image). */
+export function itemKind(r: SceneRefItem): RefKind | null {
+  return r.layer ? 'image' : refKind(r.path);
 }
 
 /** The reference kinds a layer can use. */
@@ -44,7 +52,7 @@ export function refTokens(kind: LayerKind, refs: SceneRefItem[], voice: boolean)
   let vid = 1;
   let aud = voice ? 2 : 1;
   return refs.map((r) => {
-    const k = refKind(r.path);
+    const k = itemKind(r);
     if (kind !== 'motion') {
       if (k !== 'image') return null;
       img += 1;
@@ -97,7 +105,7 @@ export function remapRefTokens(prompt: string, kind: LayerKind, before: SceneRef
     const o = oldT[i];
     if (!o) return;
     if (!newById.has(r.id)) {
-      map.set(o, `<removed: ${(r.note || '').trim() || r.path.split(/[\\/]/).pop()}>`);
+      map.set(o, `<removed: ${(r.note || '').trim() || (r.layer ? 'paint layer' : '') || r.path.split(/[\\/]/).pop()}>`);
       return;
     }
     const n = newById.get(r.id);

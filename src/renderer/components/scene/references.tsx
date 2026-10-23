@@ -1,12 +1,15 @@
 import React, { useState } from 'react';
 import { mediaUrl } from '../../platform';
-import { hasVoice, newRefId, refKind, refKinds, refTokens, remapRefTokens, selfToken, tokenIssues, type RefKind, type SceneRefItem } from './refs';
+import { hasVoice, itemKind, newRefId, refKind, refKinds, refTokens, remapRefTokens, selfToken, tokenIssues, type RefKind, type SceneRefItem } from './refs';
 import type { LayerOptions, SceneLayer } from './scene-api';
 
 // A layer's References: the crop itself (always first) and the images, videos
 // or audio it is given besides, each with the token its prompt names it by.
 // Click a token to insert it in the prompt; reordering or removing renumbers
-// the prompt's tokens so its words keep pointing at the same files.
+// the prompt's tokens so its words keep pointing at the same files. A paint
+// layer can be a reference too: the server renders it over the picture this
+// layer is made from, lined up with the crop (rough colour to finish, a
+// sketch of where things go).
 
 const MAX: Record<RefKind, number> = { image: 8, video: 3, audio: 3 };
 
@@ -19,6 +22,8 @@ export interface ReferencesProps {
   onPickLibrary: (kinds: RefKind[]) => { result: Promise<string[] | null>; cancel: () => void };
   /** Pick files with the system dialog (or the server's file browser on the web). */
   onPickFiles: (kinds: RefKind[]) => Promise<string[]>;
+  /** The scene's paint layers this layer can reference. */
+  paintLayers: SceneLayer[];
 }
 
 function Thumb({ path }: { path: string }) {
@@ -34,7 +39,18 @@ function Thumb({ path }: { path: string }) {
 
 const basename = (p: string) => p.split(/[\\/]/).pop() || p;
 
-export default function References({ layer: l, onInsert, onChange, onPickLibrary, onPickFiles }: ReferencesProps) {
+function PaintThumb({ layer }: { layer: SceneLayer | undefined }) {
+  if (!layer || !layer.mask) {
+    return (
+      <span className="sc-ref-thumb sc-ref-audio" aria-hidden>
+        ✎
+      </span>
+    );
+  }
+  return <img className="sc-ref-thumb sc-ref-paint" src={layer.mask} alt="" />;
+}
+
+export default function References({ layer: l, onInsert, onChange, onPickLibrary, onPickFiles, paintLayers }: ReferencesProps) {
   const o: LayerOptions = l.options || {};
   const refs: SceneRefItem[] = o.refs || [];
   const voice = hasVoice(o);
@@ -50,7 +66,7 @@ export default function References({ layer: l, onInsert, onChange, onPickLibrary
     const have = new Set(refs.map((r) => r.path.toLowerCase()));
     const counts: Record<RefKind, number> = { image: 0, video: 0, audio: voice ? 1 : 0 };
     refs.forEach((r) => {
-      const k = refKind(r.path);
+      const k = itemKind(r);
       if (k) counts[k] += 1;
     });
     const next = [...refs];
@@ -78,6 +94,18 @@ export default function References({ layer: l, onInsert, onChange, onPickLibrary
     });
   };
 
+  const linked = new Set(refs.map((r) => r.layer).filter(Boolean));
+  const addPaint = (id: string) => {
+    const p = paintLayers.find((x) => x.id === id);
+    if (!p || linked.has(id)) return;
+    if (refs.filter((r) => itemKind(r) === 'image').length >= MAX.image) {
+      setNote('Over the engine’s limit of images');
+      return;
+    }
+    apply([...refs, { id: newRefId(), path: '', layer: id, note: p.name || 'my rough painting' }]);
+  };
+  const paintName = (id: string) => paintLayers.find((x) => x.id === id)?.name || 'Paint (deleted)';
+
   const move = (i: number, d: -1 | 1) => {
     const j = i + d;
     if (j < 0 || j >= refs.length) return;
@@ -99,6 +127,24 @@ export default function References({ layer: l, onInsert, onChange, onPickLibrary
           <button type="button" className="sc-btn sc-btn-quiet sc-btn-tiny" disabled={!!pending} onClick={() => onPickFiles(kinds).then(add)} title="Files outside the library">
             Files…
           </button>
+          {paintLayers.some((p) => !linked.has(p.id)) && (
+            <select
+              className="sc-select sc-btn-tiny"
+              value=""
+              onChange={(e) => e.target.value && addPaint(e.target.value)}
+              title="Give the engine one of this scene's paint layers, painted over the picture and lined up with this area"
+              aria-label="Add a paint layer as a reference"
+            >
+              <option value="">+ Paint layer…</option>
+              {paintLayers
+                .filter((p) => !linked.has(p.id))
+                .map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name || 'Paint'}
+                  </option>
+                ))}
+            </select>
+          )}
         </span>
       </div>
       {pending && (
@@ -132,9 +178,9 @@ export default function References({ layer: l, onInsert, onChange, onPickLibrary
         )}
         {refs.map((r, i) => (
           <li key={r.id} className={`sc-ref${tokens[i] ? '' : ' unusable'}`}>
-            <Thumb path={r.path} />
+            {r.layer ? <PaintThumb layer={paintLayers.find((x) => x.id === r.layer)} /> : <Thumb path={r.path} />}
             {tokens[i] ? (
-              <button type="button" className="sc-token" onClick={() => onInsert(tokens[i] as string)} title={`Insert in the prompt · ${r.path}`}>
+              <button type="button" className="sc-token" onClick={() => onInsert(tokens[i] as string)} title={`Insert in the prompt · ${r.layer ? `paint layer “${paintName(r.layer)}”, over the picture` : r.path}`}>
                 {tokens[i]}
               </button>
             ) : (
@@ -145,7 +191,7 @@ export default function References({ layer: l, onInsert, onChange, onPickLibrary
             <input
               className="sc-input sc-ref-note"
               value={r.note || ''}
-              placeholder={basename(r.path)}
+              placeholder={r.layer ? paintName(r.layer) : basename(r.path)}
               title="What it is (e.g. “the red jacket”): Motion prompts introduce the reference with it"
               onChange={(e) => onChange(refs.map((x) => (x.id === r.id ? { ...x, note: e.target.value } : x)), l.prompt)}
               aria-label="What this reference is"

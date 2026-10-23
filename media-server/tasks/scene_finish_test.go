@@ -297,7 +297,7 @@ func TestSceneTimingInExportAndLength(t *testing.T) {
 	if d := sceneDuration(s); d != 4 {
 		t.Fatalf("scene length %v, want 4 (b's 2 s clip at half speed)", d)
 	}
-	gl, err := sceneGraphLayers(dir, s.Layers, false)
+	gl, err := sceneGraphLayers(dir, s.Width, s.Height, s.Layers, false)
 	if err != nil {
 		t.Fatal(err)
 	}
