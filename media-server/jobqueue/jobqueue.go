@@ -201,6 +201,13 @@ type Queue struct {
 	jobItems map[string][]string
 	pathJobs map[string]map[string]struct{}
 
+	// firstPending is a low-water mark into JobOrder: every job before it
+	// is known not to be Pending, so ClaimJob skips the finished history
+	// instead of walking all of it on every claim (each job completion
+	// claims the next). Jobs only become Pending by being appended, except
+	// ResumeJob and removals, which reset it.
+	firstPending int
+
 	// Deferred persistence of appended stdout/outputs (see persist.go).
 	dirty     map[string]struct{}
 	lastSaved map[string]time.Time
@@ -671,7 +678,11 @@ func (q *Queue) ClaimJob() (*Job, error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
-	for _, jobID := range q.JobOrder {
+	for q.firstPending < len(q.JobOrder) &&
+		q.Jobs[q.JobOrder[q.firstPending]].State != StatePending {
+		q.firstPending++
+	}
+	for _, jobID := range q.JobOrder[q.firstPending:] {
 		job := q.Jobs[jobID]
 		if job.State == StatePending && q.canClaim(job) {
 			// Every bucket the job occupies (host + resources) must have a
@@ -930,6 +941,7 @@ func (q *Queue) ResumeJob(id string) error {
 	}
 
 	job.State = StatePending
+	q.firstPending = 0 // a job mid-history is claimable again
 	job.ClaimedAt = time.Time{}
 	delete(q.pauseRequests, id)
 
@@ -1293,6 +1305,7 @@ func (q *Queue) RemoveJob(id string) error {
 			break
 		}
 	}
+	q.firstPending = 0 // indices shifted
 
 	// Remove from database
 	if err := q.removeJobFromDB(id); err != nil {
@@ -1316,46 +1329,66 @@ func (q *Queue) ClearFinishedJobs() (int, error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
-	var clearedCount int
+	// One pass to split the order, one transaction for the deletes: removing
+	// each job with its own JobOrder scan and autocommit DELETE was O(n^2)
+	// and held q.mu for minutes on a large history.
 	var jobsToRemove []string
-
-	// Collect IDs of jobs to remove (terminal states only)
+	kept := q.JobOrder[:0:0]
 	for _, jobID := range q.JobOrder {
 		switch q.Jobs[jobID].State {
 		case StateCompleted, StateCancelled, StateError:
 			jobsToRemove = append(jobsToRemove, jobID)
+		default:
+			kept = append(kept, jobID)
+		}
+	}
+	if len(jobsToRemove) == 0 {
+		return 0, nil
+	}
+	q.JobOrder = kept
+	q.firstPending = 0 // indices shifted
+
+	if q.Db != nil {
+		if err := q.deleteJobsFromDB(jobsToRemove); err != nil {
+			log.Printf("Failed to remove finished jobs from database: %v", err)
 		}
 	}
 
-	// Remove the jobs
 	for _, jobID := range jobsToRemove {
 		q.dropJobItemsLocked(jobID)
 		delete(q.Jobs, jobID)
 		delete(q.dirty, jobID)
 		delete(q.lastSaved, jobID)
-
-		// Remove from job order
-		for i, id := range q.JobOrder {
-			if id == jobID {
-				q.JobOrder = append(q.JobOrder[:i], q.JobOrder[i+1:]...)
-				break
-			}
-		}
-
-		// Remove from database
-		if err := q.removeJobFromDB(jobID); err != nil {
-			log.Printf("Failed to remove job %s from database: %v", jobID, err)
-		}
-
+	}
+	for i, jobID := range jobsToRemove {
 		// Broadcast the delete event
-		err := serializeListUpdate("delete", &Job{ID: jobID})
-		if err != nil {
-			return clearedCount, err
+		if err := serializeListUpdate("delete", &Job{ID: jobID}); err != nil {
+			return i, err
 		}
-		clearedCount++
 	}
 
-	return clearedCount, nil
+	return len(jobsToRemove), nil
+}
+
+// deleteJobsFromDB deletes many job rows in a single transaction.
+func (q *Queue) deleteJobsFromDB(ids []string) error {
+	tx, err := q.Db.Begin()
+	if err != nil {
+		return err
+	}
+	st, err := tx.Prepare("DELETE FROM jobs WHERE id = ?")
+	if err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	defer st.Close()
+	for _, id := range ids {
+		if _, err := st.Exec(id); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 type SerializedJob struct {
