@@ -77,3 +77,18 @@
   color: #ff6b6b;
   font-size: 10px;
 }
+
+.LoginWidget button.config-dir-link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: rgba(255, 255, 255, 0.6);
+  text-decoration: underline;
+  text-align: left;
+  font-size: 10px;
+}
+
+.LoginWidget button.config-dir-link:hover:not(:disabled) {
+  background: none;
+  color: white;
+}

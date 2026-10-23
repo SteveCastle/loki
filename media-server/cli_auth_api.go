@@ -169,7 +169,7 @@ var cliApprovePage = template.Must(template.New("cliapprove").Parse(`<!DOCTYPE h
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Authorize CLI – Lowkey Media Server</title>
+<title>Authorize app – Lowkey Media Server</title>
 <style>
   body { margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center;
          background:#101216; color:#d7dae0; font:14px/1.5 "Segoe UI", system-ui, sans-serif; }
@@ -187,11 +187,12 @@ var cliApprovePage = template.Must(template.New("cliapprove").Parse(`<!DOCTYPE h
 <body>
   <div class="card">
     <h1>Authorize <code>{{.KeyName}}</code>?</h1>
-    <p>A command-line tool on this computer is asking for access to your
+    <p>An app on this computer is asking for access to your
        library as <strong>{{.Username}}</strong>.</p>
-    <p>Approving creates an API key and hands it to the tool listening on
-       <code>127.0.0.1:{{.Port}}</code>. Only approve if you just ran
-       <code>lokictl login</code> yourself.</p>
+    <p>Approving creates an API key and hands it to the app listening on
+       <code>127.0.0.1:{{.Port}}</code>. Only approve if you just started
+       this sign-in yourself (<code>lokictl login</code>, or Sign in with
+       browser in Lowkey Media Viewer).</p>
     <form method="POST">
       <input type="hidden" name="port" value="{{.Port}}">
       <input type="hidden" name="state" value="{{.State}}">

@@ -2,7 +2,7 @@ import React, { useContext, useEffect, useState } from 'react';
 import { GlobalStateContext } from '../../state';
 import './login-widget.css';
 import { useSelector } from '@xstate/react';
-import { mediaServerBase, isElectron } from '../../platform';
+import { mediaServerBase, isElectron, invoke } from '../../platform';
 import { initAccess } from '../../access';
 
 export default function LoginWidget() {
@@ -39,6 +39,39 @@ export default function LoginWidget() {
     };
     verifyToken();
   }, [authToken, libraryService]);
+
+  // Desktop: sign in through the browser like `lokictl login` — the server's
+  // own login + approve page hands this app an API key (see main/server-login.ts).
+  const [waiting, setWaiting] = useState(false);
+  const handleBrowserLogin = async () => {
+    setWaiting(true);
+    setError(null);
+    try {
+      const res = (await invoke('server-browser-login')) as {
+        token?: string;
+        error?: string;
+      };
+      if (!res?.token) throw new Error(res?.error || 'Sign-in failed');
+      libraryService.send({ type: 'SET_AUTH_TOKEN', token: res.token });
+      libraryService.send({ type: 'SET_CAN_WRITE', canWrite: true });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Sign-in failed';
+      if (message !== 'Sign-in cancelled') setError(message);
+    } finally {
+      setWaiting(false);
+    }
+  };
+
+  const openConfigDir = isElectron ? (
+    <button
+      type="button"
+      className="config-dir-link"
+      onClick={() => invoke('open-config-dir')}
+      title="The folder holding config.json and the server's data"
+    >
+      Open config folder
+    </button>
+  ) : null;
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -113,6 +146,28 @@ export default function LoginWidget() {
         <button onClick={handleLogout} className="logout-button">
           Logout
         </button>
+        {openConfigDir}
+      </div>
+    );
+  }
+
+  if (isElectron) {
+    return (
+      <div className="LoginWidget">
+        {waiting ? (
+          <>
+            <div className="status">
+              Approve the sign-in in your browser…
+            </div>
+            <button onClick={() => invoke('server-browser-login-cancel')}>
+              Cancel
+            </button>
+          </>
+        ) : (
+          <button onClick={handleBrowserLogin}>Sign in with browser</button>
+        )}
+        {error && <div className="error-message">{error}</div>}
+        {openConfigDir}
       </div>
     );
   }

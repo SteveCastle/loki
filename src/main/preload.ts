@@ -94,7 +94,10 @@ export type Channels =
   | 'server-install-dismiss-prompt'
   | 'server-install'
   | 'server-start'
-  | 'server-install-progress';
+  | 'server-install-progress'
+  | 'server-browser-login'
+  | 'server-browser-login-cancel'
+  | 'open-config-dir';
 
 // Renderer -> main error/diagnostics channel. Fire-and-forget; persisted to
 // <userData>/app-log.jsonl alongside main-process errors.
