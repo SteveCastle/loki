@@ -175,7 +175,7 @@ export interface InspectorProps {
   loopSpeed: number;
   /** Pick an audio or video file whose voice the first speaker uses; resolves to its path, or null. */
   onChooseVoice: () => Promise<string | null>;
-  /** References: pick in the viewer, or with a file dialog. */
+  /** References: pick in a picker window, or with a file dialog. */
   onPickLibrary: (kinds: RefKind[]) => { result: Promise<string[] | null>; cancel: () => void };
   onPickFiles: (kinds: RefKind[]) => Promise<string[]>;
 }

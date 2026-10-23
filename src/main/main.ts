@@ -26,6 +26,7 @@ import { withTimeout } from './async-timeout';
 import { isValidFilePath, filePathFromArgv } from './file-handling';
 import { registerStudioProtocol, openStudioWindow } from './studio-window';
 import { openSceneWindow, registerScenePickRelay } from './scene-window';
+import { registerPickWindows } from './pick-window';
 import { registerWallpaperHandlers } from './wallpaper';
 import { registerServerInstallHandlers } from './server-install';
 import { heicDisplayFile, isHeicPath } from './heic';
@@ -274,6 +275,21 @@ ipcMain.on('minimize', async (event) => {
 
 registerWallpaperHandlers();
 registerScenePickRelay();
+registerPickWindows({
+  preload: app.isPackaged
+    ? path.join(__dirname, 'preload.js')
+    : path.join(__dirname, '../../.erb/dll/preload.js'),
+  icon: app.isPackaged
+    ? path.join(process.resourcesPath, 'assets', 'icon-window.png')
+    : path.join(__dirname, '../../assets', 'icon-window.png'),
+  // Not the primary window: no launch file (it restores the last session) and
+  // its marks stay out of the launch trace.
+  onCreate: (win) => {
+    const id = win.webContents.id;
+    windowLaunchFiles.set(id, '');
+    win.on('closed', () => windowLaunchFiles.delete(id));
+  },
+});
 
 ipcMain.on('open-external', async (event, args) => {
   const url = args[0];

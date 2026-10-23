@@ -85,6 +85,7 @@ export type Channels =
   | 'select-reference-files'
   | 'scene-pick-request'
   | 'scene-pick-result'
+  | 'open-pick-window'
   | 'list-monitors'
   | 'set-wallpaper'
   | 'studio-media-saved'

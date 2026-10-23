@@ -5,6 +5,14 @@ export const isElectron =
   typeof window !== 'undefined' &&
   typeof (window as any).electron !== 'undefined';
 
+// A reference picker window (components/scene/pick-bridge.ts): the viewer booted
+// with ?pick=<request> to choose media for another window. It restores the last
+// session to browse from but never writes it back, so picking can't move the
+// viewer the user came from.
+export const isPickerWindow =
+  typeof window !== 'undefined' &&
+  new URLSearchParams(window.location.search).has('pick');
+
 // Base URL of the local Lowkey Media Server (job queue, deps, AI tasks).
 // In web mode the SPA is served by that same server, so relative URLs work
 // and this is ''. In Electron the preload discovers the configured port
@@ -885,4 +893,20 @@ if (isElectron) {
     jsonPost('/api/media/gif-metadata', { path: filePath });
 
   findSubtitle = async () => null;
+}
+
+// A picker window reads the session (to start where the viewer was) but every
+// write is dropped: its browsing must not become the viewer's restored state.
+if (isPickerWindow) {
+  const readOnly = sessionStore;
+  const ignore = async () => undefined;
+  sessionStore = {
+    get: (key) => readOnly.get(key),
+    getAll: () => readOnly.getAll(),
+    set: ignore,
+    setMany: ignore,
+    clear: ignore,
+    clearKeys: ignore,
+    flush: ignore,
+  };
 }

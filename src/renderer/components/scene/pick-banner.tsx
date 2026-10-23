@@ -2,14 +2,15 @@ import React, { useContext, useEffect } from 'react';
 import { useSelector } from '@xstate/react';
 import { GlobalStateContext } from '../../state';
 import filter from '../../filter';
-import { answerPick, listenForPickRequests, pickable, usePickRequest } from './pick-bridge';
+import { answerPick, pickable, usePickRequest } from './pick-bridge';
 import { refKind } from './refs';
 import './pick-banner.css';
 
-// The viewer's side of picking Scene editor references: while an editor waits,
-// a banner says so and adds the item on screen; the context palette's "Add to
-// Scene" adds a whole selection (ScenePickPaletteSection). Everything else, from
-// search to tags to browsing, is the viewer as usual.
+// The picker window's side of picking references (see pick-bridge.ts): a banner
+// says what is being picked for and adds the item on screen; the context
+// palette's References action adds a whole selection (ScenePickPaletteSection).
+// Either answer, or Cancel, closes the picker. Everything else, from search to
+// tags to browsing, is the viewer as usual.
 
 // The item on screen: the filtered view at the cursor (as the list and the metadata panel see it).
 function pathAt(ctx: any): string | undefined {
@@ -23,7 +24,6 @@ export default function ScenePickBanner() {
   const req = usePickRequest();
   // Subscribed, so the button follows navigation; it is read again on click, so it adds what is on screen then.
   const here = useSelector(libraryService, (s) => pathAt(s.context));
-  useEffect(() => listenForPickRequests(), []);
   // Esc cancels the pick (only while one is open; the viewer keeps Esc otherwise).
   useEffect(() => {
     if (!req) return undefined;

@@ -1,6 +1,7 @@
 import React, { useContext, useMemo } from 'react';
 import { useSelector } from '@xstate/react';
 import { GlobalStateContext } from './state';
+import { isPickerWindow } from './platform';
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { DndProvider } from 'react-dnd';
@@ -85,8 +86,9 @@ export default function App(): JSX.Element {
         <DragChipLayer />
         <ToastSystem />
         <ScenePickBanner />
-        <OnboardingGate />
-        <ServerInstallPrompt />
+        {/* A picker window is only for choosing media: no first-run prompts. */}
+        {!isPickerWindow && <OnboardingGate />}
+        {!isPickerWindow && <ServerInstallPrompt />}
       </DndProvider>
     </QueryClientProvider>
   );

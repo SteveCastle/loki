@@ -1,5 +1,5 @@
 import path from 'path';
-import { BrowserWindow, dialog, ipcMain, shell, webContents } from 'electron';
+import { BrowserWindow, dialog, ipcMain, shell } from 'electron';
 import { resolveHtmlPath } from './util';
 
 // The Scene editor (src/renderer/components/scene/) is the viewer's own
@@ -18,53 +18,9 @@ export interface SceneWindowOptions {
   onCreate?: (win: BrowserWindow) => void;
 }
 
-const isSceneWindow = (w: BrowserWindow) => [...sceneWindows.values()].includes(w);
-
-// Viewer windows: everything but scene editors and Lowkey Studio.
-const viewerWindows = () =>
-  BrowserWindow.getAllWindows().filter(
-    (w) => !w.isDestroyed() && !isSceneWindow(w) && !w.webContents.getURL().startsWith('studio:')
-  );
-
-const focus = (w: BrowserWindow) => {
-  if (w.isMinimized()) w.restore();
-  w.show();
-  w.focus();
-};
-
-// Pick requests in flight: request id -> the editor (webContents id) that asked.
-const pickRequesters = new Map<string, number>();
-
-/**
- * Relays reference picking between a Scene editor and the viewer (see
- * components/scene/pick-bridge.ts): an editor's request opens the viewer's
- * picking banner and brings the viewer forward; the viewer's answer goes back
- * to that editor, which comes forward again. Also the editor's multi-file
- * dialog for references outside the library.
- */
+// The editor's multi-file dialog for references outside the library (picks
+// from the library open a picker window, see pick-window.ts).
 export function registerScenePickRelay() {
-  ipcMain.on('scene-pick-request', (event, args) => {
-    const msg = Array.isArray(args) ? args[0] : null;
-    if (!msg || (msg.type !== 'open' && msg.type !== 'close')) return;
-    if (msg.type === 'open' && msg.req?.id) pickRequesters.set(msg.req.id, event.sender.id);
-    if (msg.type === 'close') pickRequesters.delete(msg.id);
-    const viewers = viewerWindows();
-    viewers.forEach((w) => w.webContents.send('scene-pick-request', msg));
-    if (msg.type === 'open' && viewers[0]) focus(viewers[0]);
-  });
-  ipcMain.on('scene-pick-result', (_event, args) => {
-    const msg = Array.isArray(args) ? args[0] : null;
-    if (!msg?.id) return;
-    const requester = pickRequesters.get(msg.id);
-    pickRequesters.delete(msg.id);
-    // Any other viewer window showing the same request drops its banner.
-    viewerWindows().forEach((w) => w.webContents.send('scene-pick-request', { type: 'close', id: msg.id }));
-    const wc = requester !== undefined ? webContents.fromId(requester) : undefined;
-    if (!wc || wc.isDestroyed()) return;
-    wc.send('scene-pick-result', msg);
-    const win = BrowserWindow.fromWebContents(wc);
-    if (win) focus(win);
-  });
   ipcMain.handle('select-reference-files', async (event, args) => {
     const kinds: string[] = Array.isArray(args?.[0]) ? args[0] : ['image'];
     const ext: Record<string, string[]> = {
@@ -115,15 +71,8 @@ export function openSceneWindow(mediaPath: string, time: number, opts: SceneWind
   const param = JSON.stringify({ path: mediaPath, time: Number.isFinite(time) ? time : 0 });
   win.loadURL(resolveHtmlPath('index.html', `?scene=${encodeURIComponent(param)}`));
   win.once('ready-to-show', () => win.show());
-  const wcId = win.webContents.id;
   win.on('closed', () => {
     if (sceneWindows.get(key) === win) sceneWindows.delete(key);
-    // A closed editor withdraws its pick requests.
-    [...pickRequesters].forEach(([id, requester]) => {
-      if (requester !== wcId) return;
-      pickRequesters.delete(id);
-      viewerWindows().forEach((w) => w.webContents.send('scene-pick-request', { type: 'close', id }));
-    });
   });
   win.webContents.setWindowOpenHandler((edata) => {
     shell.openExternal(edata.url);

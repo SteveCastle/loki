@@ -15,7 +15,7 @@ export interface ReferencesProps {
   /** Insert text at the prompt's cursor. */
   onInsert: (token: string) => void;
   onChange: (refs: SceneRefItem[], prompt: string) => void;
-  /** Pick in the viewer (its search and browsing); resolves null when cancelled. */
+  /** Pick in a picker window (the viewer's search and browsing); resolves null when cancelled. */
   onPickLibrary: (kinds: RefKind[]) => { result: Promise<string[] | null>; cancel: () => void };
   /** Pick files with the system dialog (or the server's file browser on the web). */
   onPickFiles: (kinds: RefKind[]) => Promise<string[]>;
@@ -93,7 +93,7 @@ export default function References({ layer: l, onInsert, onChange, onPickLibrary
           References
         </span>
         <span className="sc-refs-add">
-          <button type="button" className="sc-btn sc-btn-tiny" disabled={!!pending} onClick={fromLibrary} title="Pick in the viewer: search, tags and browsing as usual">
+          <button type="button" className="sc-btn sc-btn-tiny" disabled={!!pending} onClick={fromLibrary} title="Pick in a library window: search, tags and browsing as usual; it closes when you're done">
             + From library
           </button>
           <button type="button" className="sc-btn sc-btn-quiet sc-btn-tiny" disabled={!!pending} onClick={() => onPickFiles(kinds).then(add)} title="Files outside the library">
@@ -103,7 +103,7 @@ export default function References({ layer: l, onInsert, onChange, onPickLibrary
       </div>
       {pending && (
         <div className="sc-ref-pending">
-          Choose in the viewer…
+          Choose in the picker window…
           <button type="button" className="sc-btn sc-btn-quiet sc-btn-tiny" onClick={() => pending()}>
             Cancel
           </button>

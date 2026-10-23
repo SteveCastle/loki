@@ -6,17 +6,20 @@ import { createRoot } from 'react-dom/client';
 import invariant from 'tiny-invariant';
 import { GlobalStateProvider } from './state';
 import App from './App';
-import { logEvent } from './platform';
+import { logEvent, isPickerWindow } from './platform';
 import { beginStartupTrace, markStartup } from './startup-marks';
 
 // A Scene editor window (see components/scene/launch.ts) boots this same
 // bundle with ?scene=…: it renders the editor and none of the viewer, and
 // stays out of the launch trace.
 const sceneParam = new URLSearchParams(window.location.search).get('scene');
+// A reference picker window (components/scene/pick-bridge.ts) is the viewer,
+// but opened mid-session: it stays out of the launch trace too.
+const traced = !sceneParam && !isPickerWindow;
 
 // Everything above this line has now been evaluated — React, XState, the
 // platform layer, and the whole component tree.
-if (!sceneParam) {
+if (traced) {
   beginStartupTrace();
   markStartup('imports-evaluated');
 }
@@ -47,7 +50,7 @@ if (sceneParam) {
     .then((m) => m.renderSceneEditor(root, sceneParam))
     .catch((error) => logEvent({ scope: 'scene-editor', message: 'Scene editor failed to load', error }));
 } else {
-  markStartup('react-render');
+  if (traced) markStartup('react-render');
   root.render(
     <GlobalStateProvider>
       <App />

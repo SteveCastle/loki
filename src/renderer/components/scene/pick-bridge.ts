@@ -1,11 +1,11 @@
-// Picking references in the viewer for a Scene editor (or the Transform modal): the editor asks, the viewer
-// (with its own search, tags and browsing) shows a picking banner and a palette
-// action, and the chosen paths come back. Electron relays through the main
-// process (scene-pick-request / scene-pick-result, see scene-window.ts); the
-// web build's editor popup and viewer tab share an origin, so a
-// BroadcastChannel carries the same messages.
+// Picking references from the library for a Scene editor or the Transform modal. The requester opens a PICKER
+// WINDOW: the viewer's own bundle booted with ?pick=<JSON PickRequest>, i.e. the whole viewer (search, tags,
+// browsing) over the last session, plus a picking banner and a palette action. Its answer goes back to the
+// requester and the picker closes, so the window the user was working in never navigates away. Electron opens and
+// relays through the main process (open-pick-window / scene-pick-result / scene-pick-request, see pick-window.ts);
+// the web build opens a popup of this same SPA and a BroadcastChannel carries the messages (same origin).
 import { useSyncExternalStore } from 'react';
-import { isElectron, on, send } from '../../platform';
+import { isElectron, isPickerWindow, on, send } from '../../platform';
 import type { RefKind } from './refs';
 
 export interface PickRequest {
@@ -16,7 +16,7 @@ export interface PickRequest {
   label: string;
 }
 
-type RequestMsg = { type: 'open'; req: PickRequest } | { type: 'close'; id: string };
+type RequestMsg = { type: 'close'; id: string };
 type ResultMsg = { id: string; paths: string[] | null };
 
 const CHANNEL = 'loki-scene-pick';
@@ -27,104 +27,90 @@ function channel(): BroadcastChannel | null {
   return bc;
 }
 
-function postRequest(msg: RequestMsg) {
-  if (isElectron) send('scene-pick-request', [msg]);
-  else channel()?.postMessage({ kind: 'request', msg });
-}
-
 function postResult(msg: ResultMsg) {
   if (isElectron) send('scene-pick-result', [msg]);
   else channel()?.postMessage({ kind: 'result', msg });
 }
 
-function listen(kind: 'request' | 'result', fn: (msg: any) => void): () => void {
-  if (isElectron) return on(kind === 'request' ? 'scene-pick-request' : 'scene-pick-result', (...args: unknown[]) => fn(args[0]));
+function listenForResults(fn: (msg: ResultMsg) => void): () => void {
+  if (isElectron) return on('scene-pick-result', (...args: unknown[]) => fn(args[0] as ResultMsg));
   const c = channel();
   if (!c) return () => undefined;
-  const h = (e: MessageEvent) => e.data?.kind === kind && fn(e.data.msg);
+  const h = (e: MessageEvent) => e.data?.kind === 'result' && fn(e.data.msg);
   c.addEventListener('message', h);
   return () => c.removeEventListener('message', h);
 }
 
-// ---- editor side ---------------------------------------------------------------
+/** The ?pick= value for a request (the picker window boots from it). */
+export function pickParam(req: PickRequest): string {
+  return JSON.stringify(req);
+}
+
+/** The request a ?pick= value carries, or null when it isn't one. */
+export function parsePickParam(raw: string | null): PickRequest | null {
+  if (!raw) return null;
+  try {
+    const v = JSON.parse(raw);
+    if (typeof v?.id !== 'string' || !Array.isArray(v.kinds)) return null;
+    return { id: v.id, kinds: v.kinds, label: typeof v.label === 'string' ? v.label : '' };
+  } catch {
+    return null;
+  }
+}
+
+// ---- requester side --------------------------------------------------------------
 
 /**
- * Ask the viewer for references. Resolves with the picked paths, or null when the pick is cancelled (from either
- * window). `cancel` withdraws the request.
+ * Ask for references in a picker window. Resolves with the picked paths, or null when the pick is cancelled
+ * (in the picker, by closing it, or by a newer request). `cancel` withdraws the request and closes the picker.
  */
 export function requestLibraryPick(kinds: RefKind[], label: string): { result: Promise<string[] | null>; cancel: () => void } {
-  const id = `p${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+  const req: PickRequest = { id: `p${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, kinds, label };
   let stop: () => void = () => undefined;
   let settle: (v: string[] | null) => void = () => undefined;
+  let popup: Window | null = null;
   const result = new Promise<string[] | null>((resolve) => {
-    settle = resolve;
-    stop = listen('result', (msg: ResultMsg) => {
-      if (msg?.id !== id) return;
+    settle = (v) => {
       stop();
-      resolve(msg.paths);
+      resolve(v);
+    };
+    stop = listenForResults((msg) => {
+      if (msg?.id === req.id) settle(msg.paths);
     });
   });
-  postRequest({ type: 'open', req: { id, kinds, label } });
+  if (isElectron) {
+    send('open-pick-window', [req]);
+  } else {
+    const url = `${window.location.pathname}?pick=${encodeURIComponent(pickParam(req))}`;
+    // One picker at a time: the shared name reuses an open one, whose pagehide then cancels its request.
+    popup = window.open(url, 'loki-pick', 'popup,width=1280,height=860');
+    popup?.focus();
+  }
   return {
     result,
     cancel: () => {
-      stop();
-      postRequest({ type: 'close', id });
+      if (isElectron) send('scene-pick-request', [{ type: 'close', id: req.id } as RequestMsg]);
+      else if (popup && !popup.closed) popup.close();
       settle(null);
     },
   };
 }
 
-// ---- viewer side ---------------------------------------------------------------
+// ---- picker window side ----------------------------------------------------------
 
-let current: PickRequest | null = null;
+// The open request: fixed for the picker window's life (null in every other window).
+let current: PickRequest | null = isPickerWindow
+  ? parsePickParam(new URLSearchParams(window.location.search).get('pick'))
+  : null;
 const listeners = new Set<() => void>();
 const emit = () => listeners.forEach((l) => l());
-let subscribed: (() => void) | null = null;
-// A pick asked for by this window itself (the Transform modal): answered here, never relayed.
-let local: { id: string; resolve: (paths: string[] | null) => void } | null = null;
 
-function endLocal(paths: string[] | null) {
-  const l = local;
-  local = null;
-  l?.resolve(paths);
-}
-
-/** Start receiving pick requests (the viewer calls this once; idempotent). */
-export function listenForPickRequests(): void {
-  if (subscribed) return;
-  subscribed = listen('request', (msg: RequestMsg) => {
-    if (msg?.type === 'open') {
-      // An editor window's request takes over from one of our own.
-      endLocal(null);
-      current = msg.req;
-    } else if (msg?.type === 'close' && current?.id === msg.id) current = null;
-    else return;
-    emit();
+if (current && !isElectron) {
+  const { id } = current;
+  // Closing (or replacing) the popup without answering cancels; Electron's main process does this for its windows.
+  window.addEventListener('pagehide', () => {
+    if (current?.id === id) postResult({ id, paths: null });
   });
-}
-
-/**
- * Pick references in this same window (the viewer stays usable around a hidden modal): the banner and the palette
- * action appear as for an editor window's request. Resolves with the paths, or null when cancelled.
- */
-export function requestLocalPick(kinds: RefKind[], label: string): { result: Promise<string[] | null>; cancel: () => void } {
-  endLocal(null);
-  const id = `l${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
-  const result = new Promise<string[] | null>((resolve) => {
-    local = { id, resolve };
-  });
-  current = { id, kinds, label };
-  emit();
-  return {
-    result,
-    cancel: () => {
-      if (local?.id !== id) return;
-      endLocal(null);
-      current = null;
-      emit();
-    },
-  };
 }
 
 export function usePickRequest(): PickRequest | null {
@@ -150,11 +136,12 @@ export function pickable(paths: string[], req: PickRequest | null, kindOf: (p: s
   });
 }
 
-/** Answer the open request: paths, or null to cancel. */
+/** Answer the open request (paths, or null to cancel); the picker window then closes. */
 export function answerPick(paths: string[] | null): void {
   if (!current) return;
-  if (local?.id === current.id) endLocal(paths);
-  else postResult({ id: current.id, paths });
+  postResult({ id: current.id, paths });
   current = null;
   emit();
+  // Electron: the main process closes the picker when the result passes through.
+  if (!isElectron) window.close();
 }

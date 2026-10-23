@@ -609,8 +609,10 @@ export interface FlowViewProps {
   onMakeFirst?: (p: string) => void;
   /** Pin / unpin a reference (Edit, Direct). */
   onPin?: (p: string, on: boolean) => void;
-  /** Hide the modal and pick more references in the viewer (Edit, Direct). */
+  /** Pick more references from the library in a picker window (Edit, Direct). */
   onAddReferences?: () => void;
+  /** A picker window is open for onAddReferences. */
+  pickingReferences?: boolean;
   onAgain: () => void;
   /** The engine-expanded prompt, fetched for the review step. */
   preview?: PromptPreviewState;
@@ -1261,9 +1263,9 @@ function ShapeView(props: FlowViewProps & { def: ReturnType<typeof intentById> }
               type="button"
               className="ts-btn ts-add-refs"
               onClick={props.onAddReferences}
-              title={`Browse and search the library for ${def.id === 'edit' ? 'images' : 'images, clips or audio'} to add as references; this window comes back when you're done`}
+              title={`Browse and search the library for ${def.id === 'edit' ? 'images' : 'images, clips or audio'} to add as references, in a window of its own that closes when you're done`}
             >
-              + Add references…
+              {props.pickingReferences ? 'Choosing in the picker window…' : '+ Add references…'}
             </button>
           ) : null}
           {pinnable(def.id) && props.onPin ? (

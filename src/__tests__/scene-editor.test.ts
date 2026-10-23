@@ -234,28 +234,31 @@ describe('scene references', () => {
   });
 });
 
-describe('same-window reference picks (Transform)', () => {
+describe('reference picker window', () => {
   // eslint-disable-next-line global-require
   const bridge = require('../renderer/components/scene/pick-bridge');
 
-  it('opens a request here and resolves with the answer, without relaying it', async () => {
-    const { result } = bridge.requestLocalPick(['image'], 'Edit · a.png');
-    bridge.answerPick(['C:/x/b.png']);
-    await expect(result).resolves.toEqual(['C:/x/b.png']);
+  it('round-trips the request through the ?pick= parameter', () => {
+    const req = { id: 'p1', kinds: ['image', 'video'], label: 'Edit · a.png' };
+    expect(bridge.parsePickParam(bridge.pickParam(req))).toEqual(req);
   });
 
-  it('cancel resolves null and closes the request', async () => {
-    const { result, cancel } = bridge.requestLocalPick(['image'], 'Edit · a.png');
+  it('rejects a ?pick= value that is not a request', () => {
+    expect(bridge.parsePickParam(null)).toBeNull();
+    expect(bridge.parsePickParam('not json')).toBeNull();
+    expect(bridge.parsePickParam(JSON.stringify({ kinds: ['image'] }))).toBeNull();
+  });
+
+  it('cancelling a request resolves it with null', async () => {
+    const open = jest.spyOn(window, 'open').mockReturnValue(null);
+    const { result, cancel } = bridge.requestLibraryPick(['image'], 'Edit · a.png');
+    expect(open).toHaveBeenCalledWith(expect.stringContaining('?pick='), 'loki-pick', expect.any(String));
     cancel();
     await expect(result).resolves.toBeNull();
-    bridge.answerPick(['C:/x/late.png']); // nothing open: ignored
+    open.mockRestore();
   });
 
-  it('a newer request ends the older one', async () => {
-    const first = bridge.requestLocalPick(['image'], 'one');
-    const second = bridge.requestLocalPick(['image', 'video'], 'two');
-    await expect(first.result).resolves.toBeNull();
-    bridge.answerPick(['C:/x/c.mp4']);
-    await expect(second.result).resolves.toEqual(['C:/x/c.mp4']);
+  it('a window that is not a picker has no open request to answer', () => {
+    bridge.answerPick(['C:/x/b.png']); // ignored: nothing open here
   });
 });

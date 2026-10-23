@@ -32,7 +32,7 @@ import { EngineSetupDeferred } from './engine-setup';
 import { markUsed, savedTransformKey } from '../../saved-recent';
 import { TransformFlowView, validateForRun, validateShape, type PromptPreviewState } from './flow-view';
 import { canStartScene, openSceneEditor } from '../scene/launch';
-import { requestLocalPick } from '../scene/pick-bridge';
+import { requestLibraryPick } from '../scene/pick-bridge';
 
 // ---------------------------------------------------------------------------
 // Host (container): owns phase/intent/settings state, talks to the server
@@ -215,24 +215,30 @@ function FlowSession({ req }: { req: NonNullable<ReturnType<typeof useFlowReques
     [intent, paths]
   );
 
-  // Add references by browsing the viewer itself: the modal hides (keeping everything) while the pick banner and
-  // the palette's References action are up, and comes back with the picks added after the inputs.
+  // Add references by browsing the library in a picker window (the viewer, in a window of its own) while this
+  // modal stays put over the media it was opened for; the picks come back added after the inputs. The answer can
+  // arrive after edits here, so it applies to the inputs as they are then.
   const [picking, setPicking] = useState(false);
   const cancelPick = useRef<(() => void) | null>(null);
+  const latest = useRef({ paths, changePaths });
+  latest.current = { paths, changePaths };
   useEffect(() => () => cancelPick.current?.(), []);
   const addReferences = useCallback(() => {
     if (!intent || !pinnable(intent)) return;
     const name = (paths[0] || '').split(/[\\/]/).pop() || '';
-    const { result, cancel } = requestLocalPick(intent === 'edit' ? ['image'] : ['image', 'video', 'audio'], `${intentById(intent).title} · ${name}`);
+    cancelPick.current?.();
+    const { result, cancel } = requestLibraryPick(intent === 'edit' ? ['image'] : ['image', 'video', 'audio'], `${intentById(intent).title} · ${name}`);
     cancelPick.current = cancel;
     setPicking(true);
     result.then((picked) => {
+      if (cancelPick.current !== cancel) return; // replaced by a newer pick
       cancelPick.current = null;
       setPicking(false);
-      const add = (picked || []).filter((p) => !paths.includes(p));
-      if (add.length) changePaths([...paths, ...add]);
+      const now = latest.current;
+      const add = (picked || []).filter((p) => !now.paths.includes(p));
+      if (add.length) now.changePaths([...now.paths, ...add]);
     });
-  }, [intent, paths, changePaths]);
+  }, [intent, paths]);
 
   // Pins stay for the next flow (also when they arrive with a saved prompt or the last run).
   useEffect(() => {
@@ -282,8 +288,6 @@ function FlowSession({ req }: { req: NonNullable<ReturnType<typeof useFlowReques
   // Esc closes; Ctrl+Enter runs from the review phase.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      // Hidden while picking references: the viewer has the keyboard (Shift+Esc cancels the pick).
-      if (picking) return;
       if (e.key === 'Escape') {
         // A field that uses Esc itself (naming a saved prompt) cancels that, not the whole flow.
         if (e.target instanceof Element && e.target.closest('[data-ts-local-esc]')) return;
@@ -297,7 +301,7 @@ function FlowSession({ req }: { req: NonNullable<ReturnType<typeof useFlowReques
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, [phase, status, run, picking]);
+  }, [phase, status, run]);
 
   const view = (
     <TransformFlowView
@@ -334,6 +338,7 @@ function FlowSession({ req }: { req: NonNullable<ReturnType<typeof useFlowReques
       onMakeFirst={(p) => changePaths([p, ...paths.filter((x) => x !== p)])}
       onPin={pin}
       onAddReferences={addReferences}
+      pickingReferences={picking}
       preview={preview}
       onAgain={() => {
         setStatus('idle');
@@ -341,6 +346,5 @@ function FlowSession({ req }: { req: NonNullable<ReturnType<typeof useFlowReques
       }}
     />
   );
-  if (picking) return null;
   return createPortal(view, document.body);
 }
