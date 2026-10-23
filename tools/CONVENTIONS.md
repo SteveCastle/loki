@@ -1,8 +1,8 @@
 # loki- toolkit conventions
 
 Small tools, one job each, composable with each other and with ordinary Unix tools. Every `loki-*` tool follows these rules
-(`loki-retouch`: image editing, `loki-reshoot`: references -> video with sound; `lokictl`, the Lowkey Media Server client, is a
-separate tool and not part of this contract).
+(`loki-retouch`: image editing, `loki-reshoot`: references -> video with sound, `loki-segment`: masks of images and tracked video
+objects; `lokictl`, the Lowkey Media Server client, is a separate tool and not part of this contract).
 
 ## Streams
 - **stdin**: an input may be `-`. The tool reads that one input from stdin (at most one per run). Images are sniffed from content.
@@ -22,7 +22,7 @@ separate tool and not part of this contract).
 Every result carries one JSON object describing the run, so a file found months later still says what made it. The Lowkey Media
 Viewer and Server show it in the metadata panel's Generation section (next to ComfyUI / WebUI records), with the prompt, the
 settings, the inputs and a copyable command line. Where it lives:
-- **PNG** (loki-retouch): an `iTXt` chunk with the keyword `loki`, before the image data.
+- **PNG** (loki-retouch, loki-segment masks): an `iTXt` chunk with the keyword `loki`, before the image data.
 - **mp4** (loki-reshoot): the container's `comment` tag (`ffprobe -show_entries format_tags=comment`).
 
 The record is recognised by two marker fields and is otherwise open; fields are added over time, never renamed or re-typed,

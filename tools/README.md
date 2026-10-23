@@ -57,6 +57,7 @@ input and its path is printed, so the tools chain: `loki-retouch --preset restor
 |---|---|---|---|
 | **loki-retouch** | edit images by prompt, upscale, restore, composite, wallpapers | Qwen Image 2.1 | [`loki-retouch/`](loki-retouch) |
 | **loki-reshoot** | reference images / videos / audio → video with generated sound | MiniMax H3, or FastH3 Omni (`--model fast`, 8 steps) | [`loki-reshoot/`](loki-reshoot) |
+| **loki-segment** | concept / click / box segmentation of images, tracked roto masks of video (`--serve` for editors) | Meta SAM 3.1 | [`loki-segment/`](loki-segment) |
 
 They share one set of conventions (streams, flags, exit codes, model discovery): see [`CONVENTIONS.md`](CONVENTIONS.md).
 `lokictl` (the media-server client) is separate and unrelated.
@@ -117,4 +118,5 @@ tools/
   CONVENTIONS.md        shared conventions of the loki- tools
   loki-retouch/         Cargo crate: src/, kernels/*.cu (nvcc -> embedded fatbins), tests/, ref/, .claude/skills/
   loki-reshoot/         same; plus reference_4kify/ (Qwen-Image sources kept as reading material, not compiled)
+  loki-segment/         same layout; ref/ holds the scripts that dump references from Meta's official sam3 package
 ```
