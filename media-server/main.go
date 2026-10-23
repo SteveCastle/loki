@@ -1944,13 +1944,8 @@ func mediaFileHandler(deps *Dependencies) http.HandlerFunc {
 			return
 		}
 
-		// Check file size (prevent serving extremely large files for preview)
-		// For localhost serving of large videos, we allow up to 2GB
-		const maxFileSize = 2 * 1024 * 1024 * 1024 // 2GB limit
-		if fileInfo.Size() > maxFileSize {
-			http.Error(w, "File too large for preview", http.StatusRequestEntityTooLarge)
-			return
-		}
+		// No size cap: ServeFile streams with Range support, and a cap made
+		// long or 4K videos over 2 GB unplayable in the web UI.
 
 		// Browsers can't decode HEIC: serve a cached JPEG rendering instead.
 		if heic.IsHeic(filePath) {
@@ -2769,6 +2764,11 @@ func main() {
 		// Activity tracking wraps everything: user-intent requests feed the
 		// auto-scheduler's "app is in use" signal.
 		Handler: withActivityTracking(mux),
+		// Bound how long a client may dribble headers or hold an idle
+		// keep-alive socket. No WriteTimeout: SSE and video streams are
+		// long-lived by design.
+		ReadHeaderTimeout: 15 * time.Second,
+		IdleTimeout:       2 * time.Minute,
 	}
 
 	// start HTTP server in background
