@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"image"
 	"image/color"
 	"image/png"
@@ -139,6 +140,50 @@ func TestUpdateSceneKeepsServerFields(t *testing.T) {
 	c := s.Layers[1]
 	if c.Active != -1 || c.Mask != "" || c.Versions == nil {
 		t.Fatalf("new layer c: %+v", c)
+	}
+}
+
+func TestUpdateSceneKeepsMaskOptsAndReorder(t *testing.T) {
+	withSceneRoot(t)
+	id := "0123abcd-0000-0000-0000-000000000002"
+	writeTestScene(t, &Scene{
+		ID: id, Width: 800, Height: 600, Layers: []*SceneLayer{
+			{ID: "a", Kind: SceneKindStill, Versions: []SceneVersion{{Path: "a.png", Below: []string{}}}, Active: 0},
+			{ID: "b", Kind: SceneKindMotion, Versions: []SceneVersion{{Path: "b.mp4", Below: []string{"a:a.png"}}}, Active: 0},
+		},
+	})
+	// The editor moved b under a and set b's mask options.
+	in := &Scene{Layers: []*SceneLayer{
+		{ID: "b", Kind: SceneKindMotion, Active: 0, MaskOpts: json.RawMessage(`{"invert":true,"expand":-4}`)},
+		{ID: "a", Kind: SceneKindStill, Active: 0},
+	}}
+	s, err := UpdateScene(nil, id, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Layers[0].ID != "b" || s.Layers[1].ID != "a" {
+		t.Fatalf("order = %s, %s", s.Layers[0].ID, s.Layers[1].ID)
+	}
+	if string(s.Layers[0].MaskOpts) != `{"invert":true,"expand":-4}` {
+		t.Fatalf("maskOpts = %s", s.Layers[0].MaskOpts)
+	}
+	// What b was made from is kept, so the editor can see a is no longer under it.
+	if got := s.Layers[0].Versions[0].Below; len(got) != 1 || got[0] != "a:a.png" {
+		t.Fatalf("below = %v", got)
+	}
+}
+
+func TestSceneBelow(t *testing.T) {
+	layers := []*SceneLayer{
+		{ID: "s1", Kind: SceneKindStill, Versions: []SceneVersion{{Path: "1.png"}, {Path: "2.png"}}, Active: 1},
+		{ID: "hid", Kind: SceneKindStill, Hidden: true, Versions: []SceneVersion{{Path: "h.png"}}, Active: 0},
+		{ID: "none", Kind: SceneKindStill, Versions: []SceneVersion{}, Active: -1},
+		{ID: "m", Kind: SceneKindMotion, Versions: []SceneVersion{{Path: "m.mp4"}}, Active: 0},
+		{ID: "s2", Kind: SceneKindStill, Versions: []SceneVersion{{Path: "3.png"}}, Active: 0},
+	}
+	got := sceneBelow(layers)
+	if len(got) != 2 || got[0] != "s1:2.png" || got[1] != "s2:3.png" {
+		t.Fatalf("sceneBelow = %v", got)
 	}
 }
 

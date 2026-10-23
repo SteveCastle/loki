@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { invoke, isElectron, send } from '../../platform';
-import { imageOp, maskBounds, maskImagesReady, preloadMaskImages, rasterizeMask, rasterizeProtect, regionFor, type MaskOp, type Rect } from './mask';
+import { imageOp, maskImagesReady, opsDeep, preloadMaskImages, rasterizeLayerMask, rasterizeProtect, regionAround, type MaskLookup, type MaskOp, type MaskOpts, type Rect } from './mask';
 import {
   generationsInFlight,
   layerRate,
@@ -14,8 +14,10 @@ import {
   type Scene,
   type SceneLayer,
   type SceneSummary,
+  versionStale,
 } from './scene-api';
-import Stage, { type Tool } from './stage';
+import Stage, { type MaskView, type Tool } from './stage';
+import MaskPanel from './mask-panel';
 import { Inspector, KEY_GENERATE, KEY_UNDO, LayerList } from './panel';
 import { requestLibraryPick } from './pick-bridge';
 import { hasVoice, tokenIssues, type RefKind } from './refs';
@@ -35,8 +37,10 @@ const TOOLS: Array<{ id: Tool; key: string; label: string; title: string }> = [
   { id: 'box', key: 'B', label: 'Box', title: 'Box an area (Shift = square, Alt = subtract)' },
   { id: 'brush', key: 'P', label: 'Brush', title: 'Paint an area ([ and ] change the size, Alt = erase)' },
   { id: 'lasso', key: 'L', label: 'Lasso', title: 'Draw around an area (Alt = subtract)' },
+  { id: 'pen', key: 'N', label: 'Pen', title: 'Click points around an area; click the first point, double-click or Enter to close (Backspace = undo a point, Alt on the first click = subtract)' },
   { id: 'erase', key: 'E', label: 'Erase', title: 'Erase from the mask' },
   { id: 'protect', key: 'S', label: 'Protect', title: 'Paint areas this layer must leave untouched: they stay exactly the picture below (blue)' },
+  { id: 'shape', key: 'T', label: 'Shape', title: 'Click a shape of the mask to select it; drag to move, drag a corner to scale (Shift = keep proportions), drag a point to reshape' },
   { id: 'hand', key: 'H', label: 'Pan', title: 'Pan (or hold Space); scroll to zoom, F to fit' },
 ];
 
@@ -65,6 +69,21 @@ function ToolIcon({ id }: { id: Tool }) {
       return (
         <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden>
           <path d="M9 3.5c3.6 0 6 1.8 6 4s-2.4 4-6 4-6-1.8-6-4 2.4-4 6-4zM5.5 10.5c-.5 1.3-.2 2.5.8 3.2s1 1.8.2 2.3" {...p} />
+        </svg>
+      );
+    case 'pen':
+      return (
+        <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden>
+          <path d="M4 14l2.5-6.5L12 4l2 2-3.5 5.5zM4 14l3.6-3.6" {...p} />
+          <circle cx="8.6" cy="9.4" r="1" {...p} />
+        </svg>
+      );
+    case 'shape':
+      return (
+        <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden>
+          <rect x="3.5" y="3.5" width="11" height="11" {...p} strokeDasharray="2 2" />
+          <rect x="2" y="2" width="3" height="3" {...p} fill="currentColor" />
+          <rect x="13" y="13" width="3" height="3" {...p} fill="currentColor" />
         </svg>
       );
     case 'erase':
@@ -96,19 +115,32 @@ function defaultFeather(s: Scene): number {
   return Math.round(Math.min(64, Math.max(4, Math.min(s.width, s.height) * 0.02)));
 }
 
+/** How layer ops of s find the layer they name. */
+function lookupIn(s: Scene): MaskLookup {
+  return (id) => s.layers.find((l) => l.id === id) || null;
+}
+
 /**
- * The layer with its mask raster and next-generation region recomputed from its strokes. While an image piece of
- * the mask is still decoding the old raster stays (patchLayer re-rasterizes once it is ready).
+ * The layer with its mask raster and next-generation region recomputed from its shapes and mask settings. While an
+ * image piece of the mask is still decoding it stays as it was (patchLayer re-rasterizes once it is ready).
  */
 function withMask(s: Scene, l: SceneLayer): SceneLayer {
-  const shapes = l.shapes || [];
-  const region = regionFor(shapes, s.width, s.height, {
+  const r = rasterizeLayerMask(l.shapes || [], l.maskOpts, s.width, s.height, l.feather, lookupIn(s), l.id);
+  if (!r) return l;
+  const region = regionAround(r.bounds, s.width, s.height, {
     context: l.options?.context || 'normal',
     feather: l.feather,
     minSide: l.kind === 'motion' ? 320 : 96,
   });
-  const mask = rasterizeMask(shapes, s.width, s.height, l.feather);
-  return { ...l, mask: mask === null ? l.mask : mask, region: region || { x: 0, y: 0, w: 0, h: 0 } };
+  return { ...l, mask: r.mask, region: region || { x: 0, y: 0, w: 0, h: 0 } };
+}
+
+const linksMasks = (l: SceneLayer) => (l.shapes || []).some((op) => op.t === 'layer');
+
+/** s with layer id re-masked, then every layer that links a mask (they follow the layers they name live). */
+function remask(s: Scene, id: string): Scene {
+  const once = { ...s, layers: s.layers.map((l) => (l.id === id ? withMask(s, l) : l)) };
+  return { ...once, layers: once.layers.map((l) => (l.id !== id && linksMasks(l) ? withMask(once, l) : l)) };
 }
 
 // New layers start from the settings last used for their kind (never the text: prompt, subject, seed).
@@ -150,6 +182,10 @@ const basename = (p: string) => p.split(/[\\/]/).pop() || p;
 interface Undo {
   id: string;
   shapes: MaskOp[];
+  maskOpts?: MaskOpts;
+  /** Changes with the same key in quick succession (a slider drag) are one step. */
+  key?: string;
+  at?: number;
 }
 
 export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onSwitch: (s: Scene) => void }) {
@@ -159,7 +195,9 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
   const [selectedId, setSelectedId] = useState<string | null>(initial.layers.length ? initial.layers[initial.layers.length - 1].id : null);
   const [tool, setTool] = useState<Tool>('select');
   const [brush, setBrush] = useState(() => Math.max(6, Math.round(Math.min(initial.width, initial.height) * 0.035)));
-  const [showMask, setShowMask] = useState(true);
+  const [maskView, setMaskView] = useState<MaskView>('tint');
+  const [hardness, setHardness] = useState(1);
+  const [selectedShape, setSelectedShape] = useState<number | null>(null);
   const [compare, setCompare] = useState(false);
   const [playing, setPlaying] = useState(true);
   const [soundOn, setSoundOn] = useState(false);
@@ -173,6 +211,11 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
   const redo = useRef<Undo[]>([]);
 
   const selected = doc.layers.find((l) => l.id === selectedId) || null;
+  // The shape being edited belongs to one layer.
+  useEffect(() => setSelectedShape(null), [selectedId]);
+  useEffect(() => {
+    if (selectedShape !== null && selectedShape >= (selected?.shapes || []).length) setSelectedShape(null);
+  }, [selected, selectedShape]);
 
   const flash = useCallback((tone: 'error' | 'info', text: string) => setNotice({ tone, text }), []);
   useEffect(() => {
@@ -244,12 +287,16 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
   );
 
   const patchLayer = useCallback(
-    (id: string, patch: Partial<SceneLayer>, remask = false): void => {
-      mutate((s) => ({ ...s, layers: s.layers.map((l) => (l.id === id ? (remask ? withMask(s, { ...l, ...patch }) : { ...l, ...patch }) : l)) }));
+    (id: string, patch: Partial<SceneLayer>, again = false): void => {
+      mutate((s) => {
+        const next = { ...s, layers: s.layers.map((l) => (l.id === id ? { ...l, ...patch } : l)) };
+        return again ? remask(next, id) : next;
+      });
       // An image piece still decoding kept the old raster: redo it once the piece is ready.
       const shapes = patch.shapes;
-      if (remask && shapes && !maskImagesReady(shapes)) {
-        preloadMaskImages(shapes).then(() => {
+      const deep = shapes ? opsDeep(shapes, lookupIn(docRef.current)) : [];
+      if (again && shapes && !maskImagesReady(deep)) {
+        preloadMaskImages(deep).then(() => {
           const l = docRef.current.layers.find((x) => x.id === id);
           if (l && l.shapes === shapes) patchLayer(id, {}, true);
         });
@@ -262,6 +309,19 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
   useEffect(() => {
     preloadMaskImages(initial.layers.flatMap((l) => l.shapes || []));
   }, [initial]);
+
+  /** Remember a layer's mask before a change (one undo step; changes with the same key within a second merge). */
+  const pushUndo = useCallback((l: SceneLayer, key?: string) => {
+    const last = undo.current[undo.current.length - 1];
+    const now = Date.now();
+    if (key && last && last.id === l.id && last.key === key && now - (last.at || 0) < 1000) {
+      last.at = now;
+      return;
+    }
+    undo.current.push({ id: l.id, shapes: l.shapes || [], maskOpts: l.maskOpts, key, at: now });
+    if (undo.current.length > 200) undo.current.shift();
+    redo.current = [];
+  }, []);
 
   // ---- polling while the server works ------------------------------------------
 
@@ -331,12 +391,20 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
     (op: MaskOp) => {
       if (!selected) return;
       const before = selected.shapes || [];
-      undo.current.push({ id: selected.id, shapes: before });
-      if (undo.current.length > 200) undo.current.shift();
-      redo.current = [];
+      pushUndo(selected);
       patchLayer(selected.id, { shapes: [...before, op] }, true);
     },
-    [selected, patchLayer]
+    [selected, patchLayer, pushUndo]
+  );
+
+  /** Replace the selected layer's shapes (the mask panel, the Shape tool): one undo step. */
+  const setShapes = useCallback(
+    (ops: MaskOp[]) => {
+      if (!selected) return;
+      pushUndo(selected);
+      patchLayer(selected.id, { shapes: ops }, true);
+    },
+    [selected, patchLayer, pushUndo]
   );
 
   const stepHistory = useCallback(
@@ -345,29 +413,45 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
       if (!entry) return;
       const layer = docRef.current.layers.find((l) => l.id === entry.id);
       if (!layer) return;
-      to.current.push({ id: entry.id, shapes: layer.shapes || [] });
+      to.current.push({ id: entry.id, shapes: layer.shapes || [], maskOpts: layer.maskOpts });
       setSelectedId(entry.id);
-      patchLayer(entry.id, { shapes: entry.shapes }, true);
+      patchLayer(entry.id, { shapes: entry.shapes, maskOpts: entry.maskOpts }, true);
     },
     [patchLayer]
   );
 
-  const moveLayer = useCallback(
-    (id: string, dir: 1 | -1) =>
+  /** Move layer id to index `to` of the stack (bottom = 0). */
+  const moveLayerTo = useCallback(
+    (id: string, to: number) =>
       mutate((s) => {
         const i = s.layers.findIndex((l) => l.id === id);
-        const j = i + dir;
-        if (i < 0 || j < 0 || j >= s.layers.length) return s;
-        const layers = [...s.layers];
-        [layers[i], layers[j]] = [layers[j], layers[i]];
+        if (i < 0) return s;
+        const layers = s.layers.filter((l) => l.id !== id);
+        layers.splice(Math.max(0, Math.min(layers.length, to)), 0, s.layers[i]);
         return { ...s, layers };
       }),
     [mutate]
   );
 
+  const moveLayer = useCallback(
+    (id: string, dir: 1 | -1) => {
+      const i = docRef.current.layers.findIndex((l) => l.id === id);
+      if (i >= 0) moveLayerTo(id, i + dir);
+    },
+    [moveLayerTo]
+  );
+
   const deleteLayer = useCallback(
     (id: string) => {
-      mutate((s) => ({ ...s, layers: s.layers.filter((l) => l.id !== id) }));
+      // Masks that linked it let go of it.
+      mutate((s) => {
+        const linked = (op: MaskOp) => op.t === 'layer' && op.id === id;
+        const next = {
+          ...s,
+          layers: s.layers.filter((l) => l.id !== id).map((l) => ((l.shapes || []).some(linked) ? { ...l, shapes: (l.shapes || []).filter((op) => !linked(op)) } : l)),
+        };
+        return { ...next, layers: next.layers.map((l) => (linksMasks(l) || l !== s.layers.find((x) => x.id === l.id) ? withMask(next, l) : l)) };
+      });
       undo.current = undo.current.filter((u) => u.id !== id);
       redo.current = redo.current.filter((u) => u.id !== id);
       setSelectedId(null);
@@ -394,7 +478,7 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
   const generate = useCallback(() => {
     const l = selected;
     if (!l || generationsInFlight(l) >= MAX_GENERATIONS) return;
-    if (!maskBounds(l.shapes || [])) {
+    if (!l.mask) {
       flash('info', 'Paint or box the area this layer should change first.');
       return;
     }
@@ -465,8 +549,7 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
           return;
         }
         const before = l.shapes || [];
-        undo.current.push({ id: l.id, shapes: before });
-        redo.current = [];
+        pushUndo(l);
         patchLayer(l.id, { shapes: [...before, op] }, true);
         flash('info', 'Added where it moves to the mask (Ctrl+Z to undo).');
       } catch (e) {
@@ -475,7 +558,7 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
         setBusy(false);
       }
     },
-    [motionMap, patchLayer, flash]
+    [motionMap, patchLayer, pushUndo, flash]
   );
 
   // A voice reference: a native dialog in Electron, the server's file browser in the web build.
@@ -554,7 +637,7 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
           break;
         case 'm':
         case 'M':
-          setShowMask((v) => !v);
+          setMaskView((v) => (v === 'tint' ? 'matte' : v === 'matte' ? 'off' : 'tint'));
           break;
         case 'k':
         case 'K':
@@ -652,8 +735,13 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
           >
             Compare
           </button>
-          <button type="button" className={`sc-btn${showMask ? ' on' : ''}`} onClick={() => setShowMask((v) => !v)} title="Tint the selected layer's mask (M)">
-            Mask
+          <button
+            type="button"
+            className={`sc-btn${maskView !== 'off' ? ' on' : ''}`}
+            onClick={() => setMaskView((v) => (v === 'tint' ? 'matte' : v === 'matte' ? 'off' : 'tint'))}
+            title="The selected layer's mask: tinted over the picture, as a black-and-white matte, or hidden (M)"
+          >
+            {maskView === 'matte' ? 'Mask: matte' : maskView === 'off' ? 'Mask: off' : 'Mask: tint'}
           </button>
           <button
             type="button"
@@ -714,6 +802,10 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
             <input type="range" min={2} max={400} value={brush} onChange={(e) => setBrush(Number(e.target.value))} aria-label="Brush size" />
             <span>{brush}</span>
           </div>
+          <div className="sc-brush-size" title="Brush hardness: 100 = a hard edge, lower = a soft one">
+            <input type="range" min={0} max={100} value={Math.round(hardness * 100)} onChange={(e) => setHardness(Number(e.target.value) / 100)} aria-label="Brush hardness" />
+            <span>{Math.round(hardness * 100)}</span>
+          </div>
         </nav>
 
         <main className="sc-main">
@@ -722,7 +814,14 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
             selected={selected}
             tool={tool}
             brush={brush}
-            showMask={showMask}
+            hardness={hardness}
+            maskView={maskView}
+            selectedShape={selectedShape}
+            onSelectShape={setSelectedShape}
+            onReplaceOp={(i, op) => {
+              if (!selected) return;
+              setShapes((selected.shapes || []).map((x, j) => (j === i ? op : x)));
+            }}
             compare={compare}
             playing={playing}
             soundOn={soundOn}
@@ -755,12 +854,34 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
               if (l) patchLayer(id, { hidden: !l.hidden });
             }}
             onMove={moveLayer}
+            onMoveTo={moveLayerTo}
+            stale={new Set(doc.layers.filter((l) => versionStale(doc, l)).map((l) => l.id))}
           />
           {selected ? (
             <Inspector
               key={selected.id}
               layer={selected}
               busy={busy}
+              stale={versionStale(doc, selected)}
+              maskPanel={
+                <MaskPanel
+                  layer={selected}
+                  layers={doc.layers}
+                  selectedShape={selectedShape}
+                  onSelectShape={(i) => {
+                    setSelectedShape(i);
+                    if (i !== null && tool !== 'shape') setTool('shape');
+                  }}
+                  onShapes={setShapes}
+                  onMaskOpts={(patch) => {
+                    pushUndo(selected, `opts:${Object.keys(patch).join(',')}`);
+                    const next = { ...(selected.maskOpts || {}), ...patch };
+                    (Object.keys(next) as Array<keyof MaskOpts>).forEach((k) => next[k] === undefined && delete next[k]);
+                    patchLayer(selected.id, { maskOpts: next }, true);
+                  }}
+                  onFeather={(feather) => patchLayer(selected.id, { feather }, true)}
+                />
+              }
               onPatch={(p) => patchLayer(selected.id, p, 'feather' in p || 'kind' in p)}
               onOptions={(o) => {
                 const next = { ...(selected.options || {}), ...o };
@@ -770,16 +891,8 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
               onGenerate={generate}
               onCancel={(job) => serverAction(() => sceneApi.cancel(doc.id, selected.id, job), 'Could not cancel')}
               onDelete={() => deleteLayer(selected.id)}
-              onClearMask={() => {
-                const before = selected.shapes || [];
-                undo.current.push({ id: selected.id, shapes: before });
-                patchLayer(selected.id, { shapes: before.filter((op) => op.keep) }, true);
-              }}
-              onClearProtect={() => {
-                const before = selected.shapes || [];
-                undo.current.push({ id: selected.id, shapes: before });
-                patchLayer(selected.id, { shapes: before.filter((op) => !op.keep) }, true);
-              }}
+              onClearMask={() => setShapes((selected.shapes || []).filter((op) => op.keep))}
+              onClearProtect={() => setShapes((selected.shapes || []).filter((op) => !op.keep))}
               onDeleteVersion={(n) => serverAction(() => sceneApi.deleteVersion(doc.id, selected.id, n), 'Could not discard the version')}
               onKeepOnly={(n) => serverAction(() => sceneApi.keepOnly(doc.id, selected.id, n), 'Could not discard the other versions')}
               onLoop={(n, kind) => loopVersion(selected.id, n, kind)}
@@ -818,7 +931,7 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
           {saveState === 'saving' ? 'Saving…' : saveState === 'dirty' ? 'Unsaved changes' : saveState === 'error' ? 'Not saved (retrying on the next change)' : 'Saved'}
         </span>
         {generating > 0 && <span>{generating} generating</span>}
-        <span className="sc-keys">V select · B box · P brush · L lasso · E erase · S protect · [ ] size · Alt subtract · Space pan · F fit · \ compare · K play · {KEY_UNDO} undo · {KEY_GENERATE} generate</span>
+        <span className="sc-keys">V select · B box · P brush · L lasso · N pen · E erase · S protect · T shape · [ ] size · Alt subtract · Space pan · F fit · \ compare · K play · {KEY_UNDO} undo · {KEY_GENERATE} generate</span>
       </footer>
     </div>
   );

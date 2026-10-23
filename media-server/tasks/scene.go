@@ -106,8 +106,12 @@ type SceneVersion struct {
 	Note     string    `json:"note,omitempty"`     // e.g. "boomerang of v2"
 	// Raw is the engine's own output a finished (scene-lock) version was made
 	// from, so the finish can be redone without regenerating (RefinishVersion).
-	Raw     string    `json:"raw,omitempty"`
-	JobID   string    `json:"jobId,omitempty"`
+	Raw   string `json:"raw,omitempty"`
+	JobID string `json:"jobId,omitempty"`
+	// Below names the stills the version was generated from (sceneBelow), so
+	// the editor can tell when the stack under it has changed (reordered,
+	// hidden, regenerated).
+	Below   []string  `json:"below,omitempty"`
 	Created time.Time `json:"created"`
 }
 
@@ -134,6 +138,8 @@ type SceneJob struct {
 	Raw string `json:"raw,omitempty"`
 	// Line is the job's latest log line, for the editor's status text.
 	Line string `json:"line,omitempty"`
+	// Below: the stills under the layer when it was started (SceneVersion.Below).
+	Below []string `json:"below,omitempty"`
 }
 
 // SceneLayer is one masked edit. Kind still = an edited image region; motion
@@ -147,11 +153,14 @@ type SceneLayer struct {
 	Region SceneRect `json:"region"` // what the next generation crops
 	// Mask is a full-frame PNG data URL (long edge <= sceneMaskMax) whose
 	// alpha is the layer's coverage, feather included.
-	Mask    string          `json:"mask"`
-	Shapes  json.RawMessage `json:"shapes,omitempty"` // the editor's strokes; opaque here
-	Feather float64         `json:"feather"`
-	Prompt  string          `json:"prompt"`
-	Options map[string]any  `json:"options,omitempty"`
+	Mask   string          `json:"mask"`
+	Shapes json.RawMessage `json:"shapes,omitempty"` // the editor's strokes; opaque here
+	// MaskOpts are the editor's whole-mask settings (invert, expand,
+	// opacity); opaque here, already applied to Mask.
+	MaskOpts json.RawMessage `json:"maskOpts,omitempty"`
+	Feather  float64         `json:"feather"`
+	Prompt   string          `json:"prompt"`
+	Options  map[string]any  `json:"options,omitempty"`
 
 	Versions []SceneVersion `json:"versions"`
 	Active   int            `json:"active"` // index into Versions; -1 = none shown
@@ -535,6 +544,7 @@ func UpdateScene(q *jobqueue.Queue, id string, in *Scene) (*Scene, error) {
 			l.Mask = nl.Mask
 		}
 		l.Shapes = nl.Shapes
+		l.MaskOpts = nl.MaskOpts
 		l.Feather = clampFloat(nl.Feather, 0, 512)
 		l.Prompt = nl.Prompt
 		l.Options = nl.Options
@@ -695,7 +705,7 @@ func reconcileLayerJob(q *jobqueue.Queue, s *Scene, l *SceneLayer) bool {
 		if note == "" {
 			note = l.Job.Note
 		}
-		v := SceneVersion{Path: out, Region: l.Job.Region, Prompt: l.Job.Prompt, JobID: jobID, Note: note, Raw: l.Job.Raw, Created: time.Now().UTC()}
+		v := SceneVersion{Path: out, Region: l.Job.Region, Prompt: l.Job.Prompt, JobID: jobID, Note: note, Raw: l.Job.Raw, Below: l.Job.Below, Created: time.Now().UTC()}
 		// A chain's first step is the engine: its output is what was finished.
 		if v.Raw == "" && len(steps) > 1 && steps[0].ok {
 			if raw := outputOf(steps[0]); raw != "" && raw != out {
@@ -1011,6 +1021,19 @@ func sceneGraphLayers(dir string, layers []*SceneLayer, stillsOnly bool) ([]scen
 		out = append(out, g)
 	}
 	return out, nil
+}
+
+// sceneBelow names the stills a layer above layers is generated from, bottom
+// up, as "<layer id>:<active version path>" (the visible stills
+// sceneGraphLayers flattens). Mirrors stackBelow in the editor's scene-api.ts.
+func sceneBelow(layers []*SceneLayer) []string {
+	out := []string{}
+	for _, l := range layers {
+		if v := l.active(); !l.Hidden && v != nil && l.Kind == SceneKindStill {
+			out = append(out, l.ID+":"+v.Path)
+		}
+	}
+	return out
 }
 
 // sceneMotionSize picks loki-reshoot's --size for a region: the region's
@@ -1574,7 +1597,7 @@ func GenerateLayer(ctx context.Context, q *jobqueue.Queue, id, lid string) (*Sce
 	}
 	l.Region = region
 	l.Error = ""
-	l.startJob(&SceneJob{ID: ids[len(ids)-1], Chain: ids, State: "pending", Region: region, Prompt: prompt, Input: input})
+	l.startJob(&SceneJob{ID: ids[len(ids)-1], Chain: ids, State: "pending", Region: region, Prompt: prompt, Input: input, Below: sceneBelow(s.Layers[:idx])})
 	if err := saveSceneLocked(s); err != nil {
 		return nil, err
 	}
@@ -1783,7 +1806,7 @@ func RefinishVersion(q *jobqueue.Queue, id, lid string, n int) (*Scene, error) {
 		}
 		l.Error = ""
 		l.startJob(&SceneJob{ID: ids[0], Chain: ids, State: "pending", Region: v.Region, Prompt: v.Prompt, Input: crop,
-			Step: "scene-lock", Note: fmt.Sprintf("re-finished v%d", n+1), Raw: raw})
+			Step: "scene-lock", Note: fmt.Sprintf("re-finished v%d", n+1), Raw: raw, Below: v.Below})
 		if err := saveSceneLocked(s); err != nil {
 			return nil, err
 		}

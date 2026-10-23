@@ -1368,3 +1368,209 @@ body.sc-body {
   white-space: nowrap;
   text-overflow: ellipsis;
 }
+
+/* ---- layer reorder (drag) and stale versions ---- */
+
+.sc-layer-row[draggable='true'] {
+  cursor: grab;
+}
+
+.sc-layer-row.dragging {
+  opacity: 0.4;
+}
+
+.sc-layer-row.drop-above {
+  box-shadow: inset 0 2px 0 var(--sc-accent);
+}
+
+.sc-layer-row.drop-below {
+  box-shadow: inset 0 -2px 0 var(--sc-accent);
+}
+
+.sc-status.warn {
+  color: var(--sc-caution);
+}
+
+/* ---- mask view: black-and-white matte ---- */
+
+.sc-matte {
+  position: absolute;
+  inset: 0;
+  background: #000;
+  pointer-events: none;
+}
+
+.sc-matte-white {
+  position: absolute;
+  inset: 0;
+  background: #fff;
+}
+
+/* ---- the selected shape (Shape tool) ---- */
+
+.sc-shape-edit {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.sc-shape-line {
+  fill: none;
+  stroke: #fff;
+  stroke-width: 1.5;
+  filter: drop-shadow(0 0 1px #000);
+}
+
+.sc-shape-band {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.14);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.sc-shape-box {
+  fill: none;
+  stroke: var(--sc-accent);
+  stroke-width: 1;
+  stroke-dasharray: 4 3;
+}
+
+.sc-shape-edit.erase .sc-shape-box {
+  stroke: var(--sc-danger);
+}
+
+.sc-shape-edit.keep .sc-shape-box {
+  stroke: #50a0ff;
+}
+
+.sc-shape-handle {
+  fill: #fff;
+  stroke: #000;
+  stroke-width: 1;
+}
+
+.sc-shape-vertex {
+  fill: var(--sc-accent);
+  stroke: #000;
+  stroke-width: 1;
+}
+
+.sc-stage-wrap.cursor-move {
+  cursor: move;
+}
+
+/* ---- the Mask section ---- */
+
+.sc-maskpanel {
+  margin: 12px 0 4px;
+  padding: 10px;
+  border: 1px solid var(--sc-hairline);
+  border-radius: 6px;
+}
+
+.sc-maskpanel-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.sc-shapes {
+  max-height: 168px;
+  margin: 0 0 8px;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.sc-shape {
+  display: flex;
+  align-items: center;
+  border: 1px solid transparent;
+  border-radius: 4px;
+}
+
+.sc-shape:hover {
+  background: var(--sc-field);
+}
+
+.sc-shape.selected {
+  background: var(--sc-accent-soft);
+  border-color: var(--sc-accent-strong);
+}
+
+.sc-shape.off .sc-shape-main {
+  opacity: 0.4;
+  text-decoration: line-through;
+}
+
+.sc-shape-main {
+  display: flex;
+  flex: 1 1 auto;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+  padding: 3px 6px;
+  color: var(--sc-dim);
+  font-size: 12px;
+  text-align: left;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.sc-shape-name {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.sc-shape-mode {
+  flex: none;
+  padding: 1px 6px;
+  color: var(--sc-accent);
+  font-size: 11px;
+  background: none;
+  border: 1px solid var(--sc-hairline);
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.sc-shape-mode.cut {
+  color: var(--sc-danger);
+}
+
+.sc-shape-mode.protect {
+  color: #50a0ff;
+  cursor: default;
+}
+
+.sc-shape .sc-row-tools {
+  opacity: 0;
+}
+
+.sc-shape:hover .sc-row-tools,
+.sc-shape.selected .sc-row-tools,
+.sc-shape.off .sc-row-tools {
+  opacity: 1;
+}
+
+.sc-mask-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.sc-mask-links .sc-select {
+  flex: 1 1 140px;
+  min-width: 0;
+}
+
+.sc-mask-grid {
+  margin-top: 0;
+}

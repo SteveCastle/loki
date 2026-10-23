@@ -75,15 +75,16 @@ function Eye({ off }: { off?: boolean }) {
   );
 }
 
-function statusOf(l: SceneLayer): { text: string; tone: 'busy' | 'error' | 'ok' | 'idle' } {
+function statusOf(l: SceneLayer, stale: boolean): { text: string; tone: 'busy' | 'error' | 'ok' | 'idle' | 'warn' } {
   if (l.job) {
     const { label, percent } = jobPhase(l.job);
     const more = l.queued?.length ? ` +${l.queued.length}` : '';
     return { text: `${label.toLowerCase()}${percent !== null ? ` ${percent}%` : ''}${more}`, tone: 'busy' };
   }
   if (l.error) return { text: 'failed', tone: 'error' };
+  if (l.versions.length && stale) return { text: `v${l.active + 1} · below changed`, tone: 'warn' };
   if (l.versions.length) return { text: l.active >= 0 ? `v${l.active + 1}/${l.versions.length}` : 'off', tone: 'ok' };
-  if (!maskBounds(l.shapes || [])) return { text: 'paint an area', tone: 'idle' };
+  if (!l.mask) return { text: 'paint an area', tone: 'idle' };
   return { text: 'ready', tone: 'idle' };
 }
 
@@ -95,11 +96,29 @@ export interface LayerListProps {
   onAdd: (kind: 'still' | 'motion') => void;
   onToggleHidden: (id: string) => void;
   onMove: (id: string, dir: 1 | -1) => void;
+  /** Move a layer to index `to` of the stack (bottom = 0). */
+  onMoveTo: (id: string, to: number) => void;
+  /** Layers whose shown version was made from stills that have since changed. */
+  stale: Set<string>;
 }
 
 export function LayerList(props: LayerListProps) {
   const { layers, selectedId } = props;
   const top = [...layers].reverse();
+  // Drag to reorder: where the dragged row would land (a row of the top-first list, and above or below it).
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [drop, setDrop] = useState<{ id: string; above: boolean } | null>(null);
+  const endDrag = () => {
+    setDragId(null);
+    setDrop(null);
+  };
+  const dropAt = () => {
+    if (!dragId || !drop || drop.id === dragId) return;
+    // Above a row in the top-first list = just over it in the stack.
+    const rest = layers.filter((l) => l.id !== dragId);
+    const j = rest.findIndex((l) => l.id === drop.id);
+    if (j >= 0) props.onMoveTo(dragId, drop.above ? j + 1 : j);
+  };
   return (
     <section className="sc-section sc-layers">
       <div className="sc-section-head">
@@ -115,9 +134,33 @@ export function LayerList(props: LayerListProps) {
       </div>
       <ol className="sc-layer-list">
         {top.map((l, i) => {
-          const st = statusOf(l);
+          const st = statusOf(l, props.stale.has(l.id));
+          const mark = drop && drop.id === l.id && dragId !== l.id ? (drop.above ? ' drop-above' : ' drop-below') : '';
           return (
-            <li key={l.id} className={`sc-layer-row${l.id === selectedId ? ' selected' : ''}${l.hidden ? ' hidden' : ''}`}>
+            <li
+              key={l.id}
+              className={`sc-layer-row${l.id === selectedId ? ' selected' : ''}${l.hidden ? ' hidden' : ''}${dragId === l.id ? ' dragging' : ''}${mark}`}
+              draggable
+              onDragStart={(e) => {
+                e.dataTransfer.effectAllowed = 'move';
+                e.dataTransfer.setData('text/plain', l.id);
+                setDragId(l.id);
+              }}
+              onDragOver={(e) => {
+                if (!dragId) return;
+                e.preventDefault();
+                const r = e.currentTarget.getBoundingClientRect();
+                const above = e.clientY < r.top + r.height / 2;
+                if (!drop || drop.id !== l.id || drop.above !== above) setDrop({ id: l.id, above });
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                dropAt();
+                endDrag();
+              }}
+              onDragEnd={endDrag}
+              title={st.tone === 'warn' ? 'A layer below was moved, hidden or changed since this version was made: generate again to make it from the picture as it is now' : undefined}
+            >
               <button type="button" className="sc-layer-main" onClick={() => props.onSelect(l.id)}>
                 <span className={`sc-kind ${l.kind}`}>
                   <KindIcon kind={l.kind} />
@@ -153,6 +196,10 @@ export function LayerList(props: LayerListProps) {
 export interface InspectorProps {
   layer: SceneLayer;
   busy: boolean;
+  /** The shown version was made from stills below that have since changed. */
+  stale: boolean;
+  /** The Mask section (mask-panel.tsx). */
+  maskPanel: React.ReactNode;
   onPatch: (patch: Partial<SceneLayer>) => void;
   onOptions: (patch: LayerOptions) => void;
   onGenerate: () => void;
@@ -294,13 +341,17 @@ export function Inspector(props: InspectorProps) {
   const o = l.options || {};
   const [confirmDelete, setConfirmDelete] = useState(false);
   const motion = l.kind === 'motion';
-  const painted = maskBounds(l.shapes || []);
+  const painted = !!l.mask;
+  // Whether the shapes reach past the version's area (only measurable for plain shapes: no links, no invert).
+  const mo = l.maskOpts || {};
+  const plain = !mo.invert && !(l.shapes || []).some((op) => op.t === 'layer') ? maskBounds(l.shapes || []) : null;
+  const grown = plain && mo.expand && mo.expand > 0 ? { x: plain.x - mo.expand, y: plain.y - mo.expand, w: plain.w + 2 * mo.expand, h: plain.h + 2 * mo.expand } : plain;
   const version = l.versions[l.active];
   const running = !!l.job;
   const queued = l.queued || [];
   const full = generationsInFlight(l) >= MAX_GENERATIONS;
   const needPrompt = !motion && !l.prompt.trim();
-  const outside = version && painted && !rectContains(version.region, painted);
+  const outside = version && grown && !rectContains(version.region, grown);
   const ideas = motion ? MOTION_IDEAS : STILL_IDEAS;
   const promptRef = useRef<HTMLTextAreaElement>(null);
   // A reference token goes in at the prompt's cursor (or the end), spaced from its neighbours.
@@ -378,6 +429,7 @@ export function Inspector(props: InspectorProps) {
         ))}
       </div>
       {motion && <DialogueEditor o={o} onOptions={props.onOptions} onChooseVoice={props.onChooseVoice} />}
+      {props.maskPanel}
       {motion && (
         <>
           <label className="sc-label" htmlFor="sc-describe">
@@ -390,13 +442,6 @@ export function Inspector(props: InspectorProps) {
       <div className="sc-grid">
         <span className="sc-label">Context</span>
         <Seg value={o.context || 'normal'} options={CONTEXTS} onChange={(context) => props.onOptions({ context })} />
-        <span className="sc-label" title="How softly the area blends into the picture around it">
-          Soft edge
-        </span>
-        <div className="sc-slider">
-          <input type="range" min={0} max={160} step={1} value={l.feather} onChange={(e) => props.onPatch({ feather: Number(e.target.value) })} />
-          <span>{Math.round(l.feather)} px</span>
-        </div>
         {motion ? (
           <>
             <span className="sc-label">Length</span>
@@ -619,6 +664,9 @@ export function Inspector(props: InspectorProps) {
         </button>
         {l.error && <div className="sc-error">{l.error}</div>}
         {outside && !running && <div className="sc-warn">The mask now reaches past the area this version was made for: generate again to fill it.</div>}
+        {props.stale && !running && (
+          <div className="sc-warn">A layer below was moved, hidden or changed since this version was made, so it may not match the picture under it: generate again to make it from the picture as it is now.</div>
+        )}
       </div>
 
       {l.versions.length > 0 && (

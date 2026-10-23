@@ -2,7 +2,7 @@
 // tasks/scene.go's JSON. Electron authenticates with the viewer's bearer token;
 // the web build rides the session cookie.
 import { isElectron, mediaServerBase, store } from '../../platform';
-import type { MaskOp, Rect } from './mask';
+import type { MaskOp, MaskOpts, Rect } from './mask';
 import type { SceneRefItem } from './refs';
 
 export type LayerKind = 'still' | 'motion';
@@ -15,6 +15,8 @@ export interface SceneVersion {
   audio?: boolean;
   note?: string;
   jobId?: string;
+  /** The stills it was generated from ("<layer id>:<version path>", bottom up; see stackBelow). */
+  below?: string[];
   created: string;
 }
 
@@ -101,6 +103,8 @@ export interface SceneLayer {
   region: Rect;
   mask: string;
   shapes?: MaskOp[];
+  /** Whole-mask settings (invert, expand, opacity), already applied to `mask`. */
+  maskOpts?: MaskOpts;
   feather: number;
   prompt: string;
   options?: LayerOptions;
@@ -223,6 +227,33 @@ export const sceneApi = {
     call<{ dataUrl: string; region: Rect }>('POST', `/api/scenes/${enc(id)}/layers/${enc(layer)}/versions/${n}/motion`, {}, 120000),
   render: (id: string, format: 'video' | 'still') => call<Scene>('POST', `/api/scenes/${enc(id)}/render`, { format }),
 };
+
+/**
+ * The stills a layer at index i is generated from: the visible still layers below it with a version shown, as
+ * "<layer id>:<version path>", bottom up. Mirrors sceneBelow in media-server/tasks/scene.go.
+ */
+export function stackBelow(s: Scene, i: number): string[] {
+  const out: string[] = [];
+  s.layers.slice(0, Math.max(0, i)).forEach((l) => {
+    const v = l.versions[l.active];
+    if (!l.hidden && v && l.kind === 'still') out.push(`${l.id}:${v.path}`);
+  });
+  return out;
+}
+
+/**
+ * Whether the stills under a layer's shown version are no longer the ones it was made from (a layer below was
+ * moved, hidden or switched to another version). Versions from before this was recorded are never stale.
+ */
+export function versionStale(s: Scene, l: SceneLayer): boolean {
+  const v = l.versions[l.active];
+  if (!v || !v.below) return false;
+  const now = stackBelow(
+    s,
+    s.layers.findIndex((x) => x.id === l.id)
+  );
+  return now.length !== v.below.length || now.some((x, k) => x !== v.below?.[k]);
+}
 
 /** The length a scene exports at (seconds): its own, else the longest visible motion clip, else 5. Mirrors sceneDuration. */
 export function sceneLength(s: Scene): number {

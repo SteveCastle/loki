@@ -1,15 +1,22 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { mediaUrl } from '../../platform';
-import { pointInRect, simplifyPath, type MaskOp, type Rect } from './mask';
+import { mapOp, moveVertex, opBox, pointInRect, simplifyPath, type MaskOp, type Rect } from './mask';
 import { jobPhase, layerRate, layerTiming, type Scene, type SceneLayer } from './scene-api';
 
 // The canvas of the Scene editor: the base frame with every generated layer
 // composited live the way the export will be (each result placed over the
 // region it was made for, seen through its feathered mask: CSS masks over the
 // same PNG the server composites with), plus the drawing tools for the
-// selected layer's mask. Coordinates handed out are base-frame pixels.
+// selected layer's mask and the Shape tool that moves, scales and reshapes
+// one of its shapes. Coordinates handed out are base-frame pixels.
 
-export type Tool = 'select' | 'box' | 'brush' | 'lasso' | 'erase' | 'protect' | 'hand';
+export type Tool = 'select' | 'box' | 'brush' | 'lasso' | 'pen' | 'erase' | 'protect' | 'shape' | 'hand';
+
+/** How the selected layer's mask is shown: tinted over the picture, as a black-and-white matte, or not at all. */
+export type MaskView = 'tint' | 'matte' | 'off';
+
+/** A Shape tool drag: moving the shape, scaling it from a corner (0 nw, 1 ne, 2 se, 3 sw), or moving one vertex. */
+type ShapeDrag = { mode: 'move' | 'scale' | 'vertex'; i: number; k: number; x0: number; y0: number; op: MaskOp; box: Rect };
 
 interface View {
   zoom: number;
@@ -20,6 +27,7 @@ interface View {
 type Draft =
   | { t: 'rect'; x0: number; y0: number; x1: number; y1: number; erase: boolean; keep?: boolean }
   | { t: 'lasso' | 'stroke'; pts: number[]; erase: boolean; keep?: boolean }
+  | { t: 'pen'; pts: number[]; erase: boolean; keep?: undefined }
   | null;
 
 /**
@@ -40,7 +48,14 @@ export interface StageProps {
   selected: SceneLayer | null;
   tool: Tool;
   brush: number;
-  showMask: boolean;
+  /** Brush hardness 0-1 (1 = hard edge). */
+  hardness: number;
+  maskView: MaskView;
+  /** Index of the selected layer's shape being edited (Shape tool), or null. */
+  selectedShape: number | null;
+  onSelectShape: (i: number | null) => void;
+  /** Replace shape i of the selected layer (a Shape tool edit). */
+  onReplaceOp: (i: number, op: MaskOp) => void;
   /** Hide every layer (hold-to-compare with the base). */
   compare: boolean;
   playing: boolean;
@@ -146,7 +161,7 @@ function MotionMedia({ src, playing, muted, syncKey, style, rate, offset, clock:
 }
 
 export default function Stage(props: StageProps) {
-  const { scene, selected, tool, brush, showMask, compare, playing, soundOn, syncKey, fitKey, protectMask, motionOverlay, onCommit, onSelect } = props;
+  const { scene, selected, tool, brush, hardness, maskView, selectedShape, compare, playing, soundOn, syncKey, fitKey, protectMask, motionOverlay, onCommit, onSelect } = props;
   const clock = useRef<SceneClock>({ t0: performance.now(), pausedAt: null });
   useEffect(() => {
     const c = clock.current;
@@ -168,8 +183,11 @@ export default function Stage(props: StageProps) {
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [cursor, setCursor] = useState<{ x: number; y: number } | null>(null);
   const [spaceDown, setSpaceDown] = useState(false);
-  const drag = useRef<{ kind: 'pan'; sx: number; sy: number; vx: number; vy: number } | { kind: 'draw' } | null>(null);
+  const drag = useRef<{ kind: 'pan'; sx: number; sy: number; vx: number; vy: number } | { kind: 'draw' } | ({ kind: 'shape' } & ShapeDrag) | null>(null);
   const draft = useRef<Draft>(null);
+  const cursorRef = useRef<{ x: number; y: number } | null>(null);
+  // The shape being edited as it is dragged (committed on release).
+  const [shapeLive, setShapeLive] = useState<{ i: number; op: MaskOp } | null>(null);
 
   // Container size.
   useLayoutEffect(() => {
@@ -268,6 +286,25 @@ export default function Stage(props: StageProps) {
     ctx.beginPath();
     ctx.moveTo(X(p[0]), Y(p[1]));
     for (let i = 2; i + 1 < p.length; i += 2) ctx.lineTo(X(p[i]), Y(p[i + 1]));
+    if (d.t === 'pen') {
+      // The points so far, a rubber band to the pointer, and the first point to click to close.
+      const c = cursorRef.current;
+      if (c) ctx.lineTo(X(c.x), Y(c.y));
+      if (p.length >= 6) {
+        ctx.save();
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+      }
+      ctx.stroke();
+      for (let i = 0; i + 1 < p.length; i += 2) {
+        ctx.beginPath();
+        ctx.arc(X(p[i]), Y(p[i + 1]), i === 0 ? 5 : 3, 0, Math.PI * 2);
+        ctx.fillStyle = i === 0 ? line : '#fff';
+        ctx.fill();
+      }
+      return;
+    }
     if (d.t === 'lasso') {
       ctx.closePath();
       ctx.fill();
@@ -285,8 +322,101 @@ export default function Stage(props: StageProps) {
 
   useEffect(() => paintDraft(), [paintDraft]);
 
-  const drawTool = tool === 'box' || tool === 'brush' || tool === 'lasso' || tool === 'erase' || tool === 'protect';
+  const drawTool = tool === 'box' || tool === 'brush' || tool === 'lasso' || tool === 'pen' || tool === 'erase' || tool === 'protect';
   const panning = spaceDown || tool === 'hand';
+
+  // A pen shape in progress is dropped when the tool or layer changes.
+  useEffect(() => {
+    if (draft.current?.t === 'pen') {
+      draft.current = null;
+      paintDraft();
+    }
+  }, [tool, selected?.id]);
+
+  const commitPen = useCallback(() => {
+    const d = draft.current;
+    if (!d || d.t !== 'pen') return;
+    draft.current = null;
+    paintDraft();
+    if (d.pts.length >= 6) onCommit({ t: 'lasso', pts: d.pts.map((v) => Math.round(v * 10) / 10), erase: d.erase || undefined });
+  }, [onCommit, paintDraft]);
+
+  // Pen: Enter closes the shape, Backspace takes back the last point.
+  useEffect(() => {
+    if (tool !== 'pen') return undefined;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLElement && e.target.closest('input, textarea, select, [contenteditable]')) return;
+      const d = draft.current;
+      if (!d || d.t !== 'pen') return;
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        commitPen();
+      } else if (e.key === 'Backspace') {
+        e.preventDefault();
+        d.pts.splice(-2, 2);
+        if (!d.pts.length) draft.current = null;
+        paintDraft();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [tool, commitPen, paintDraft]);
+
+  const shapes = selected?.shapes || [];
+  const editOp = selectedShape !== null && selectedShape < shapes.length ? shapes[selectedShape] : null;
+
+  /** Shape tool: what is under the pointer (handles of the selected shape first, then any shape, topmost first). */
+  const shapeHit = (x: number, y: number): ShapeDrag | null => {
+    if (!view) return null;
+    const tol = 8 / view.zoom;
+    const near = (px: number, py: number) => Math.abs(px - x) <= tol && Math.abs(py - y) <= tol;
+    if (editOp && selectedShape !== null) {
+      const box = opBox(editOp);
+      if (box) {
+        if (editOp.t === 'lasso') {
+          for (let k = 0; k * 2 + 1 < editOp.pts.length; k += 1) {
+            if (near(editOp.pts[k * 2], editOp.pts[k * 2 + 1])) return { mode: 'vertex', i: selectedShape, k, x0: x, y0: y, op: editOp, box };
+          }
+        }
+        const corners = [
+          [box.x, box.y],
+          [box.x + box.w, box.y],
+          [box.x + box.w, box.y + box.h],
+          [box.x, box.y + box.h],
+        ];
+        const c = corners.findIndex(([cx, cy]) => near(cx, cy));
+        if (c >= 0) return { mode: 'scale', i: selectedShape, k: c, x0: x, y0: y, op: editOp, box };
+        if (pointInRect(box, x, y)) return { mode: 'move', i: selectedShape, k: 0, x0: x, y0: y, op: editOp, box };
+      }
+    }
+    for (let i = shapes.length - 1; i >= 0; i -= 1) {
+      const box = opBox(shapes[i]);
+      if (box && !shapes[i].off && pointInRect(box, x, y)) return { mode: 'move', i, k: 0, x0: x, y0: y, op: shapes[i], box };
+    }
+    return null;
+  };
+
+  /** The shape as a Shape tool drag to (x, y) leaves it. */
+  const dragged = (d: ShapeDrag, x: number, y: number, keepAspect: boolean): MaskOp => {
+    const dx = x - d.x0;
+    const dy = y - d.y0;
+    if (d.mode === 'vertex') return moveVertex(d.op, d.k, x, y);
+    if (d.mode === 'move') return mapOp(d.op, d.box, { ...d.box, x: d.box.x + dx, y: d.box.y + dy });
+    // Scale from the opposite corner.
+    const b = d.box;
+    const fx = d.k === 1 || d.k === 2 ? b.x : b.x + b.w;
+    const fy = d.k === 2 || d.k === 3 ? b.y : b.y + b.h;
+    let w = Math.max(2, Math.abs(x - fx));
+    let h = Math.max(2, Math.abs(y - fy));
+    if (keepAspect && b.w > 0 && b.h > 0) {
+      const f = Math.max(w / b.w, h / b.h);
+      w = b.w * f;
+      h = b.h * f;
+    }
+    const nx = d.k === 1 || d.k === 2 ? fx : fx - w;
+    const ny = d.k === 2 || d.k === 3 ? fy : fy - h;
+    return mapOp(d.op, b, { x: nx, y: ny, w, h });
+  };
 
   const onPointerDown = (e: React.PointerEvent) => {
     if (!view) return;
@@ -309,7 +439,29 @@ export default function Stage(props: StageProps) {
       drag.current = { kind: 'pan', sx: e.clientX, sy: e.clientY, vx: view.x, vy: view.y };
       return;
     }
-    if (!selected || !drawTool) return;
+    if (!selected) return;
+    if (tool === 'shape') {
+      const hit = shapeHit(p.x, p.y);
+      props.onSelectShape(hit ? hit.i : null);
+      if (hit) {
+        drag.current = { kind: 'shape', ...hit };
+        setShapeLive({ i: hit.i, op: hit.op });
+      }
+      return;
+    }
+    if (!drawTool) return;
+    if (tool === 'pen') {
+      const d = draft.current;
+      if (d && d.t === 'pen') {
+        const closeTol = 9 / view.zoom;
+        if (d.pts.length >= 6 && Math.abs(p.x - d.pts[0]) <= closeTol && Math.abs(p.y - d.pts[1]) <= closeTol) commitPen();
+        else d.pts.push(p.x, p.y);
+      } else {
+        draft.current = { t: 'pen', pts: [p.x, p.y], erase: e.altKey };
+      }
+      paintDraft();
+      return;
+    }
     const keep = tool === 'protect';
     const erase = !keep && (tool === 'erase' || e.altKey);
     drag.current = { kind: 'draw' };
@@ -321,15 +473,21 @@ export default function Stage(props: StageProps) {
   const onPointerMove = (e: React.PointerEvent) => {
     const p = toImage(e.clientX, e.clientY);
     setCursor(p);
+    cursorRef.current = p;
+    if (draft.current?.t === 'pen') paintDraft();
     const d = drag.current;
     if (!d || !view) return;
+    if (d.kind === 'shape') {
+      setShapeLive({ i: d.i, op: dragged(d, p.x, p.y, e.shiftKey) });
+      return;
+    }
     if (d.kind === 'pan') {
       userZoomed.current = true;
       setView({ ...view, x: d.vx + e.clientX - d.sx, y: d.vy + e.clientY - d.sy });
       return;
     }
     const dr = draft.current;
-    if (!dr) return;
+    if (!dr || dr.t === 'pen') return;
     if (dr.t === 'rect') {
       dr.x1 = p.x;
       dr.y1 = p.y;
@@ -347,9 +505,18 @@ export default function Stage(props: StageProps) {
     paintDraft();
   };
 
-  const finish = () => {
+  const finish = (e: React.PointerEvent) => {
     const d = drag.current;
     drag.current = null;
+    if (d?.kind === 'shape') {
+      const p = toImage(e.clientX, e.clientY);
+      setShapeLive(null);
+      // A click without a drag only selects.
+      if (Math.abs(p.x - d.x0) * (view?.zoom || 1) >= 1 || Math.abs(p.y - d.y0) * (view?.zoom || 1) >= 1) props.onReplaceOp(d.i, dragged(d, p.x, p.y, e.shiftKey));
+      return;
+    }
+    // A pen shape lives across clicks.
+    if (draft.current?.t === 'pen') return;
     const dr = draft.current;
     draft.current = null;
     paintDraft();
@@ -370,7 +537,7 @@ export default function Stage(props: StageProps) {
       if (pts.length >= 6) onCommit({ t: 'lasso', pts, erase: dr.erase || undefined });
       return;
     }
-    onCommit({ t: 'stroke', pts, r: brush, erase: dr.erase || undefined, keep: dr.keep || undefined });
+    onCommit({ t: 'stroke', pts, r: brush, h: hardness < 1 ? hardness : undefined, erase: dr.erase || undefined, keep: dr.keep || undefined });
   };
 
   const onWheel = (e: React.WheelEvent) => {
@@ -391,7 +558,11 @@ export default function Stage(props: StageProps) {
     ? { left: view.x, top: view.y, width: scene.width * view.zoom, height: scene.height * view.zoom }
     : { visibility: 'hidden' };
 
-  const cursorClass = panning ? (drag.current?.kind === 'pan' ? 'grabbing' : 'grab') : drawTool && selected ? 'crosshair' : 'default';
+  let cursorClass = 'default';
+  if (panning) cursorClass = drag.current?.kind === 'pan' ? 'grabbing' : 'grab';
+  else if (drawTool && selected) cursorClass = 'crosshair';
+  else if (tool === 'shape' && selected) cursorClass = 'move';
+  const shown = shapeLive && shapeLive.i === selectedShape ? shapeLive.op : editOp;
   const sel = selected;
   const selVersion = sel ? sel.versions[sel.active] : undefined;
 
@@ -403,7 +574,12 @@ export default function Stage(props: StageProps) {
       onPointerMove={onPointerMove}
       onPointerUp={finish}
       onPointerCancel={finish}
-      onPointerLeave={() => setCursor(null)}
+      onPointerLeave={() => {
+        setCursor(null);
+        cursorRef.current = null;
+        if (draft.current?.t === 'pen') paintDraft();
+      }}
+      onDoubleClick={() => tool === 'pen' && commitPen()}
       onWheel={onWheel}
       onContextMenu={(e) => e.preventDefault()}
     >
@@ -435,8 +611,11 @@ export default function Stage(props: StageProps) {
               </div>
             );
           })}
-        {sel && showMask && sel.mask && !compare && <div className={`sc-mask-tint${sel.kind === 'motion' ? ' motion' : ''}`} style={maskStyle(sel.mask)} />}
-        {sel && showMask && protectMask && !compare && <div className="sc-mask-tint protect" style={maskStyle(protectMask)} />}
+        {sel && maskView === 'matte' && !compare && (
+          <div className="sc-matte">{sel.mask && <div className="sc-matte-white" style={maskStyle(sel.mask)} />}</div>
+        )}
+        {sel && maskView === 'tint' && sel.mask && !compare && <div className={`sc-mask-tint${sel.kind === 'motion' ? ' motion' : ''}`} style={maskStyle(sel.mask)} />}
+        {sel && maskView === 'tint' && protectMask && !compare && <div className="sc-mask-tint protect" style={maskStyle(protectMask)} />}
         {motionOverlay && !compare && (
           <div className="sc-motion-tint" style={{ ...regionStyle(motionOverlay.region, scene), ...maskStyle(motionOverlay.dataUrl) }} />
         )}
@@ -458,6 +637,7 @@ export default function Stage(props: StageProps) {
               </div>
             )
         )}
+        {sel && shown && view && !compare && <ShapeOutline op={shown} scene={scene} zoom={view.zoom} handles={tool === 'shape'} />}
       </div>
       <canvas ref={draftRef} className="sc-draft" style={{ width: size.w, height: size.h }} />
       {cursor && view && sel && (tool === 'brush' || tool === 'erase' || tool === 'protect') && !panning && (
@@ -477,6 +657,42 @@ export default function Stage(props: StageProps) {
         </div>
       )}
     </div>
+  );
+}
+
+/** The selected shape drawn over the stage: its outline, and with the Shape tool its corner and vertex handles. */
+function ShapeOutline({ op, scene, zoom, handles }: { op: MaskOp; scene: Scene; zoom: number; handles: boolean }) {
+  const box = opBox(op);
+  if (!box) return null;
+  const hs = 8 / zoom;
+  const ve = { vectorEffect: 'non-scaling-stroke' } as React.SVGProps<SVGElement>;
+  const pts = op.t === 'lasso' || op.t === 'stroke' ? op.pts : [];
+  const pairs: Array<[number, number]> = [];
+  for (let i = 0; i + 1 < pts.length; i += 2) pairs.push([pts[i], pts[i + 1]]);
+  const poly = pairs.map(([x, y]) => `${x},${y}`).join(' ');
+  return (
+    <svg className={`sc-shape-edit${op.erase ? ' erase' : ''}${op.keep ? ' keep' : ''}`} viewBox={`0 0 ${scene.width} ${scene.height}`} preserveAspectRatio="none" aria-hidden>
+      {op.t === 'lasso' && <polygon points={poly} className="sc-shape-line" {...(ve as object)} />}
+      {op.t === 'stroke' && (
+        <>
+          <polyline points={poly} className="sc-shape-band" strokeWidth={op.r * 2} />
+          <polyline points={poly} className="sc-shape-line" {...(ve as object)} />
+        </>
+      )}
+      {(op.t === 'rect' || op.t === 'image') && <rect x={op.x} y={op.y} width={op.w} height={op.h} className="sc-shape-line" {...(ve as object)} />}
+      <rect x={box.x} y={box.y} width={box.w} height={box.h} className="sc-shape-box" {...(ve as object)} />
+      {handles &&
+        [
+          [box.x, box.y],
+          [box.x + box.w, box.y],
+          [box.x + box.w, box.y + box.h],
+          [box.x, box.y + box.h],
+        ].map(([x, y]) => <rect key={`c${x},${y}`} x={x - hs / 2} y={y - hs / 2} width={hs} height={hs} className="sc-shape-handle" {...(ve as object)} />)}
+      {handles &&
+        op.t === 'lasso' &&
+        // eslint-disable-next-line react/no-array-index-key
+        pairs.map(([x, y], k) => <circle key={k} cx={x} cy={y} r={hs / 2.4} className="sc-shape-vertex" {...(ve as object)} />)}
+    </svg>
   );
 }
 
