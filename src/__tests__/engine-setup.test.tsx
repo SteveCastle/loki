@@ -195,3 +195,17 @@ describe('submitJobs gate', () => {
     expect(fetchMock).not.toHaveBeenCalled(); // no /create
   });
 });
+
+describe('the dream engine (loki-dream + Kromoss)', () => {
+  test('dream jobs, with or without an input, need loki-dream and the kromoss weights', () => {
+    expect(engineOfJob({ input: 'dream' })).toBe('dream');
+    expect(engineOfJob({ input: 'dream "C:/a.png"' })).toBe('dream');
+    const status = [dep('loki-dream', 'missing', 30e6), dep('kromoss', 'missing', 20 * GB)];
+    const need = planEngineSetup(status, 'dream');
+    expect(need?.items.map((d) => d.id)).toEqual(['loki-dream', 'kromoss']);
+    expect(need?.title).toBe('AI image generation');
+    expect(planEngineSetup([dep('loki-dream', 'installed', 30e6), dep('kromoss', 'installed', 20 * GB)], 'dream')).toBeNull();
+    // an older server that doesn't list the engine: don't gate
+    expect(planEngineSetup(missing(), 'dream')).toBeNull();
+  });
+});

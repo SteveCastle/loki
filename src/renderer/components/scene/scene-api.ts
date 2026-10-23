@@ -130,6 +130,10 @@ export interface LayerOptions {
   context?: 'tight' | 'normal' | 'wide' | 'full';
   /** still: sampling steps */
   steps?: number;
+  /** still: the engine: loki-retouch edits by instruction (default), loki-dream (Kromoss) redraws the area from a description */
+  engine?: 'retouch' | 'dream';
+  /** still, dream: how much of the area is redrawn (0-1; default 1, a sketch 0.75) */
+  strength?: number;
   /** motion */
   duration?: number;
   model?: 'h3' | 'fast';
@@ -255,6 +259,15 @@ export interface Scene {
   updated: string;
 }
 
+export interface DreamStatus {
+  jobId: string;
+  state: string;
+  done: number;
+  total: number;
+  output?: string;
+  error?: string;
+}
+
 export interface SceneSummary {
   id: string;
   name: string;
@@ -348,6 +361,9 @@ export const sceneApi = {
   /** Frame f of version n's roto matte as a mask piece over rect (clip pixels), and the clip's size. */
   matteFrame: (id: string, layer: string, n: number, frame: number) =>
     call<{ mask: string; rect: Rect; width: number; height: number }>('POST', `/api/scenes/${enc(id)}/layers/${enc(layer)}/versions/${n}/matte`, { frame }),
+  /** A new picture from a prompt (loki-dream) to start a scene from; dreamStatus follows it. */
+  dream: (req: { prompt: string; negative?: string; size?: string; turbo?: boolean }) => call<DreamStatus>('POST', '/api/scene-dream', req),
+  dreamStatus: (job: string) => call<DreamStatus>('GET', `/api/scene-dream/${enc(job)}`),
   untrack: (id: string, layer: string, n: number) => call<Scene>('POST', `/api/scenes/${enc(id)}/layers/${enc(layer)}/versions/${n}/untrack`, {}),
 };
 

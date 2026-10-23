@@ -149,3 +149,14 @@ describe('most recently used order', () => {
     expect(all['w:504']).toBe(504);
   });
 });
+
+describe('saved Generate tasks', () => {
+  test('need no selection: offered whenever Transform can run at all', () => {
+    const t = { id: 'g', name: 'Fox', prompt: 'a red fox' };
+    const edit = { id: 'e', name: 'Night', prompt: 'make it night' };
+    const all = [{ intent: 'generate' as const, t }, { intent: 'edit' as const, t: edit }];
+    expect(savedEntries([], all, [], 'name', {}, true).map((e) => e.name)).toEqual(['Fox']);
+    expect(savedEntries([], all, []).map((e) => e.name)).toEqual([]);
+    expect(savedEntries([], all, [IMG]).map((e) => e.name)).toEqual(['Fox', 'Night']);
+  });
+});

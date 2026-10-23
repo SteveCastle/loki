@@ -126,6 +126,7 @@ func init() {
 	gpuDiffusion := func(string) string { return HostBucketGPUDiffusion }
 	RegisterHostResolver("retouch", gpuDiffusion)
 	RegisterHostResolver("reshoot", gpuDiffusion)
+	RegisterHostResolver("dream", gpuDiffusion)
 	RegisterHostResolver("4kify", gpuDiffusion)
 	// Splat training holds the GPU for minutes too; it shares the bucket so
 	// it never contends with a diffusion run for VRAM.
@@ -149,6 +150,7 @@ func init() {
 	RegisterTask("ffmpeg-rotate", "FFmpeg Rotate", ffmpegRotateOptions, ffmpegRotateTask)
 	RegisterTask("retouch", "Retouch (AI image edit)", retouchOptions, retouchTask)
 	RegisterTask("reshoot", "Reshoot (AI video)", reshootOptions, reshootTask)
+	RegisterTask("dream", "Dream (AI image from a prompt)", dreamOptions, dreamTask)
 	RegisterTask("splat", "Gaussian Splat (3D scene)", splatOptions, splatTask)
 	RegisterTask("scene-render", "Render Scene", sceneRenderOptions, sceneRenderTask)
 	RegisterTask("scene-lock", "Lock Scene Motion Edges", sceneLockOptions, sceneLockTask)

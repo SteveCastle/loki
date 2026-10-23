@@ -854,7 +854,8 @@ func sceneJobOutput(kind, input string) string {
 		return ""
 	}
 	stem := strings.TrimSuffix(input, filepath.Ext(input))
-	outs := []string{stem + "_edit.png"}
+	// loki-retouch writes <crop>_edit.png, loki-dream <crop>_dream.png.
+	outs := []string{stem + "_edit.png", stem + "_dream.png"}
 	if kind == SceneKindMotion {
 		outs = []string{stem + "_locked.mp4", stem + "_reshoot.mp4"}
 	}
@@ -1774,6 +1775,14 @@ func GenerateLayer(ctx context.Context, q *jobqueue.Queue, id, lid string) (*Sce
 	}
 	switch l.Kind {
 	case SceneKindStill:
+		if optString(l.Options, "engine") == SceneEngineDream {
+			command = "dream"
+			if err := sceneDreamArgs(ctx, s, l, dir, region, input, prompt, refs, opt); err != nil {
+				os.Remove(input)
+				return nil, err
+			}
+			break
+		}
 		command = "retouch"
 		opt("prompt", sceneFinishPrompt(l.Options, prompt, refs))
 		if len(refs) > 0 {
@@ -2039,7 +2048,7 @@ func versionRaw(id string, v SceneVersion) string {
 func sceneVersionCrop(v SceneVersion) string {
 	base := filepath.Base(v.Path)
 	// Motion: the engine's output and its finishes; still: retouch's.
-	for _, suf := range []string{"_locked", "_refined", "_reshoot", "_edit"} {
+	for _, suf := range []string{"_locked", "_refined", "_reshoot", "_edit", "_dream"} {
 		if i := strings.Index(base, suf); i > 0 {
 			p := filepath.Join(filepath.Dir(v.Path), base[:i]+".png")
 			if fileExists(p) {

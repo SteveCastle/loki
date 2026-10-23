@@ -6,6 +6,7 @@ import {
   runSummary,
   snapAzimuth,
   classify,
+  dreamSize,
   estimateSeconds,
   formatDuration,
   mediaKind,
@@ -17,6 +18,7 @@ import {
   reshootFrames,
   retouchPreset,
   settingsFor,
+  snapDreamSize,
   stepsFor,
   stepsForSettings,
   FAST_STEPS,
@@ -347,5 +349,87 @@ describe('New angle (camera-angle presets)', () => {
   it('runs once per image, each as its own <image1>', () => {
     expect(buildJobs('angle', settingsFor('angle'), [IMG, IMG2], fixed).jobs[0].fields.combine).toBeUndefined();
     expect(usesReferences('angle', classify([IMG, IMG2]))).toBe(false);
+  });
+});
+
+describe('loki-dream: Generate and Reimagine', () => {
+  const fixed = { random: () => 0.5 };
+  const gen = (over: Partial<ReturnType<typeof settingsFor>> = {}) => ({ ...settingsFor('generate'), prompt: 'a red fox in the snow', ...over });
+
+  it('Generate needs no selection, and leaves one alone', () => {
+    expect(availability('generate', classify([])).ok).toBe(true);
+    expect(availability('generate', classify([AUD])).ok).toBe(true);
+    const none = buildJobs('generate', gen(), [], fixed);
+    const withSel = buildJobs('generate', gen(), [IMG, VID], fixed);
+    expect(none.error).toBeUndefined();
+    expect(none.jobs).toHaveLength(1);
+    // no input at all: the server writes to the library's Generated folder
+    expect(none.jobs[0].input).toBe('dream');
+    expect(withSel.jobs).toEqual(none.jobs);
+    expect(referenceTokens('generate', [IMG], true)).toEqual({});
+  });
+
+  it('Generate sends prompt, size, steps, seed and the negative prompt; variations are ONE run (count)', () => {
+    const f = buildJobs('generate', gen({ quality: 'balanced', negative: 'blurry', aspect: 'landscape', variations: 3, seedMode: 'fixed', seed: 42 }), [], fixed).jobs;
+    expect(f).toHaveLength(1);
+    expect(f[0].fields).toEqual({ prompt: 'a red fox in the snow', steps: '30', negative: 'blurry', seed: '42', size: '1344x768', count: '3' });
+    expect(buildJobs('generate', gen({ quality: 'fine', aspect: 'portrait' }), [], fixed).jobs[0].fields).toMatchObject({ steps: '50', size: '768x1344' });
+    // one image: no count field (the engine's default)
+    expect(buildJobs('generate', gen(), [], fixed).jobs[0].fields.count).toBeUndefined();
+    expect(buildJobs('generate', gen(), [], fixed).jobs[0].fields.size).toBe('1024x1024');
+    // up to 8 in one run
+    expect(buildJobs('generate', gen({ variations: 20 }), [], fixed).jobs[0].fields.count).toBe('8');
+  });
+
+  it('Turbo sends turbo and neither steps nor the negative prompt', () => {
+    const f = buildJobs('generate', gen({ quality: 'draft', negative: 'blurry' }), [], fixed).jobs[0].fields;
+    expect(f.turbo).toBe('1');
+    expect(f.steps).toBeUndefined();
+    expect(f.negative).toBeUndefined();
+    expect(stepsFor('dream', 'draft')).toBe(8);
+  });
+
+  it('Generate needs a prompt and a size', () => {
+    expect(buildJobs('generate', gen({ prompt: '  ' }), [], fixed).error).toBe('Describe the picture');
+    expect(buildJobs('generate', gen({ aspect: 'custom', customSize: '1x' }), [], fixed).error).toBe('Enter a width and height');
+  });
+
+  it('custom sizes snap to the model grid within about a megapixel', () => {
+    expect(snapDreamSize(1024, 1024)).toEqual([1024, 1024]);
+    expect(snapDreamSize(1000, 700)).toEqual([1008, 704]);
+    const [w, h] = snapDreamSize(3840, 2160);
+    expect(w % 16).toBe(0);
+    expect(h % 16).toBe(0);
+    expect(w * h).toBeLessThanOrEqual(1024 * 1024);
+    expect(Math.abs(w / h - 16 / 9)).toBeLessThan(0.05);
+    expect(dreamSize({ aspect: 'custom', customSize: '3840x2160' })).toEqual([w, h]);
+    expect(buildJobs('generate', gen({ aspect: 'custom', customSize: '1000x700' }), [], fixed).jobs[0].fields.size).toBe('1008x704');
+  });
+
+  it('Reimagine runs once per image and variation, with the image as the start and the strength', () => {
+    expect(availability('reimagine', classify([])).ok).toBe(false);
+    expect(availability('reimagine', classify([VID])).ok).toBe(false);
+    const s = { ...settingsFor('reimagine'), prompt: 'as an oil painting', variations: 2 };
+    const { jobs } = buildJobs('reimagine', s, [IMG, IMG2, VID], fixed);
+    expect(jobs).toHaveLength(4);
+    expect(jobs[0].input).toBe('dream "C:/media/photo.jpg"');
+    expect(jobs[2].input).toBe('dream "C:/media/other.png"');
+    expect(jobs[0].fields).toMatchObject({ prompt: 'as an oil painting', strength: '0.8', steps: '30' });
+    expect(jobs[0].fields.size).toBeUndefined();
+    expect(jobs[0].fields.count).toBeUndefined();
+    expect(jobs[0].fields.seed).not.toBe(jobs[1].fields.seed);
+    expect(buildJobs('reimagine', { ...s, strength: 0.35 }, [IMG], fixed).jobs[0].fields.strength).toBe('0.35');
+    expect(buildJobs('reimagine', { ...s, strength: 7 }, [IMG], fixed).jobs[0].fields.strength).toBe('1');
+    expect(buildJobs('reimagine', { ...s, prompt: '' }, [IMG], fixed).error).toBe('Describe the result');
+  });
+
+  it('plans, estimates and summarises', () => {
+    expect(planFor('generate', gen({ variations: 4, aspect: 'portrait' }), [])).toMatchObject({ jobCount: 1, outputs: 4, outWidth: 768, outHeight: 1344, engine: 'dream', steps: 30 });
+    expect(planFor('reimagine', { ...settingsFor('reimagine'), prompt: 'x' }, [IMG], { width: 1000, height: 700 })).toMatchObject({ outputName: 'photo_dream.png', outWidth: 1008, outHeight: 704 });
+    const turbo = estimateSeconds(planFor('generate', gen({ quality: 'draft' }), []));
+    const fine = estimateSeconds(planFor('generate', gen({ quality: 'fine' }), []));
+    expect(fine).toBeGreaterThan(turbo * 2);
+    expect(runSummary('generate', gen({ quality: 'draft', aspect: 'landscape', variations: 4 }))).toBe('“a red fox in the snow” · 1344×768 · turbo · 4 variations');
+    expect(runSummary('reimagine', { ...settingsFor('reimagine'), prompt: 'oil', strength: 0.85 })).toBe('“oil” · strength 0.85 · balanced');
   });
 });

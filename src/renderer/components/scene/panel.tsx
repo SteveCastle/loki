@@ -378,6 +378,8 @@ export function Inspector(props: InspectorProps) {
   const queued = l.queued || [];
   const full = generationsInFlight(l) >= MAX_GENERATIONS;
   const finish = !motion ? o.finish : undefined;
+  // Kromoss redraws from a description: no instruction grounding, no reference images.
+  const dream = !motion && o.engine === 'dream';
   const needPrompt = !motion && !finish && !l.prompt.trim();
   // A finish layer: the grounding its words are wrapped in, and what the engine will be given.
   const grounding = finish ? o.grounding || FINISH_GROUNDING[finish] : '';
@@ -431,7 +433,17 @@ export function Inspector(props: InspectorProps) {
 
       <PromptLibrary
         kind={l.kind}
-        label={motion ? 'How should it move?' : finish === 'sketch' ? 'What is it?' : finish === 'colour' ? 'Anything about the colours?' : 'What should change here?'}
+        label={
+          motion
+            ? 'How should it move?'
+            : finish === 'sketch'
+            ? 'What is it?'
+            : finish === 'colour'
+            ? 'Anything about the colours?'
+            : dream
+            ? 'What should be there?'
+            : 'What should change here?'
+        }
         prompt={l.prompt}
         onUse={(prompt) => {
           props.onPatch({ prompt });
@@ -451,11 +463,13 @@ export function Inspector(props: InspectorProps) {
             ? 'e.g. the sun · a stone cottage with ivy · a woman in a blue dress (optional)'
             : finish === 'colour'
             ? 'e.g. warm autumn light (optional)'
+            : dream
+            ? 'e.g. a stormy sunset sky with towering clouds (describe it, don’t instruct)'
             : 'e.g. replace the sky with a stormy sunset'
         }
         onChange={(e) => props.onPatch({ prompt: e.target.value })}
       />
-      {finish && (
+      {finish && !dream && (
         <details className="sc-grounding">
           <summary>
             Grounding <span className="sc-faint">· how the paint is read{o.grounding ? ' (yours)' : ''}</span>
@@ -494,6 +508,7 @@ export function Inspector(props: InspectorProps) {
           </div>
         </details>
       )}
+      {!dream && (
       <References
         layer={l}
         onInsert={insertToken}
@@ -505,6 +520,7 @@ export function Inspector(props: InspectorProps) {
         onPickFiles={props.onPickFiles}
         paintLayers={props.paintLayers}
       />
+      )}
       <div className="sc-ideas" hidden={!!finish}>
         {ideas.map((idea) => (
           <button key={idea} type="button" className="sc-chip" onClick={() => appendIdea(idea)}>
@@ -667,12 +683,42 @@ export function Inspector(props: InspectorProps) {
           </>
         ) : (
           <>
+            <span className="sc-label" title="Which engine draws the area">
+              Engine
+            </span>
+            <Seg
+              value={o.engine || 'retouch'}
+              onChange={(engine) => props.onOptions({ engine })}
+              options={[
+                { value: 'retouch', label: 'Retouch', title: 'Qwen Image: edits the area by instruction (“make it night”), can use reference images' },
+                { value: 'dream', label: 'Kromoss', title: 'MOSS-Image (Kromoss): redraws the masked area from a description of what should be there, in the picture’s context' },
+              ]}
+            />
+            {dream && (
+              <>
+                <span className="sc-label" title="How much of the area is redrawn: low keeps its shapes and colours (a sketch), 100% draws it anew">
+                  Strength
+                </span>
+                <div className="sc-slider">
+                  <input
+                    type="range"
+                    min={10}
+                    max={100}
+                    step={5}
+                    value={Math.round((o.strength ?? (finish === 'sketch' ? 0.75 : finish === 'colour' ? 0.6 : 1)) * 100)}
+                    onChange={(e) => props.onOptions({ strength: Number(e.target.value) / 100 })}
+                    aria-label="Strength"
+                  />
+                  <span>{Math.round((o.strength ?? (finish === 'sketch' ? 0.75 : finish === 'colour' ? 0.6 : 1)) * 100)}%</span>
+                </div>
+              </>
+            )}
             <span className="sc-label">Quality</span>
             <Seg
               value={o.steps || 25}
               onChange={(steps) => props.onOptions({ steps })}
               options={[
-                { value: 12, label: 'Draft' },
+                { value: 12, label: 'Draft', title: dream ? 'The 8-step turbo LoRA: several times faster' : undefined },
                 { value: 25, label: 'Standard' },
                 { value: 40, label: 'Best' },
               ]}

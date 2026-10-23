@@ -1,13 +1,13 @@
 name: Build AI CLI tool
 description: >
-  Build, test and package one of the standalone CUDA CLIs under tools/ (loki-retouch, loki-reshoot, loki-segment) for the
+  Build, test and package one of the standalone CUDA CLIs under tools/ (loki-retouch, loki-reshoot, loki-segment, loki-dream) for the
   runner's OS. Only nvcc and the CUDA headers are installed (kernels are compiled to fatbins at build time;
   the driver is loaded at run time), so no GPU is needed: the tests that run here are the GPU-free ones, and
   the GPU tests are run by hand (see tools/README.md).
 
 inputs:
   tool:
-    description: Directory name under tools/ (loki-retouch, loki-reshoot or loki-segment)
+    description: Directory name under tools/ (loki-retouch, loki-reshoot, loki-segment or loki-dream)
     required: true
   target:
     description: Artifact suffix, e.g. windows-amd64 or linux-amd64

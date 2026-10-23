@@ -200,14 +200,14 @@ func TestSetupState(t *testing.T) {
 		t.Fatalf("fresh install state = %+v, want incomplete with no real users", state)
 	}
 	// Four everywhere, plus the CUDA engines on Windows and Linux (image
-	// editing, video, object selection), plus splat training (COLMAP's CUDA
+	// editing, video, object selection, generation), plus splat training (COLMAP's CUDA
 	// build) on Windows.
 	wantGroups := 4
 	if runtime.GOOS == "windows" || runtime.GOOS == "linux" {
-		wantGroups = 7
+		wantGroups = 8
 	}
 	if runtime.GOOS == "windows" {
-		wantGroups = 8
+		wantGroups = 9
 	}
 	if len(state.ModelGroups) != wantGroups {
 		t.Fatalf("model groups = %d, want %d", len(state.ModelGroups), wantGroups)

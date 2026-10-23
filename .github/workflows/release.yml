@@ -15,7 +15,7 @@ on:
       - '.erb/**' # webpack / build configuration
       - 'scripts/**' # build helpers (build-server.js, etc.)
       - 'media-server/**' # Go media server
-      - 'tools/**' # standalone CUDA CLIs (loki-retouch, loki-reshoot, loki-segment)
+      - 'tools/**' # standalone CUDA CLIs (loki-retouch, loki-reshoot, loki-segment, loki-dream)
       - '.github/actions/**' # composite actions the jobs below use
       - 'package.json'
       - 'package-lock.json'
@@ -548,6 +548,8 @@ jobs:
           - { tool: loki-reshoot, os: ubuntu-latest, target: linux-amd64 }
           - { tool: loki-segment, os: windows-2022, target: windows-amd64 }
           - { tool: loki-segment, os: ubuntu-latest, target: linux-amd64 }
+          - { tool: loki-dream, os: windows-2022, target: windows-amd64 }
+          - { tool: loki-dream, os: ubuntu-latest, target: linux-amd64 }
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout code

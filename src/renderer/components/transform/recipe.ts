@@ -11,6 +11,7 @@
 // them when the saved task runs on a new image (which takes the first input's place). No React in here.
 import {
   BASE_SETTINGS,
+  DREAM_ASPECTS,
   INTENTS,
   QUALITY_STEPS,
   RECIPE_KIND,
@@ -53,6 +54,8 @@ function knownSettings(raw: Json): Partial<TransformSettings> {
       if (v === null || typeof v === 'string') out[k] = v;
     } else if (k === 'reshootModel') {
       if (v === 'h3' || v === 'fast') out[k] = v;
+    } else if (k === 'aspect') {
+      if (v === 'square' || v === 'landscape' || v === 'portrait' || v === 'custom') out[k] = v;
     } else if (k === 'pinned') {
       if (Array.isArray(v)) out[k] = v.filter((p) => typeof p === 'string' && p);
     } else if (typeof v === typeof want && !(typeof v === 'number' && !Number.isFinite(v))) {
@@ -178,6 +181,35 @@ function fromReshoot(rec: Json, args: string[]): RebuiltTask | null {
   return { intent: id, settings: s, approximate: true };
 }
 
+function fromDream(rec: Json, args: string[]): RebuiltTask | null {
+  // An inpainting run (--mask) is the Scene editor's, not a Transform task.
+  if (hasArg(args, '--mask')) return null;
+  const id: IntentId = hasArg(args, '--init') ? 'reimagine' : 'generate';
+  const s: TransformSettings = { ...settingsFor(id) };
+  s.prompt = (typeof rec.prompt === 'string' ? rec.prompt : argValue(args, '--prompt', '-p') || '').trim();
+  if (!s.prompt) return null;
+  if (hasArg(args, '--turbo')) s.quality = 'draft';
+  else {
+    const steps = parseFloat(argValue(args, '--steps') ?? '');
+    s.quality = nearestQuality('dream', Number.isFinite(steps) ? steps : typeof rec.steps === 'number' ? rec.steps : 50);
+    s.negative = (argValue(args, '--negative') || '').trim();
+  }
+  if (id === 'reimagine') {
+    const strength = parseFloat(argValue(args, '--strength') ?? '');
+    if (Number.isFinite(strength)) s.strength = strength;
+  } else {
+    const size = parseSize(argValue(args, '--size') || '');
+    const match = size && DREAM_ASPECTS.find((a) => a.width === size[0] && a.height === size[1]);
+    if (match) s.aspect = match.id;
+    else if (size) {
+      s.aspect = 'custom';
+      s.customSize = `${size[0]}x${size[1]}`;
+    }
+  }
+  if (typeof rec.seed === 'number') s.seed = rec.seed;
+  return { intent: id, settings: s, approximate: true };
+}
+
 /** A generation record (findLokiRecord) as a task to save, or null when it is not a Transform-shaped run. */
 export function taskFromRecord(rec: Json): RebuiltTask | null {
   if (!rec || typeof rec !== 'object') return null;
@@ -186,6 +218,7 @@ export function taskFromRecord(rec: Json): RebuiltTask | null {
   const args: string[] = Array.isArray(rec.args) ? rec.args.filter((a: unknown) => typeof a === 'string') : [];
   if (rec.tool === 'loki-retouch') return fromRetouch(rec, args);
   if (rec.tool === 'loki-reshoot') return fromReshoot(rec, args);
+  if (rec.tool === 'loki-dream') return fromDream(rec, args);
   return null;
 }
 

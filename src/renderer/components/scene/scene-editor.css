@@ -1909,3 +1909,43 @@ body.sc-body {
   color: var(--sc-dim);
   font-size: 12px;
 }
+
+/* ---- dialogs (New scene from a prompt) ---- */
+
+.sc-modal-back {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.sc-modal {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(560px, calc(100vw - 32px));
+  padding: 18px 20px;
+  background: #111;
+  border: 1px solid var(--sc-hairline);
+  border-radius: 10px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+}
+
+.sc-modal h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.sc-modal p {
+  margin: 0;
+  font-size: 12px;
+}
+
+.sc-modal-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}

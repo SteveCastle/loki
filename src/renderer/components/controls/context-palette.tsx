@@ -1100,6 +1100,9 @@ export default function ContextPalette() {
   );
   const canTransform =
     !!serverAvailable && !!authToken && transformPaths.length > 0;
+  // Generate (loki-dream) makes a new picture from a prompt and needs no
+  // selection, so the Transform row is offered whenever the server is.
+  const canGenerate = !!serverAvailable && !!authToken;
   // Playback position (seconds) of the video on screen — only meaningful when
   // the ONE targeted file is that video; a retouch job samples that frame.
   const getTransformVideoTime = (): number | undefined => {
@@ -1679,9 +1682,9 @@ export default function ContextPalette() {
 
       <ScenePickPaletteSection paths={transformCandidates.filter(Boolean) as string[]} onDone={() => libraryService.send('HIDE_CONTEXT_PALETTE')} />
 
-      {canTransform && (
+      {canGenerate && (
         <TransformSection
-          paths={transformPaths}
+          paths={canTransform ? transformPaths : []}
           authToken={authToken}
           getVideoTime={getTransformVideoTime}
           onDone={() => libraryService.send('HIDE_CONTEXT_PALETTE')}
@@ -1845,6 +1848,7 @@ export default function ContextPalette() {
         <SavedPicker
           workflows={savedWorkflows}
           transformPaths={canTransform ? transformPaths : []}
+          transformReady={canGenerate}
           onRunWorkflow={handleRunWorkflow}
           onOpenTransform={handleOpenSavedTransform}
         />

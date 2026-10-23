@@ -36,7 +36,8 @@ export type SavedEntry =
 /**
  * Every saved item that can run on this selection: the saved transforms whose
  * intent fits `transformPaths` (none when Transform can't run here), and every
- * workflow. By name, or with `sort` 'recent' most recently picked first (`recent`:
+ * workflow. `transformReady`: Transform can run here even with no selection
+ * (saved Generate tasks need none); by default, only with one. By name, or with `sort` 'recent' most recently picked first (`recent`:
  * key -> time, see saved-recent.ts), never-picked ones after them by name.
  */
 export function savedEntries(
@@ -44,11 +45,12 @@ export function savedEntries(
   templates: Array<{ intent: IntentId; t: PromptTemplate }>,
   transformPaths: string[],
   sort: SavedSort = 'name',
-  recent: Record<string, number> = {}
+  recent: Record<string, number> = {},
+  transformReady = transformPaths.length > 0
 ): SavedEntry[] {
   const inputs = classify(transformPaths);
   const out: SavedEntry[] = [];
-  if (transformPaths.length) {
+  if (transformReady) {
     templates.forEach(({ intent, t }) => {
       if (!availability(intent, inputs).ok) return;
       out.push({ kind: 'transform', key: savedTransformKey(intent, t.id), name: t.name, detail: `${intentById(intent).title} · ${templateSummary(intent, t)}`, intent, t });
@@ -72,12 +74,15 @@ export function matchesSearch(entry: SavedEntry, query: string): boolean {
 export default function SavedPicker({
   workflows,
   transformPaths,
+  transformReady,
   onRunWorkflow,
   onOpenTransform,
 }: {
   workflows: SavedWorkflow[];
-  /** The selection Transform would act on; [] when it can't run here. */
+  /** The selection Transform would act on; [] when it can't run here (or nothing is selected). */
   transformPaths: string[];
+  /** Transform can run here at all (Generate needs no selection); default: there is a selection. */
+  transformReady?: boolean;
   onRunWorkflow: (wf: SavedWorkflow) => void;
   onOpenTransform: (intent: IntentId, t: PromptTemplate) => void;
 }) {
@@ -91,8 +96,8 @@ export default function SavedPicker({
   // Read once per open: picking an item closes the palette, so the order never shifts under the pointer.
   const recent = useMemo(() => loadRecent(), []);
   const entries = useMemo(
-    () => savedEntries(workflows, templates, transformPaths, sort, recent),
-    [workflows, templates, transformPaths, sort, recent]
+    () => savedEntries(workflows, templates, transformPaths, sort, recent, transformReady ?? transformPaths.length > 0),
+    [workflows, templates, transformPaths, sort, recent, transformReady]
   );
   const filtered = useMemo(() => entries.filter((e) => matchesSearch(e, search)), [entries, search]);
   const transforms = entries.filter((e) => e.kind === 'transform').length;

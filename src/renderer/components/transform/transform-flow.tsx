@@ -132,7 +132,7 @@ function FlowSession({ req }: { req: NonNullable<ReturnType<typeof useFlowReques
         const res = await fetch(`${mediaServerBase}/jobs/list`, { headers: { Authorization: `Bearer ${authToken}` }, signal: ctl.signal });
         if (!res.ok) return;
         const jobs = (await res.json()) as Array<{ command: string; state: string }>;
-        setQueueAhead(jobs.filter((j) => ['retouch', 'reshoot', '4kify'].includes(j.command) && (j.state === 'pending' || j.state === 'in_progress')).length);
+        setQueueAhead(jobs.filter((j) => ['retouch', 'reshoot', 'dream', '4kify'].includes(j.command) && (j.state === 'pending' || j.state === 'in_progress')).length);
       } catch {
         // unknown: show nothing
       }
@@ -143,7 +143,8 @@ function FlowSession({ req }: { req: NonNullable<ReturnType<typeof useFlowReques
   // The prompt the engine will run, for the review step: the first job as /create would get it, minus any
   // hand-written override (the panel shows that itself; the generated prompt is what "Edit" starts from).
   const previewBody = useMemo(() => {
-    if (phase !== 'review' || !intent) return null;
+    // loki-dream sends the prompt as written: there is no expansion to ask the engine for.
+    if (phase !== 'review' || !intent || intentById(intent).engine === 'dream') return null;
     const built = buildJobs(intent, { ...settings, manualPrompt: null }, paths, { videoTime: req.videoTime, random: () => 0.5 });
     const job = built.jobs[0];
     if (!job) return null;
@@ -151,7 +152,10 @@ function FlowSession({ req }: { req: NonNullable<ReturnType<typeof useFlowReques
   }, [phase, intent, settings, paths, req.videoTime]);
   const [preview, setPreview] = useState<PromptPreviewState>({ status: 'idle' });
   useEffect(() => {
-    if (!previewBody) return undefined;
+    if (!previewBody) {
+      setPreview({ status: 'idle' });
+      return undefined;
+    }
     const ctl = new AbortController();
     setPreview((prev) => ({ status: 'loading', data: prev.data }));
     // Debounced (an Edit prompt typed in the review step changes the body), and bounded like every server call.

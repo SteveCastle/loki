@@ -139,7 +139,7 @@ func installFakeAI(t *testing.T) string {
 		if runtime.GOOS == "windows" {
 			ext = ".exe"
 		}
-		for _, name := range []string{"loki-retouch", "loki-reshoot"} {
+		for _, name := range []string{"loki-retouch", "loki-reshoot", "loki-dream"} {
 			dst := filepath.Join(dir, name+ext)
 			if err := os.Link(self, dst); err != nil {
 				if err := copyFileForTest(self, dst); err != nil {

@@ -73,6 +73,8 @@ const REMEMBER_KEYS: Array<keyof TransformSettings> = [
   'reshootModel',
   'noAudio',
   'keepSoundtrack',
+  'aspect',
+  'strength',
 ];
 
 export function loadRemembered(id: IntentId): Partial<TransformSettings> {

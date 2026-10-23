@@ -425,6 +425,77 @@
           ]
       },
       {
+          "id": "loki-dream",
+          "name": "loki-dream",
+          "category": "tool",
+          "feature": "AI image generation",
+          "description": "Command-line engine for Generate / Reimagine and the Scene editor's Kromoss layers: new pictures from a prompt, img2img and inpainting (Kromoss, a MOSS-Image fine-tune). Needs an NVIDIA RTX 40-series (or newer) GPU; Windows or Linux.",
+          "version": "latest",
+          "consumers": [
+              "dream"
+          ],
+          "size_bytes": 30000000,
+          "files": [
+              {
+                  "url": "https://github.com/SteveCastle/loki/releases/latest/download/loki-dream-windows-amd64.zip",
+                  "rel_path": "loki-dream.exe",
+                  "sha256_url": "https://github.com/SteveCastle/loki/releases/latest/download/loki-dream-windows-amd64.zip.sha256",
+                  "os": "windows",
+                  "size_bytes": 30000000,
+                  "archive": "zip",
+                  "archive_member": "loki-dream-windows-amd64/loki-dream.exe",
+                  "exec": true
+              },
+              {
+                  "url": "https://github.com/SteveCastle/loki/releases/latest/download/loki-dream-linux-amd64.zip",
+                  "rel_path": "loki-dream",
+                  "sha256_url": "https://github.com/SteveCastle/loki/releases/latest/download/loki-dream-linux-amd64.zip.sha256",
+                  "os": "linux",
+                  "size_bytes": 30000000,
+                  "archive": "zip",
+                  "archive_member": "loki-dream-linux-amd64/loki-dream",
+                  "exec": true
+              }
+          ]
+      },
+      {
+          "id": "kromoss",
+          "name": "Kromoss (int8) + turbo LoRA",
+          "feature": "AI image generation",
+          "description": "Kromoss diffusion model (int8), Qwen3.5-9B text encoder, FLUX.2 small VAE and the 8-step DMD2 turbo LoRA used by loki-dream (lodestones/Kromoss, Apache-2.0).",
+          "version": "1.0.0",
+          "consumers": [
+              "dream"
+          ],
+          "size_bytes": 26158709426,
+          "files": [
+              {
+                  "url": "https://huggingface.co/lodestones/Kromoss/resolve/main/diffusion_models/kromoss_int8_convrot.safetensors",
+                  "rel_path": "kromoss_int8_convrot.safetensors",
+                  "sha256": "cacff0dd25cd2cf531e1f5ddae7872c3d57a54dbf66f1a1279f2f118514e7905",
+                  "size_bytes": 5413698958
+              },
+              {
+                  "url": "https://huggingface.co/lodestones/Kromoss/resolve/main/text_encoders/qwen3.5_9b_bf16.safetensors",
+                  "rel_path": "qwen3.5_9b_bf16.safetensors",
+                  "sha256": "7e6e9f08d598f829cb940e60ac0c698e1f1c27a47daffd7e598cd78c78b4cc53",
+                  "size_bytes": 19306312328
+              },
+              {
+                  "url": "https://huggingface.co/lodestones/Kromoss/resolve/main/vae/flux2-vae_small.safetensors",
+                  "rel_path": "flux2-vae_small.safetensors",
+                  "sha256": "d8d52ba036475f5fb07c8b435e176d3d97ebfa82f0d1a1c317f9cc1e25bd013b",
+                  "size_bytes": 249521340
+              },
+              {
+                  "url": "https://huggingface.co/lodestones/Kromoss/resolve/main/8-steps-dmd2-lora.safetensors",
+                  "rel_path": "8-steps-dmd2-lora.safetensors",
+                  "sha256": "7683fe1fb51f73f5d690f24dd6b7f46f31ab9a9873729a854ac5c9a420ffe6f2",
+                  "size_bytes": 1189176800
+              }
+          ]
+      },
+      {
         "id": "fasth3-omni",
         "name": "FastH3 Omni reference-to-video (int8, 8-step)",
         "feature": "AI video from references",

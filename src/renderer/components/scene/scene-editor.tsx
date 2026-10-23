@@ -21,6 +21,7 @@ import Stage, { isTyping, type MaskView, type RotoView, type Tool } from './stag
 import { pickOps, usePick, type PickTarget } from './pick';
 import { PickBar, RotoBar } from './pick-bar';
 import MaskPanel from './mask-panel';
+import DreamDialog from './dream-dialog';
 import PaintPanel from './paint-panel';
 import { Inspector, KEY_GENERATE, KEY_UNDO, LayerList } from './panel';
 import { requestLibraryPick } from './pick-bridge';
@@ -251,6 +252,7 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
   const [notice, setNotice] = useState<{ tone: 'error' | 'info'; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [others, setOthers] = useState<SceneSummary[]>([]);
+  const [dreamOpen, setDreamOpen] = useState(false);
   const undo = useRef<Undo[]>([]);
   const redo = useRef<Undo[]>([]);
 
@@ -1100,6 +1102,10 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
             onChange={async (e) => {
               const v = e.target.value;
               if (v === doc.id) return;
+              if (v === '__dream') {
+                setDreamOpen(true);
+                return;
+              }
               try {
                 await save();
                 const next = v === '__new' ? await sceneApi.open(doc.source, doc.sourceTime || 0, true) : await sceneApi.get(v);
@@ -1116,6 +1122,7 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
               </option>
             ))}
             <option value="__new">＋ New scene from this file</option>
+            <option value="__dream">＋ New scene from a prompt…</option>
           </select>
         </div>
         <div className="sc-header-mid">
@@ -1413,6 +1420,21 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
           )}
         </aside>
       </div>
+
+      {dreamOpen && (
+        <DreamDialog
+          onClose={() => setDreamOpen(false)}
+          onScene={async (next) => {
+            setDreamOpen(false);
+            try {
+              await save();
+            } catch {
+              // the scene being left keeps its unsaved state for next time
+            }
+            onSwitch(next);
+          }}
+        />
+      )}
 
       <footer className="sc-footer">
         <span>

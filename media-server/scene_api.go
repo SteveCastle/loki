@@ -37,6 +37,8 @@ func RegisterSceneRoutes(mux *http.ServeMux, deps *Dependencies) {
 	mux.HandleFunc("/api/scenes/{id}", renderer.ApplyMiddlewares(sceneHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/scenes/{id}/render", renderer.ApplyMiddlewares(sceneRenderHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/scenes/{id}/segment", renderer.ApplyMiddlewares(sceneSegmentHandler(), renderer.RoleAdmin))
+	mux.HandleFunc("/api/scene-dream", renderer.ApplyMiddlewares(sceneDreamHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/scene-dream/{job}", renderer.ApplyMiddlewares(sceneDreamStatusHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/scenes/{id}/layers/{lid}/{action}", renderer.ApplyMiddlewares(sceneLayerActionHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/scenes/{id}/layers/{lid}/versions", renderer.ApplyMiddlewares(sceneKeepOnlyHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/scenes/{id}/layers/{lid}/versions/{n}", renderer.ApplyMiddlewares(sceneVersionHandler(deps), renderer.RoleAdmin))
@@ -196,6 +198,39 @@ func sceneKeepOnlyHandler(deps *Dependencies) http.HandlerFunc {
 		}
 		s, err := tasks.KeepOnlyVersion(r.PathValue("id"), r.PathValue("lid"), n)
 		sceneReply(w, s, err)
+	}
+}
+
+// sceneDreamHandler queues a new picture (POST tasks.DreamRequest) to start a
+// scene from; sceneDreamStatusHandler reports it (GET).
+func sceneDreamHandler(deps *Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Use POST", http.StatusMethodNotAllowed)
+			return
+		}
+		var req tasks.DreamRequest
+		if err := readJSONBody(r, &req); err != nil {
+			sceneError(w, err)
+			return
+		}
+		st, err := tasks.QueueSceneDream(deps.Queue, req)
+		if err != nil {
+			sceneError(w, err)
+			return
+		}
+		writeJSON(w, st)
+	}
+}
+
+func sceneDreamStatusHandler(deps *Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		st, err := tasks.SceneDreamStatus(deps.Queue, r.PathValue("job"))
+		if err != nil {
+			sceneError(w, err)
+			return
+		}
+		writeJSON(w, st)
 	}
 }
 
