@@ -166,6 +166,7 @@ func switchDatabase(newDBPath string) error {
 
 	// Swap dependencies (this updates the global deps pointer that all handlers reference)
 	oldDB := deps.DB
+	oldQueue := deps.Queue
 	deps.DB = newDB
 	deps.Queue = newQueue
 
@@ -188,7 +189,11 @@ func switchDatabase(newDBPath string) error {
 		log.Printf("Failed to create default user on new database: %v", err)
 	}
 
-	// Close the old DB last
+	// Persist the old queue's pending log/output appends, then close the
+	// old DB last.
+	if oldQueue != nil {
+		oldQueue.Close()
+	}
 	if oldDB != nil {
 		log.Println("Closing old database connection...")
 		_ = oldDB.Close()

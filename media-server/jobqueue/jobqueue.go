@@ -200,6 +200,13 @@ type Queue struct {
 	// its normalized item keys; pathJobs is the reverse. Lazily initialized.
 	jobItems map[string][]string
 	pathJobs map[string]map[string]struct{}
+
+	// Deferred persistence of appended stdout/outputs (see persist.go).
+	dirty     map[string]struct{}
+	lastSaved map[string]time.Time
+	flushStop chan struct{}
+	flushDone chan struct{}
+	closeOnce sync.Once
 }
 
 // NewQueue initializes and returns a new Queue.
@@ -237,6 +244,7 @@ func NewQueueWithDB(db *sql.DB) *Queue {
 	if err := q.loadJobsFromDB(); err != nil {
 		log.Printf("Failed to load jobs from database: %v", err)
 	}
+	q.startFlusher()
 
 	return q
 }
@@ -334,6 +342,9 @@ func (q *Queue) saveJobToDB(job *Job) error {
 		string(resourcesJSON),
 		job.InterruptCount,
 	)
+	if err == nil {
+		q.noteSavedLocked(job.ID)
+	}
 
 	return err
 }
@@ -1012,10 +1023,8 @@ func (q *Queue) PushJobStdout(id string, stdout string) error {
 
 	job.Stdout = append(job.Stdout, stdout)
 
-	// Save to database
-	if err := q.saveJobToDB(job); err != nil {
-		log.Printf("Failed to save job stdout to database: %v", err)
-	}
+	// Persisted by the flusher, not per line (see persist.go).
+	q.markDirtyLocked(id)
 
 	err := serializeStdout(stdout, id)
 	if err != nil {
@@ -1048,9 +1057,8 @@ func (q *Queue) RegisterOutputFile(id string, path string, source ...string) err
 	}
 	job.SourceFiles = append(job.SourceFiles, src)
 
-	if err := q.saveJobToDB(job); err != nil {
-		log.Printf("Failed to save job output files to database: %v", err)
-	}
+	// Persisted by the flusher, not per output (see persist.go).
+	q.markDirtyLocked(id)
 
 	return nil
 }
@@ -1079,9 +1087,7 @@ func (q *Queue) RegisterOutputFiles(id string, paths []string) error {
 	job.OutputFiles = append(job.OutputFiles, paths...)
 	job.SourceFiles = append(job.SourceFiles, make([]string, len(paths))...)
 
-	if err := q.saveJobToDB(job); err != nil {
-		log.Printf("Failed to save job output files to database: %v", err)
-	}
+	q.markDirtyLocked(id)
 
 	return nil
 }
@@ -1279,6 +1285,8 @@ func (q *Queue) RemoveJob(id string) error {
 	delete(q.pauseRequests, id)
 	q.dropJobItemsLocked(id)
 	delete(q.Jobs, id)
+	delete(q.dirty, id)
+	delete(q.lastSaved, id)
 	for i, jobId := range q.JobOrder {
 		if jobId == id {
 			q.JobOrder = append(q.JobOrder[:i], q.JobOrder[i+1:]...)
@@ -1323,6 +1331,8 @@ func (q *Queue) ClearFinishedJobs() (int, error) {
 	for _, jobID := range jobsToRemove {
 		q.dropJobItemsLocked(jobID)
 		delete(q.Jobs, jobID)
+		delete(q.dirty, jobID)
+		delete(q.lastSaved, jobID)
 
 		// Remove from job order
 		for i, id := range q.JobOrder {
