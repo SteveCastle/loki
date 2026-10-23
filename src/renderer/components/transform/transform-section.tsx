@@ -73,7 +73,7 @@ export default function TransformSection(props: TransformSectionProps) {
     setBusy(key);
     try {
       await submitJobs(built.jobs, { mediaServerBase, authToken });
-      saveLastRun(id, settings);
+      saveLastRun(id, settings, paths);
       rememberTemplateRun(id, settings);
       onDone();
     } catch (e) {

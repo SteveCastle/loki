@@ -339,8 +339,8 @@ export function runSummary(id: IntentId, s: TransformSettings): string {
   parts.push(intentById(id).engine === 'reshoot' && s.reshootModel === 'fast' ? 'fast model' : s.quality);
   if (s.variations > 1) parts.push(`${s.variations} variations`);
   if (s.seedMode === 'fixed') parts.push(`seed ${s.seed}`);
-  const pins = pinnable(id) ? (s.pinned || []).length : 0;
-  if (pins) parts.push(`${pins} pinned`);
+  const refs = pinnable(id) ? (s.pinned || []).length : 0;
+  if (refs) parts.push(`${refs} ${refs === 1 ? 'reference' : 'references'}`);
   return parts.join(' · ');
 }
 
@@ -413,6 +413,19 @@ export function runGroups(id: IntentId, paths: string[], pinned: string[] | unde
   if (id === 'edit') return classify(rest).images.map((t) => [t, ...pins]);
   const targets = rest.filter((p) => mediaKind(p) !== 'other');
   return targets.length ? targets.map((t) => [t, ...pins]) : [pins];
+}
+
+/**
+ * Every reference a run used besides the item it was for: the pins, or (unpinned) the inputs that rode along with
+ * the first one — Edit's other images (one combined run, <image2>…), Direct's other media. As pins, in this order,
+ * they keep their tokens on any new selection, so a remembered run brings all of them back.
+ */
+export function runReferences(id: IntentId, paths: string[], pinned: string[] | undefined): string[] {
+  if (!pinnable(id)) return [];
+  const pins = activePins(id, pinned);
+  if (pins.length) return pins;
+  if (id === 'edit') return classify(paths).images.slice(1);
+  return paths.filter((p) => mediaKind(p) !== 'other').slice(1);
 }
 
 /** Whether the intent's prompt field IS the whole prompt the engine runs (nothing is expanded around it). */

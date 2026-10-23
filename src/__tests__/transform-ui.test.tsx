@@ -27,6 +27,7 @@ import {
   NO_TARGET,
   referenceTokens,
   remapTokens,
+  runReferences,
   runSummary,
   settingsFor,
   type IntentId,
@@ -676,6 +677,32 @@ describe('Transform: the last run', () => {
     expect(onLoadRun).toHaveBeenCalledWith(expect.objectContaining({ intent: 'edit', settings: expect.objectContaining({ prompt: 'make it night' }) }));
   });
 
+  it('remembers every reference the run used, and re-runs with all of them', async () => {
+    const R1 = 'C:/refs/style.png';
+    const R2 = 'C:/refs/face.jpg';
+    // One combined Edit: IMG is <image1>, the two references ride along as <image2>/<image3>.
+    saveLastRun('edit', { ...editRun(), prompt: '<image1> in the style of <image2> with <image3>' }, [IMG, R1, R2]);
+    expect(loadLastRun()?.settings.pinned).toEqual([R1, R2]);
+    expect(runSummary('edit', loadLastRun()!.settings)).toContain('2 references');
+
+    render(<TransformSection paths={[IMG2]} authToken="tok" getVideoTime={() => undefined} onDone={() => {}} notify={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: /^Edit again$/ }));
+    const created = () => fetchMock.mock.calls.filter((c) => /\/create$/.test(String(c[0])));
+    await waitFor(() => expect(created()).toHaveLength(2));
+    const body = JSON.parse(created()[0][1].body);
+    expect((body.input.match(/"([^"]*)"/) as RegExpMatchArray)[1].split(String.fromCharCode(10))).toEqual([IMG2, R1, R2]);
+    expect(body.fields).toMatchObject({ combine: '1', prompt: '<image1> in the style of <image2> with <image3>' });
+  });
+
+  it('runReferences: pins, else the inputs riding along with the first', () => {
+    const R1 = 'C:/refs/style.png';
+    expect(runReferences('edit', [IMG, IMG2], [])).toEqual([IMG2]);
+    expect(runReferences('edit', [IMG, IMG2], [R1])).toEqual([R1]); // with pins, the others are targets of their own
+    expect(runReferences('direct', [VID, IMG], undefined)).toEqual([IMG]);
+    expect(runReferences('edit', [IMG], undefined)).toEqual([]);
+    expect(runReferences('restore', [IMG, IMG2], [R1])).toEqual([]);
+  });
+
   it('done: offers to save the prompt that just ran', () => {
     render(
       <TransformFlowView
@@ -856,7 +883,7 @@ describe('Transform: pinned references', () => {
     expect(onPin).toHaveBeenCalledWith(IMG, true);
   });
 
-  it('runSummary mentions the pins', () => {
-    expect(runSummary('edit', editWith([R1, R2], 'x'))).toMatch(/2 pinned$/);
+  it('runSummary counts the pinned references', () => {
+    expect(runSummary('edit', editWith([R1, R2], 'x'))).toMatch(/2 references$/);
   });
 });

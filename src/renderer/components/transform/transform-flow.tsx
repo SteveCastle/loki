@@ -264,7 +264,7 @@ function FlowSession({ req }: { req: NonNullable<ReturnType<typeof useFlowReques
     try {
       await submitJobs(built.jobs, { mediaServerBase, authToken });
       saveRemembered(intent, settings);
-      saveLastRun(intent, settings);
+      saveLastRun(intent, settings, paths);
       rememberTemplateRun(intent, settings);
       setQueuedCount(built.jobs.length);
       setStatus('done');

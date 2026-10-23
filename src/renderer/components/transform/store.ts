@@ -2,7 +2,7 @@
 // contents when it hides) opens the full options through here, and a root-level host
 // renders it. Also persists the last-used settings per intent.
 import { useSyncExternalStore } from 'react';
-import { INTENTS, intentKind, pinnable, runSummary, settingsFor, type IntentId, type TransformSettings, type JobRequest } from './intents';
+import { INTENTS, intentKind, pinnable, runReferences, runSummary, settingsFor, type IntentId, type TransformSettings, type JobRequest } from './intents';
 import { EngineSetupDeferred, ensureEngines } from './engine-setup';
 
 export type FlowPhase = 'choose' | 'shape' | 'review';
@@ -300,8 +300,10 @@ export function loadLastRun(): LastRun | null {
   return lastRun;
 }
 
-export function saveLastRun(intent: IntentId, settings: TransformSettings): void {
-  lastRun = { intent, settings: { ...settings }, at: Date.now() };
+/** `paths` = what it ran on: every reference it used is kept (as pins), so re-running it brings them all back. */
+export function saveLastRun(intent: IntentId, settings: TransformSettings, paths: string[] = []): void {
+  const kept = pinnable(intent) ? { pinned: runReferences(intent, paths, settings.pinned) } : {};
+  lastRun = { intent, settings: { ...settings, ...kept }, at: Date.now() };
   try {
     window.localStorage.setItem(LAST_RUN_KEY, JSON.stringify(lastRun));
   } catch {
