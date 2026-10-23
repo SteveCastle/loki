@@ -283,3 +283,38 @@ func TestSceneCollapseStillsKeepsOrder(t *testing.T) {
 		t.Fatalf("right: r=%d g=%d, want the motion (green) over the still below", r>>8, g>>8)
 	}
 }
+
+// A clean plate under a roto is not what the motion layer was made from, and
+// the matte's first frame comes back as a mask piece in clip pixels.
+func TestSceneCleanPlate(t *testing.T) {
+	plate := &SceneLayer{ID: "c", Kind: SceneKindStill, Options: map[string]any{"cleanFor": "m"}, Versions: []SceneVersion{{Path: "c.png"}}, Active: 0}
+	still := &SceneLayer{ID: "s", Kind: SceneKindStill, Versions: []SceneVersion{{Path: "s.png"}}, Active: 0}
+	if got := sceneBelow([]*SceneLayer{still, plate}); len(got) != 1 || got[0] != "s:s.png" {
+		t.Fatalf("sceneBelow = %v, want the clean plate left out", got)
+	}
+
+	withSceneRoot(t)
+	id := "0123abcd-0000-0000-0000-00000000c1ea"
+	writeTestScene(t, &Scene{ID: id, Width: 64, Height: 48})
+	dir, _ := sceneDir(id)
+	matte := filepath.Join(dir, "clip_matte")
+	os.MkdirAll(matte, 0o755)
+	img := image.NewGray(image.Rect(0, 0, 32, 24))
+	for y := 4; y < 12; y++ {
+		for x := 10; x < 20; x++ {
+			img.Set(x, y, color.Gray{255})
+		}
+	}
+	f, _ := os.Create(filepath.Join(matte, "00000.png"))
+	png.Encode(f, img)
+	f.Close()
+	writeTestScene(t, &Scene{ID: id, Width: 64, Height: 48, Layers: []*SceneLayer{{ID: "m", Kind: SceneKindMotion, Active: 0,
+		Versions: []SceneVersion{{Path: filepath.Join(dir, "clip.mp4"), Track: &SceneTrack{State: "completed", Dir: matte, Frames: 1}}}}}})
+	url, rect, w, h, err := VersionMatteFrame(id, "m", 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w != 32 || h != 24 || rect.X != 8 || rect.Y != 2 || rect.W != 14 || !strings.HasPrefix(url, "data:image/png") {
+		t.Fatalf("matte frame: %dx%d rect %+v", w, h, rect)
+	}
+}

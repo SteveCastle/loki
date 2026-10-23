@@ -263,6 +263,17 @@ func sceneVersionActionHandler(deps *Dependencies) http.HandlerFunc {
 			}
 			s, err := tasks.TrackVersion(deps.Queue, id, lid, n, req.Prompts)
 			sceneReply(w, s, err)
+		case "matte":
+			var req struct {
+				Frame int `json:"frame"`
+			}
+			_ = readJSONBody(r, &req)
+			url, rect, cw, ch, err := tasks.VersionMatteFrame(id, lid, n, req.Frame)
+			if err != nil {
+				sceneError(w, err)
+				return
+			}
+			writeJSON(w, map[string]any{"mask": url, "rect": rect, "width": cw, "height": ch})
 		case "untrack":
 			s, err := tasks.ClearTrack(deps.Queue, id, lid, n)
 			sceneReply(w, s, err)

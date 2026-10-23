@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { invoke, isElectron, mediaUrl, send } from '../../platform';
-import { clampRect, imageOp, motionRegion, maskImagesReady, opsDeep, preloadMaskImages, rasterizeLayerMask, rasterizeProtect, regionAround, type MaskLookup, type MaskOp, type MaskOpts, type Rect } from './mask';
+import { clampRect, imageOp, motionRegion, pickedOp, maskImagesReady, opsDeep, preloadMaskImages, rasterizeLayerMask, rasterizeProtect, regionAround, type MaskLookup, type MaskOp, type MaskOpts, type Rect } from './mask';
 import {
   generationsInFlight,
   layerRate,
@@ -859,6 +859,60 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
     if (!roto || !rotoPrompts.length) return;
     serverAction(() => sceneApi.track(doc.id, roto.layerId, roto.n, rotoPrompts), 'Could not start tracking');
   }, [roto, rotoPrompts, doc.id, serverAction]);
+  /**
+   * Clean plate: an Edit layer just below a rotoscoped motion layer that removes its subject from the picture under
+   * it (masked to where the subject is in the still: the matte's first frame, grown a little), so the subject can
+   * move away without its still copy showing through.
+   */
+  const cleanPlate = useCallback(
+    async (layerId: string, n: number) => {
+      const s = docRef.current;
+      const motion = s.layers.find((l) => l.id === layerId);
+      const v = motion?.versions[n];
+      if (!motion || !v) return;
+      setBusy(true);
+      try {
+        const m = await sceneApi.matteFrame(s.id, layerId, n, 0);
+        const r = v.region;
+        const sx = r.w / m.width;
+        const sy = r.h / m.height;
+        const at = (q: Rect): Rect => ({ x: r.x + q.x * sx, y: r.y + q.y * sy, w: q.w * sx, h: q.h * sy });
+        const what = (v.track?.prompts || []).find((p) => p.text)?.text || 'the person or thing in the middle';
+        const layer: SceneLayer = {
+          id: newId(),
+          name: `Clean plate · ${motion.name}`,
+          kind: 'still',
+          region: { x: 0, y: 0, w: 0, h: 0 },
+          mask: '',
+          shapes: [],
+          maskOpts: { expand: Math.round(Math.min(s.width, s.height) * 0.025) },
+          feather: defaultFeather(s),
+          prompt: `Remove ${what} from <image1> and fill where it was with what lies behind it, matching the surrounding background, light, texture and style exactly. Keep everything else as it is.`,
+          options: { ...layerDefaults('still'), context: 'normal', cleanFor: layerId },
+          versions: [],
+          active: -1,
+        };
+        mutate((d) => {
+          const at2 = d.layers.findIndex((l) => l.id === layerId);
+          const layers = [...d.layers];
+          layers.splice(Math.max(0, at2), 0, layer);
+          return { ...d, layers };
+        });
+        // Through patchLayer: it waits for the matte piece to decode before rasterizing the mask.
+        patchLayer(layer.id, { shapes: [pickedOp(m.mask, at(m.rect), at(m.rect), 'subject')] }, true);
+        setSelectedId(layer.id);
+        setRoto(null);
+        setTool('select');
+        flash('info', `Added a clean plate under ${motion.name}: check the prompt, then generate.`);
+      } catch (e) {
+        flash('error', `Could not make the clean plate: ${e instanceof Error ? e.message : e}`);
+      } finally {
+        setBusy(false);
+      }
+    },
+    [mutate, patchLayer, flash]
+  );
+
   const leaveRoto = useCallback(() => {
     setRoto(null);
     picker.clear();
@@ -1337,6 +1391,7 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
               onRoto={(n) => enterRoto(selected.id, n)}
               rotoActive={!!roto && roto.layerId === selected.id}
               onUntrack={(n) => serverAction(() => sceneApi.untrack(doc.id, selected.id, n), 'Could not remove the roto')}
+              onCleanPlate={(n) => cleanPlate(selected.id, n)}
             />
           ) : (
             <section className="sc-section sc-help">

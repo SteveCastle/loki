@@ -250,6 +250,8 @@ export interface InspectorProps {
   rotoActive: boolean;
   /** Motion: drop version n's roto. */
   onUntrack: (n: number) => void;
+  /** Motion: an Edit layer below that removes version n's rotoscoped subject from the picture under it. */
+  onCleanPlate: (n: number) => void;
 }
 
 const LENGTHS = [5, 8, 10, 15];
@@ -868,6 +870,17 @@ export function Inspector(props: InspectorProps) {
                               title="Composite this layer through its roto matte (preview and export)"
                             >
                               {o.matte === false ? 'Matte off' : 'Matte on'}
+                            </button>
+                          )}
+                          {t?.state === 'completed' && (
+                            <button
+                              type="button"
+                              className="sc-btn"
+                              disabled={busy}
+                              onClick={() => props.onCleanPlate(l.active)}
+                              title="Add an Edit layer below that removes this subject from the picture under it, so it can move away without its still copy showing through"
+                            >
+                              Clean plate
                             </button>
                           )}
                           {t && (

@@ -365,3 +365,36 @@ func scanLinesOrCR(data []byte, atEOF bool) (int, []byte, error) {
 	}
 	return 0, nil, nil
 }
+
+// VersionMatteFrame returns frame f of version n's roto matte as a mask piece
+// (white, alpha = kept) covering rect, in clip pixels, and the clip's size.
+func VersionMatteFrame(id, lid string, n, f int) (string, SceneRect, int, int, error) {
+	sceneMu.Lock()
+	s, err := loadSceneLocked(id)
+	sceneMu.Unlock()
+	if err != nil {
+		return "", SceneRect{}, 0, 0, err
+	}
+	for _, l := range s.Layers {
+		if l.ID != lid || n < 0 || n >= len(l.Versions) {
+			continue
+		}
+		t := l.Versions[n].Track
+		if t == nil || t.State != "completed" || t.Dir == "" {
+			return "", SceneRect{}, 0, 0, fmt.Errorf("v%d has no roto yet", n+1)
+		}
+		path := filepath.Join(t.Dir, fmt.Sprintf("%05d.png", max(0, f)))
+		fh, err := os.Open(path)
+		if err != nil {
+			return "", SceneRect{}, 0, 0, err
+		}
+		cfg, err := png.DecodeConfig(fh)
+		fh.Close()
+		if err != nil {
+			return "", SceneRect{}, 0, 0, err
+		}
+		url, rect, err := maskFileDataURL(path)
+		return url, rect, cfg.Width, cfg.Height, err
+	}
+	return "", SceneRect{}, 0, 0, ErrLayerNotFound
+}

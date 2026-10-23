@@ -140,6 +140,8 @@ export interface LayerOptions {
   speed?: number;
   /** motion: seconds of scene time its loop is shifted by, so layers don't pulse together (default 0) */
   offset?: number;
+  /** still: a clean plate, the picture under that motion layer's roto with its subject removed (not "below" it) */
+  cleanFor?: string;
   /** motion: composite through the shown version's roto matte (default on when it has one) */
   matte?: boolean;
   /** motion: soundtrack gain (0-2, default 1; 0 mutes it) */
@@ -343,6 +345,9 @@ export const sceneApi = {
   segment: (id: string, req: SegmentRequest) => call<SegmentResult>('POST', `/api/scenes/${enc(id)}/segment`, req, 120000),
   track: (id: string, layer: string, n: number, prompts: SegPrompt[]) =>
     call<Scene>('POST', `/api/scenes/${enc(id)}/layers/${enc(layer)}/versions/${n}/track`, { prompts }),
+  /** Frame f of version n's roto matte as a mask piece over rect (clip pixels), and the clip's size. */
+  matteFrame: (id: string, layer: string, n: number, frame: number) =>
+    call<{ mask: string; rect: Rect; width: number; height: number }>('POST', `/api/scenes/${enc(id)}/layers/${enc(layer)}/versions/${n}/matte`, { frame }),
   untrack: (id: string, layer: string, n: number) => call<Scene>('POST', `/api/scenes/${enc(id)}/layers/${enc(layer)}/versions/${n}/untrack`, {}),
 };
 
@@ -353,6 +358,8 @@ export const sceneApi = {
 export function stackBelow(s: Scene, i: number): string[] {
   const out: string[] = [];
   s.layers.slice(0, Math.max(0, i)).forEach((l) => {
+    // A clean plate only shows round the matte of the layer above: not what it was made from.
+    if (l.options?.cleanFor) return;
     const v = l.versions[l.active];
     if (!l.hidden && v && l.kind === 'still') out.push(`${l.id}:${v.path}`);
     if (paintInPicture(l)) out.push(`${l.id}:paint`);

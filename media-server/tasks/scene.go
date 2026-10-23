@@ -1176,6 +1176,12 @@ func writeClearPNG(path string, w, h int) error {
 func sceneBelow(layers []*SceneLayer) []string {
 	out := []string{}
 	for _, l := range layers {
+		// A clean plate (the picture below a roto, its subject removed) doesn't
+		// change what the motion layer above was made from: it shows only
+		// around the matte.
+		if optString(l.Options, "cleanFor") != "" {
+			continue
+		}
 		if v := l.active(); !l.Hidden && v != nil && l.Kind == SceneKindStill {
 			out = append(out, l.ID+":"+v.Path)
 		}
