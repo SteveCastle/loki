@@ -19,7 +19,9 @@
 // before its feather) is added or, with `erase`, cut. That is how layers
 // that overlap are kept apart cleanly (the sky minus the people in front).
 // Any op can be switched `off` without losing it. On a paint layer ops carry
-// a colour `c` (CSS hex) and opacity `a` (0-1), and erase cuts the paint.
+// a colour `c` (CSS hex) and opacity `a` (0-1), and erase cuts the paint. An
+// image op with `fit` is the "Fit mask to result" piece: where version `fit`
+// (its path) changed the picture, kept in step with the shown version.
 export type MaskOp = (
   | { t: 'rect'; x: number; y: number; w: number; h: number }
   | { t: 'lasso'; pts: number[] }
@@ -27,7 +29,7 @@ export type MaskOp = (
   | { t: 'stroke'; pts: number[]; r: number; h?: number }
   | { t: 'image'; src: string; x: number; y: number; w: number; h: number; bx: number; by: number; bw: number; bh: number }
   | { t: 'layer'; id: string }
-) & { erase?: boolean; keep?: boolean; off?: boolean; c?: string; a?: number };
+) & { erase?: boolean; keep?: boolean; off?: boolean; c?: string; a?: number; fit?: string };
 
 /** Whole-mask settings, applied after the ops in this order: expand (px; < 0 chokes), invert, feather, opacity. */
 export interface MaskOpts {
@@ -413,14 +415,44 @@ export function rasterizeLayerMask(
   const bounds = { x: box.x / scale, y: box.y / scale, w: box.w / scale, h: box.h / scale };
   const opacity = opts?.opacity === undefined ? 1 : Math.min(1, Math.max(0, opts.opacity));
   if (feather <= 0 && opacity >= 1) return { mask: hard.toDataURL('image/png'), bounds };
+  const soft = feathered(hard, feather * scale, opacity);
+  return { mask: (soft || hard).toDataURL('image/png'), bounds };
+}
+
+/**
+ * hard blurred by a feather of px raster pixels (and scaled by opacity). A gaussian's visible falloff is ~2σ, so
+ * σ = px/2 fades over about the feather width. The frame's edge pixels are carried outward first: the picture goes
+ * on past the frame, so a mask reaching the edge stays solid there instead of fading out (blurring against the
+ * transparent outside left a half-strength border round every full-frame layer).
+ */
+function feathered(hard: HTMLCanvasElement, px: number, opacity: number): HTMLCanvasElement | null {
+  const { width: w, height: h } = hard;
   const soft = canvas(w, h);
   const sctx = soft.getContext('2d');
-  if (!sctx) return { mask: hard.toDataURL('image/png'), bounds };
-  // A gaussian's visible falloff is ~2σ: σ = feather/2 fades over about the feather width.
-  if (feather > 0) sctx.filter = `blur(${Math.max(0.5, (feather * scale) / 2)}px)`;
+  if (!sctx) return null;
   sctx.globalAlpha = opacity;
-  sctx.drawImage(hard, 0, 0);
-  return { mask: soft.toDataURL('image/png'), bounds };
+  if (px <= 0) {
+    sctx.drawImage(hard, 0, 0);
+    return soft;
+  }
+  const sigma = Math.max(0.5, px / 2);
+  const pad = Math.ceil(sigma * 3);
+  const big = canvas(w + 2 * pad, h + 2 * pad);
+  const bctx = big.getContext('2d');
+  if (!bctx) return null;
+  bctx.drawImage(hard, pad, pad);
+  // Edges stretched outward, then the corners.
+  bctx.drawImage(hard, 0, 0, 1, h, 0, pad, pad, h);
+  bctx.drawImage(hard, w - 1, 0, 1, h, w + pad, pad, pad, h);
+  bctx.drawImage(hard, 0, 0, w, 1, pad, 0, w, pad);
+  bctx.drawImage(hard, 0, h - 1, w, 1, pad, h + pad, w, pad);
+  bctx.drawImage(hard, 0, 0, 1, 1, 0, 0, pad, pad);
+  bctx.drawImage(hard, w - 1, 0, 1, 1, w + pad, 0, pad, pad);
+  bctx.drawImage(hard, 0, h - 1, 1, 1, 0, h + pad, pad, pad);
+  bctx.drawImage(hard, w - 1, h - 1, 1, 1, w + pad, h + pad, pad, pad);
+  sctx.filter = `blur(${sigma}px)`;
+  sctx.drawImage(big, -pad, -pad);
+  return soft;
 }
 
 /** The mask of plain ops (no layer references or whole-mask settings): '' when nothing is painted, null while an image piece decodes. */
@@ -439,15 +471,7 @@ export function rasterizeProtect(ops: MaskOp[], frameW: number, frameH: number, 
   const hctx = hard.getContext('2d');
   if (!hctx) return '';
   drawOps(hctx, ops, scale, true);
-  if (feather <= 0) return hard.toDataURL('image/png');
-  const soft = document.createElement('canvas');
-  soft.width = w;
-  soft.height = h;
-  const sctx = soft.getContext('2d');
-  if (!sctx) return hard.toDataURL('image/png');
-  sctx.filter = `blur(${Math.max(0.5, (feather * scale) / 2)}px)`;
-  sctx.drawImage(hard, 0, 0);
-  return soft.toDataURL('image/png');
+  return (feathered(hard, feather * scale, 1) || hard).toDataURL('image/png');
 }
 
 /** Bounding box of the pixels whose alpha is at least `threshold` in an RGBA buffer, or null. */
@@ -585,7 +609,7 @@ export function opLabel(op: MaskOp, layerName?: (id: string) => string | null): 
     case 'stroke':
       return op.h !== undefined && op.h < 1 ? 'Soft brush' : 'Brush';
     case 'image':
-      return 'Painted piece';
+      return op.fit ? 'Fitted to the result' : 'Painted piece';
     case 'layer': {
       const name = layerName?.(op.id);
       return name === null || name === undefined ? 'Layer (deleted)' : `Layer · ${name}`;
@@ -593,4 +617,30 @@ export function opLabel(op: MaskOp, layerName?: (id: string) => string | null): 
     default:
       return 'Shape';
   }
+}
+
+// The frame shapes loki-reshoot's model is trained on (it pads anything else with black bars it then keeps).
+const MOTION_ASPECTS = [1, 4 / 3, 3 / 4, 16 / 9, 9 / 16];
+
+/**
+ * A motion layer's region grown (never shrunk) to the nearest trained shape that fits the frame, centred where it
+ * can be and slid inside the frame where it can't. Mirrors sceneMotionRegion in media-server/tasks/scene.go.
+ */
+export function motionRegion(r: Rect, frameW: number, frameH: number): Rect {
+  const a0 = Math.max(1, r.w) / Math.max(1, r.h);
+  const order = [...MOTION_ASPECTS].sort((p, q) => Math.abs(Math.log(a0 / p)) - Math.abs(Math.log(a0 / q)));
+  for (const a of order) {
+    let w = r.w;
+    let h = r.h;
+    if (w / h < a) w = h * a;
+    else h = w / a;
+    const W = Math.round(w);
+    const H = Math.round(h);
+    if (W <= frameW && H <= frameH) {
+      const x = Math.min(Math.max(0, r.x - Math.trunc((W - r.w) / 2)), frameW - W);
+      const y = Math.min(Math.max(0, r.y - Math.trunc((H - r.h) / 2)), frameH - H);
+      return { x, y, w: W, h: H };
+    }
+  }
+  return r;
 }

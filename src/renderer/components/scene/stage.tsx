@@ -12,6 +12,17 @@ import { jobPhase, layerRate, layerTiming, type Scene, type SceneLayer } from '.
 
 export type Tool = 'select' | 'box' | 'brush' | 'lasso' | 'pen' | 'erase' | 'protect' | 'shape' | 'hand';
 
+/**
+ * Whether a key event goes to a field the user types in: text inputs, text areas, selects, editable content. Sliders,
+ * colour pickers, checkboxes and buttons are not, so the tool shortcuts keep working after using them.
+ */
+export function isTyping(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  const el = target.closest('input, textarea, select, [contenteditable]');
+  if (!el) return false;
+  return !(el instanceof HTMLInputElement) || !['range', 'color', 'checkbox', 'radio', 'button', 'submit', 'reset', 'file'].includes(el.type);
+}
+
 /** How the selected layer's mask is shown: tinted over the picture, as a black-and-white matte, or not at all. */
 export type MaskView = 'tint' | 'matte' | 'off';
 
@@ -220,7 +231,7 @@ export default function Stage(props: StageProps) {
 
   // Space held = pan.
   useEffect(() => {
-    const typing = (e: KeyboardEvent) => e.target instanceof HTMLElement && !!e.target.closest('input, textarea, select, [contenteditable]');
+    const typing = (e: KeyboardEvent) => isTyping(e.target);
     const down = (e: KeyboardEvent) => {
       if (e.code === 'Space' && !typing(e)) {
         e.preventDefault();
@@ -352,7 +363,7 @@ export default function Stage(props: StageProps) {
   useEffect(() => {
     if (tool !== 'pen') return undefined;
     const onKey = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLElement && e.target.closest('input, textarea, select, [contenteditable]')) return;
+      if (isTyping(e.target)) return;
       const d = draft.current;
       if (!d || d.t !== 'pen') return;
       if (e.key === 'Enter') {

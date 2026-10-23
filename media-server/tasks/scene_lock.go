@@ -121,7 +121,10 @@ func sceneLockTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 		}
 		return fail(err.Error(), err)
 	}
-	q.PushJobStdout(j.ID, fmt.Sprintf("%s: %d frames at %dx%d, %.0f%% of the area locked to the still -> %s", tag, stats.Frames, stats.W, stats.H, stats.Locked*100, out))
+	if stats.Misaligned {
+		q.PushJobStdout(j.ID, fmt.Sprintf("%s: the video's first frame doesn't line up with the still (match %.2f): the engine reframed it, so it was left unlocked", tag, stats.Match))
+	}
+	q.PushJobStdout(j.ID, fmt.Sprintf("%s: %d frames at %dx%d, %.0f%% of the area locked to the still (match %.2f) -> %s", tag, stats.Frames, stats.W, stats.H, stats.Locked*100, stats.Match, out))
 	q.RegisterOutputFile(j.ID, out, video)
 	_ = q.SetJobProgress(j.ID, 2, 2)
 	q.CompleteJob(j.ID)
@@ -145,6 +148,77 @@ type lockStats struct {
 	Frames int
 	W, H   int
 	Locked float64 // share of pixels fully frozen to the still
+	// Match is the share of the still's textured tiles the video's first
+	// frame lines up with (1 = the same picture); below lockMinMatch the
+	// engine reframed it and nothing was frozen or detailed (Misaligned).
+	Match      float64
+	Misaligned bool
+}
+
+// lockMinMatch: when fewer than this share of the still's textured tiles line
+// up with the video's first frame, it is not the still (it was reframed or
+// rescaled). Freezing or detailing it would blend two pictures that don't
+// line up: a ghost of the still's subject over the whole region (a 5:6 crop
+// the engine pillarboxed matched 9% of tiles, a well-framed clip 100%).
+// Per tile, so content that legitimately differs in part of frame 0 (motion
+// already under way) doesn't count as reframing.
+const lockMinMatch = 0.34
+
+// frameMatch is the share of 8×8 tiles, among those where the still has
+// texture, in which the luma of the two RGB frames (w×h, float 0-255,
+// lightly blurred) correlates at 0.6 or more: tone and brightness shifts
+// don't lower it, a reframed or rescaled picture does. 1 when the still has
+// no texture to compare.
+func frameMatch(frame, still []float32, w, h int) float64 {
+	la, lb := make([]float32, w*h), make([]float32, w*h)
+	for i := range la {
+		la[i] = 0.299*frame[i*3] + 0.587*frame[i*3+1] + 0.114*frame[i*3+2]
+		lb[i] = 0.299*still[i*3] + 0.587*still[i*3+1] + 0.114*still[i*3+2]
+	}
+	r := max(1, min(w, h)/96)
+	boxBlur(la, w, h, 1, 0, r)
+	boxBlur(lb, w, h, 1, 0, r)
+	const grid = 8
+	textured, matched := 0, 0
+	for ty := 0; ty < grid; ty++ {
+		for tx := 0; tx < grid; tx++ {
+			x0, x1 := tx*w/grid, (tx+1)*w/grid
+			y0, y1 := ty*h/grid, (ty+1)*h/grid
+			var ma, mb, n float64
+			for y := y0; y < y1; y++ {
+				for x := x0; x < x1; x++ {
+					ma += float64(la[y*w+x])
+					mb += float64(lb[y*w+x])
+					n++
+				}
+			}
+			if n == 0 {
+				continue
+			}
+			ma, mb = ma/n, mb/n
+			var sab, saa, sbb float64
+			for y := y0; y < y1; y++ {
+				for x := x0; x < x1; x++ {
+					da, db := float64(la[y*w+x])-ma, float64(lb[y*w+x])-mb
+					sab += da * db
+					saa += da * da
+					sbb += db * db
+				}
+			}
+			// Flat in the still (sky, a wall): nothing to line up.
+			if sbb/n < 4 {
+				continue
+			}
+			textured++
+			if saa > 0 && sab/math.Sqrt(saa*sbb) >= 0.6 {
+				matched++
+			}
+		}
+	}
+	if textured == 0 {
+		return 1
+	}
+	return float64(matched) / float64(textured)
 }
 
 type videoInfo struct {
@@ -436,6 +510,13 @@ func finishMotion(ctx context.Context, video, still, out string, o finishOptions
 	}
 	onPass(1)
 
+	// An engine that reframed the picture can't be finished against it.
+	match := frameMatch(f0, S, w, h)
+	misaligned := match < lockMinMatch
+	if misaligned {
+		o.Freeze, o.Detail = false, false
+	}
+
 	short := min(w, h)
 	// E: 1 = the still. Without freeze nothing is frozen.
 	E := make([]float32, w*h)
@@ -539,7 +620,7 @@ func finishMotion(ctx context.Context, video, still, out string, o finishOptions
 		return lockStats{}, fmt.Errorf("encoding: %v %v: %s", ferr, werr, strings.TrimSpace(encErr.String()))
 	}
 	onPass(2)
-	return lockStats{Frames: frames, W: w, H: h, Locked: float64(locked) / float64(w*h)}, nil
+	return lockStats{Frames: frames, W: w, H: h, Locked: float64(locked) / float64(w*h), Match: match, Misaligned: misaligned}, nil
 }
 
 // lockMotionEdges is finishMotion with only the freeze (the original pass).

@@ -54,15 +54,47 @@ func TestSceneRectClamp(t *testing.T) {
 }
 
 func TestSceneMotionSize(t *testing.T) {
-	for _, r := range []SceneRect{{W: 400, H: 300}, {W: 300, H: 900}, {W: 1920, H: 1080}, {W: 50, H: 50}} {
+	for _, r := range []SceneRect{{W: 400, H: 300}, {W: 300, H: 900}, {W: 1920, H: 1080}, {W: 50, H: 50}, {W: 421, H: 507}} {
 		w, h := sceneMotionSize(r, 0.5)
 		if w%32 != 0 || h%32 != 0 || w < 256 || h < 256 {
 			t.Fatalf("%+v -> %dx%d not on the 32 grid / too small", r, w, h)
 		}
-		want := float64(r.W) / float64(r.H)
 		got := float64(w) / float64(h)
-		if (r.W >= 256 || r.H >= 256) && (got/want > 1.15 || want/got > 1.15) {
-			t.Fatalf("%+v -> %dx%d aspect %.2f, want ~%.2f", r, w, h, got, want)
+		trained := false
+		for _, c := range sceneCanvases {
+			trained = trained || math.Abs(got-c.aspect) < 0.01
+		}
+		if !trained {
+			t.Fatalf("%+v -> %dx%d is not a shape the model is trained on", r, w, h)
+		}
+	}
+	if w, h := sceneMotionSize(SceneRect{W: 421, H: 507}, 0.9); w != 768 || h != 1024 {
+		t.Fatalf("a 5:6 region at High = %dx%d, want 3:4 768x1024", w, h)
+	}
+}
+
+// Motion regions grow to a trained shape around the mask, inside the frame.
+func TestSceneMotionRegion(t *testing.T) {
+	cases := []struct{ in SceneRect }{
+		{SceneRect{X: 509, Y: 261, W: 421, H: 507}}, // the girl: 5:6 -> 3:4, taller
+		{SceneRect{X: 0, Y: 0, W: 490, H: 472}},     // near-square at the corner
+		{SceneRect{X: 100, Y: 0, W: 300, H: 768}},   // full height: 3:4 would be too tall, so wider
+	}
+	for _, c := range cases {
+		r := sceneMotionRegion(c.in, 1344, 768)
+		if r.X < 0 || r.Y < 0 || r.X+r.W > 1344 || r.Y+r.H > 768 {
+			t.Fatalf("%+v -> %+v leaves the frame", c.in, r)
+		}
+		if r.X > c.in.X || r.Y > c.in.Y || r.X+r.W < c.in.X+c.in.W || r.Y+r.H < c.in.Y+c.in.H {
+			t.Fatalf("%+v -> %+v doesn't contain the region", c.in, r)
+		}
+		a := float64(r.W) / float64(r.H)
+		trained := false
+		for _, cv := range sceneCanvases {
+			trained = trained || math.Abs(a-cv.aspect) < 0.01
+		}
+		if !trained {
+			t.Fatalf("%+v -> %+v aspect %.3f is not trained", c.in, r, a)
 		}
 	}
 }
@@ -771,7 +803,7 @@ func TestScenePaintLayerWithFFmpeg(t *testing.T) {
 	if guide := flatten("guide.png"); red(guide, 60, 45) {
 		t.Fatalf("a guide paint layer is in the picture: %v", guide.At(60, 45))
 	}
-	refs, err := resolveLayerRefs(context.Background(), s, 1, dir, region, sceneRefs(edit.Options))
+	refs, err := resolveLayerRefs(context.Background(), s, 1, dir, region, sceneRefs(edit.Options), filepath.Join(dir, "still-e-1.png"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -785,5 +817,24 @@ func TestScenePaintLayerWithFFmpeg(t *testing.T) {
 	// Frame (60,45) is (40,25) in the crop; frame (25,25) = (5,5) is the picture below.
 	if !red(ref, 40, 25) || red(ref, 5, 5) {
 		t.Fatalf("reference: (40,25)=%v (5,5)=%v", ref.At(40, 25), ref.At(5, 5))
+	}
+}
+
+func TestSceneFinishPrompt(t *testing.T) {
+	refs := []sceneRef{{Path: "a.png", Kind: "image"}, {Kind: "image", Layer: "p1"}}
+	got := sceneFinishPrompt(map[string]any{"finish": FinishColour, "paint": "p1"}, "warm autumn tones.", refs)
+	if !strings.Contains(got, "painted on <image3> as a guide: warm autumn tones. The paint") {
+		t.Fatalf("colour: %s", got)
+	}
+	got = sceneFinishPrompt(map[string]any{"finish": FinishSketch}, "", nil)
+	if !strings.Contains(got, "stands in for the real thing: replace it with the real thing as") || strings.Contains(got, "{") {
+		t.Fatalf("sketch, no words: %s", got)
+	}
+	got = sceneFinishPrompt(map[string]any{"finish": FinishSketch, "grounding": "Paint {what} in <image1>."}, "a sun", nil)
+	if got != "Paint a sun in <image1>." {
+		t.Fatalf("custom grounding: %s", got)
+	}
+	if got := sceneFinishPrompt(map[string]any{}, "make it night", nil); got != "make it night" {
+		t.Fatalf("plain layer: %s", got)
 	}
 }

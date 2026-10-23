@@ -60,7 +60,7 @@ export default function PaintPanel(props: PaintPanelProps) {
         {guide
           ? 'A guide the AI follows: add it to an Edit or Motion layer’s References and name it in the prompt (e.g. “colour <image1> like <image2>”).'
           : 'Part of the picture: Edit and Motion layers above it are made from the picture with this paint on it.'}{' '}
-        Paint with the Brush, Box, Lasso or Pen; pick a colour on the left.
+        Paint loosely with the Brush, Box, Lasso or Pen: the AI corrects shapes and fills whole areas, so rough is fine.
       </p>
 
       {props.maskPanel}

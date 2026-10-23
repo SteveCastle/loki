@@ -222,6 +222,13 @@ func sceneVersionActionHandler(deps *Dependencies) http.HandlerFunc {
 		case "refinish":
 			s, err := tasks.RefinishVersion(deps.Queue, id, lid, n)
 			sceneReply(w, s, err)
+		case "change":
+			url, region, err := tasks.VersionChangeMap(id, lid, n)
+			if err != nil {
+				sceneError(w, err)
+				return
+			}
+			writeJSON(w, map[string]any{"dataUrl": url, "region": region})
 		case "motion":
 			url, region, err := tasks.VersionMotionMap(r.Context(), id, lid, n)
 			if err != nil {

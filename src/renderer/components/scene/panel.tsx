@@ -3,8 +3,8 @@ import { mediaUrl } from '../../platform';
 import { maskBounds, rectContains, type ContextSize } from './mask';
 import { PromptLibrary } from './prompt-library';
 import References from './references';
-import type { RefKind } from './refs';
-import { DIALOGUE_LANGUAGES, MAX_GENERATIONS, dialogueSeconds, generationsInFlight, jobPhase, layerTiming, type DialogueLine, type LayerOptions, type LoopKind, type SceneLayer } from './scene-api';
+import { refTokens, type RefKind } from './refs';
+import { composeFinish, FINISH_GROUNDING, DIALOGUE_LANGUAGES, MAX_GENERATIONS, dialogueSeconds, generationsInFlight, jobPhase, layerTiming, type DialogueLine, type LayerOptions, type LoopKind, type SceneLayer } from './scene-api';
 
 // Shortcut labels: ⌃/↵ have no glyph in Windows' UI fonts and render as junk.
 const IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
@@ -369,7 +369,16 @@ export function Inspector(props: InspectorProps) {
   const running = !!l.job;
   const queued = l.queued || [];
   const full = generationsInFlight(l) >= MAX_GENERATIONS;
-  const needPrompt = !motion && !l.prompt.trim();
+  const finish = !motion ? o.finish : undefined;
+  const needPrompt = !motion && !finish && !l.prompt.trim();
+  // A finish layer: the grounding its words are wrapped in, and what the engine will be given.
+  const grounding = finish ? o.grounding || FINISH_GROUNDING[finish] : '';
+  const guideToken = (() => {
+    const refs = o.refs || [];
+    const i = refs.findIndex((r) => r.layer && r.layer === o.paint);
+    return (i >= 0 && refTokens('still', refs, false)[i]) || '<image2>';
+  })();
+  const fullPrompt = finish ? composeFinish(grounding, l.prompt, guideToken) : '';
   const outside = version && grown && !rectContains(version.region, grown);
   const ideas = motion ? MOTION_IDEAS : STILL_IDEAS;
   const promptRef = useRef<HTMLTextAreaElement>(null);
@@ -414,7 +423,7 @@ export function Inspector(props: InspectorProps) {
 
       <PromptLibrary
         kind={l.kind}
-        label={motion ? 'How should it move?' : 'What should change here?'}
+        label={motion ? 'How should it move?' : finish === 'sketch' ? 'What is it?' : finish === 'colour' ? 'Anything about the colours?' : 'What should change here?'}
         prompt={l.prompt}
         onUse={(prompt) => {
           props.onPatch({ prompt });
@@ -427,9 +436,56 @@ export function Inspector(props: InspectorProps) {
         className="sc-prompt"
         value={l.prompt}
         rows={4}
-        placeholder={motion ? 'e.g. the waterfall flows and mist drifts up (leave empty for natural ambient motion)' : 'e.g. replace the sky with a stormy sunset'}
+        placeholder={
+          motion
+            ? 'e.g. the waterfall flows and mist drifts up (leave empty for natural ambient motion)'
+            : finish === 'sketch'
+            ? 'e.g. the sun · a stone cottage with ivy · a woman in a blue dress (optional)'
+            : finish === 'colour'
+            ? 'e.g. warm autumn light (optional)'
+            : 'e.g. replace the sky with a stormy sunset'
+        }
         onChange={(e) => props.onPatch({ prompt: e.target.value })}
       />
+      {finish && (
+        <details className="sc-grounding">
+          <summary>
+            Grounding <span className="sc-faint">· how the paint is read{o.grounding ? ' (yours)' : ''}</span>
+          </summary>
+          <textarea
+            className="sc-prompt sc-grounding-text"
+            rows={5}
+            value={grounding}
+            onChange={(e) => props.onOptions({ grounding: e.target.value === FINISH_GROUNDING[finish] ? '' : e.target.value })}
+            aria-label="Grounding"
+          />
+          <div className="sc-faint sc-grounding-help">
+            {'{what}'} is replaced by your words above{finish === 'colour' ? `, {guide} by the paint layer’s token (${guideToken})` : ''}.
+          </div>
+          <div className="sc-grounding-full">
+            <span className="sc-label">Sent to the engine</span>
+            <p>{fullPrompt}</p>
+          </div>
+          <div className="sc-version-actions">
+            {o.grounding && (
+              <button type="button" className="sc-btn sc-btn-quiet sc-btn-tiny" onClick={() => props.onOptions({ grounding: '' })}>
+                Reset grounding
+              </button>
+            )}
+            <button
+              type="button"
+              className="sc-btn sc-btn-tiny"
+              onClick={() => {
+                props.onPatch({ prompt: fullPrompt });
+                props.onOptions({ finish: undefined, grounding: '' });
+              }}
+              title="Put the whole prompt in the prompt box to edit freely (the layer stops wrapping your words in grounding)"
+            >
+              Edit full prompt
+            </button>
+          </div>
+        </details>
+      )}
       <References
         layer={l}
         onInsert={insertToken}
@@ -441,7 +497,7 @@ export function Inspector(props: InspectorProps) {
         onPickFiles={props.onPickFiles}
         paintLayers={props.paintLayers}
       />
-      <div className="sc-ideas">
+      <div className="sc-ideas" hidden={!!finish}>
         {ideas.map((idea) => (
           <button key={idea} type="button" className="sc-chip" onClick={() => appendIdea(idea)}>
             + {idea}
@@ -714,6 +770,22 @@ export function Inspector(props: InspectorProps) {
           </div>
           {version && (
             <>
+              {version.inputs && version.inputs.length > 0 && (
+                <div className="sc-version-inputs">
+                  <span className="sc-label" title="Exactly what the engine was given for this version (click to open full size)">
+                    Inputs
+                  </span>
+                  {version.inputs.map((p, i) => {
+                    const label = i === 0 ? (motion ? '<Picture 1>' : '<image1>') : motion ? `ref ${i}` : `<image${i + 1}>`;
+                    return (
+                      <a key={p} className="sc-input-thumb" href={mediaUrl(p)} target="_blank" rel="noreferrer" title={`${label} · ${p}`}>
+                        {/\.(mp4|mov|webm|mkv|m4v)$/i.test(p) ? <video src={mediaUrl(p)} muted preload="metadata" /> : /\.(wav|mp3|m4a|aac|flac|ogg|opus)$/i.test(p) ? <span>♪</span> : <img src={mediaUrl(p)} alt="" loading="lazy" />}
+                        <span>{label}</span>
+                      </a>
+                    );
+                  })}
+                </div>
+              )}
               <div className="sc-version-actions">
                 <span className="sc-faint sc-version-prompt">
                   {version.note || version.prompt || 'ambient motion'}
@@ -725,6 +797,19 @@ export function Inspector(props: InspectorProps) {
                   </button>
                 )}
               </div>
+              {!motion && (
+                <div className="sc-version-actions">
+                  <span className="sc-label">Mask</span>
+                  <button
+                    type="button"
+                    className={`sc-btn${o.fit ? ' on' : ''}`}
+                    onClick={() => props.onOptions({ fit: !o.fit })}
+                    title="Grow the mask to wherever the shown version changed the picture near it, so a result that corrects a rough shape (or casts a shadow) isn't cut off at the edge you drew"
+                  >
+                    {o.fit ? 'Fitted to result' : 'Fit to result'}
+                  </button>
+                </div>
+              )}
               {motion && (
                 <>
                   <div className="sc-version-actions">

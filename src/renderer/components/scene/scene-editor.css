@@ -1699,3 +1699,70 @@ body.sc-body {
   opacity: 0.3;
   cursor: default;
 }
+
+/* ---- finish layers: grounding, and what the engine was given ---- */
+
+.sc-grounding {
+  margin: 8px 0 4px;
+  padding: 6px 8px;
+  border: 1px solid var(--sc-hairline);
+  border-radius: 6px;
+}
+
+.sc-grounding summary {
+  color: var(--sc-dim);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.sc-grounding-text {
+  margin-top: 8px;
+  font-size: 12px;
+}
+
+.sc-grounding-help {
+  margin: 4px 0 8px;
+  font-size: 11px;
+}
+
+.sc-grounding-full p {
+  margin: 4px 0 8px;
+  color: var(--sc-dim);
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
+.sc-version-inputs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin-top: 8px;
+}
+
+.sc-input-thumb {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  color: var(--sc-faint);
+  font-size: 10px;
+  text-decoration: none;
+}
+
+.sc-input-thumb img,
+.sc-input-thumb video,
+.sc-input-thumb > span:first-child {
+  width: 64px;
+  height: 44px;
+  object-fit: contain;
+  background: var(--sc-field);
+  border: 1px solid var(--sc-hairline);
+  border-radius: 4px;
+}
+
+.sc-input-thumb:hover img,
+.sc-input-thumb:hover video {
+  border-color: var(--sc-accent);
+}

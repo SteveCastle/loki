@@ -117,7 +117,11 @@ type SceneVersion struct {
 	// Below names the stills the version was generated from (sceneBelow), so
 	// the editor can tell when the stack under it has changed (reordered,
 	// hidden, regenerated).
-	Below   []string  `json:"below,omitempty"`
+	Below []string `json:"below,omitempty"`
+	// Inputs are the images the engine was given: the crop (<image1> /
+	// <Picture 1>), then the references in order. Empty for versions from
+	// before they were recorded, and for loops and re-finishes.
+	Inputs  []string  `json:"inputs,omitempty"`
 	Created time.Time `json:"created"`
 }
 
@@ -146,6 +150,8 @@ type SceneJob struct {
 	Line string `json:"line,omitempty"`
 	// Below: the stills under the layer when it was started (SceneVersion.Below).
 	Below []string `json:"below,omitempty"`
+	// Refs: the reference files the engine was given (SceneVersion.Inputs).
+	Refs []string `json:"refs,omitempty"`
 }
 
 // SceneLayer is one masked edit. Kind still = an edited image region; motion
@@ -712,6 +718,9 @@ func reconcileLayerJob(q *jobqueue.Queue, s *Scene, l *SceneLayer) bool {
 			note = l.Job.Note
 		}
 		v := SceneVersion{Path: out, Region: l.Job.Region, Prompt: l.Job.Prompt, JobID: jobID, Note: note, Raw: l.Job.Raw, Below: l.Job.Below, Created: time.Now().UTC()}
+		if l.Job.Raw == "" && l.Job.Input != "" {
+			v.Inputs = append([]string{l.Job.Input}, l.Job.Refs...)
+		}
 		// A chain's first step is the engine: its output is what was finished.
 		if v.Raw == "" && len(steps) > 1 && steps[0].ok {
 			if raw := outputOf(steps[0]); raw != "" && raw != out {
@@ -1079,8 +1088,10 @@ func paintGraphLayer(dir string, l *SceneLayer, w, h int) (sceneGraphLayer, erro
 // resolveLayerRefs renders every reference to a paint layer (sceneRef.Layer)
 // for the layer at idx: the painting over the picture that layer is made
 // from, cropped to region, so it lines up pixel for pixel with the crop the
-// engine edits (<image1> / <Picture 1>).
-func resolveLayerRefs(ctx context.Context, s *Scene, idx int, dir string, region SceneRect, refs []sceneRef) ([]sceneRef, error) {
+// engine edits (<image1> / <Picture 1>). Each is written to
+// <input>-ref-<paint layer>.png beside the generation's input crop, so every
+// version keeps the references it was made with.
+func resolveLayerRefs(ctx context.Context, s *Scene, idx int, dir string, region SceneRect, refs []sceneRef, input string) ([]sceneRef, error) {
 	out := make([]sceneRef, len(refs))
 	copy(out, refs)
 	for i, r := range out {
@@ -1111,7 +1122,7 @@ func resolveLayerRefs(ctx context.Context, s *Scene, idx int, dir string, region
 			return nil, err
 		}
 		layers = append(layers, g)
-		dst := filepath.Join(dir, fmt.Sprintf("ref-%s-%s.png", safeLayerID(s.Layers[idx].ID), safeLayerID(paint.ID)))
+		dst := strings.TrimSuffix(input, filepath.Ext(input)) + "-ref-" + safeLayerID(paint.ID) + ".png"
 		args := sceneGraphArgs(s.Base, s.Width, s.Height, layers, false, 0, region)
 		if err := runSceneFFmpeg(ctx, append([]string{"-y"}, append(args, dst)...)); err != nil {
 			return nil, fmt.Errorf("rendering the paint reference: %w", err)
@@ -1121,18 +1132,64 @@ func resolveLayerRefs(ctx context.Context, s *Scene, idx int, dir string, region
 	return out, nil
 }
 
-// sceneMotionSize picks loki-reshoot's --size for a region: the region's
-// aspect at about mp megapixels, in multiples of 32 (the engine's grid).
-func sceneMotionSize(r SceneRect, mp float64) (int, int) {
-	if mp <= 0 {
-		mp = 0.5
+// sceneCanvases are the frame shapes loki-reshoot's model is trained on
+// (its --native table), at two pixel budgets (Resolution: Standard, High).
+// Asked for any other shape the model invents black bars to reach one and
+// keeps them (a 5:6 region came back pillarboxed), so motion regions are
+// grown to the nearest of these (sceneMotionRegion) and rendered at it.
+var sceneCanvases = []struct {
+	aspect    float64
+	std, high [2]int
+}{
+	{1, [2]int{704, 704}, [2]int{960, 960}},
+	{4.0 / 3, [2]int{768, 576}, [2]int{1024, 768}},
+	{3.0 / 4, [2]int{576, 768}, [2]int{768, 1024}},
+	{16.0 / 9, [2]int{1024, 576}, [2]int{1344, 768}},
+	{9.0 / 16, [2]int{576, 1024}, [2]int{768, 1344}},
+}
+
+// sceneCanvasOrder is the canvases from the one nearest r's shape outward.
+func sceneCanvasOrder(r SceneRect) []int {
+	a := float64(max(1, r.W)) / float64(max(1, r.H))
+	order := []int{0, 1, 2, 3, 4}
+	sort.SliceStable(order, func(i, j int) bool {
+		return math.Abs(math.Log(a/sceneCanvases[order[i]].aspect)) < math.Abs(math.Log(a/sceneCanvases[order[j]].aspect))
+	})
+	return order
+}
+
+// sceneMotionRegion grows r (never shrinks it: it holds the whole mask) to
+// the nearest canvas shape that fits in the fw×fh frame, keeping it centred
+// where it can and sliding it inside the frame where it can't. The growth is
+// only context around the mask. Mirrors motionRegion in the editor's mask.ts.
+func sceneMotionRegion(r SceneRect, fw, fh int) SceneRect {
+	for _, i := range sceneCanvasOrder(r) {
+		a := sceneCanvases[i].aspect
+		w, h := float64(r.W), float64(r.H)
+		if w/h < a {
+			w = h * a
+		} else {
+			h = w / a
+		}
+		W, H := int(math.Round(w)), int(math.Round(h))
+		if W > fw || H > fh {
+			continue
+		}
+		x := min(max(0, r.X-(W-r.W)/2), fw-W)
+		y := min(max(0, r.Y-(H-r.H)/2), fh-H)
+		return SceneRect{X: x, Y: y, W: W, H: H}
 	}
-	aspect := float64(r.W) / float64(r.H)
-	aspect = clampFloat(aspect, 0.3, 3.4)
-	w := math.Sqrt(mp * 1e6 * aspect)
-	h := w / aspect
-	snap := func(v float64) int { return clampInt(int(math.Round(v/32))*32, 256, 2048) }
-	return snap(w), snap(h)
+	return r
+}
+
+// sceneMotionSize picks loki-reshoot's --size for a region: the canvas
+// nearest its shape, Standard (about 0.5 MP) or High (mp >= 0.7).
+func sceneMotionSize(r SceneRect, mp float64) (int, int) {
+	c := sceneCanvases[sceneCanvasOrder(r)[0]]
+	if mp >= 0.7 {
+		return c.high[0], c.high[1]
+	}
+	return c.std[0], c.std[1]
 }
 
 // sceneStillLongEdge picks loki-retouch's --long-edge for a crop: small
@@ -1380,10 +1437,14 @@ func sceneMotionPrompt(in sceneMotionPromptInput) string {
 	if subject != "" {
 		what = subject + ", as shown in <Picture 1>"
 	}
-	action := "Everything already visible moves naturally and subtly, the way it would in the real place: light shifts softly, and elements that would move on their own (water, clouds, foliage, smoke, fire, fabric) drift gently."
+	action := "Everything already visible moves naturally and subtly, the way it would in the world of the picture: light shifts softly, and elements that would move on their own (water, clouds, foliage, smoke, fire, fabric) drift gently."
 	if motion != "" {
 		action = "The motion: " + strings.TrimRight(motion, ". ") + ". Only what is already visible in <Picture 1> moves; the rest of the frame stays as it is."
 	}
+	// The picture may be a photo or a painting: motion must not turn painted
+	// smoke into photographic smoke (measured: an impressionist plume drifted
+	// to realistic grey within a second).
+	action += " Whatever moves keeps the picture's own look and medium for the whole shot: in a painting it moves as paint, its brushstrokes and colours included; in a photograph it stays photographic."
 	if lockEdges {
 		// The crop's border is context around the mask: keeping the motion
 		// away from it is what lets the region blend back into the still.
@@ -1544,12 +1605,16 @@ func GenerateLayer(ctx context.Context, q *jobqueue.Queue, id, lid string) (*Sce
 		return nil, fmt.Errorf("a paint layer isn't generated: reference it from an Edit or Motion layer")
 	}
 	prompt := strings.TrimSpace(l.Prompt)
-	if l.Kind == SceneKindStill && prompt == "" {
+	// A finish layer's grounding is a whole instruction: its own words may be empty.
+	if l.Kind == SceneKindStill && prompt == "" && optString(l.Options, "finish") == "" {
 		return nil, fmt.Errorf("describe the edit first")
 	}
 	region := l.Region.clamp(s.Width, s.Height)
 	if region.empty() {
 		return nil, fmt.Errorf("draw the area to change first")
+	}
+	if l.Kind == SceneKindMotion {
+		region = sceneMotionRegion(region, s.Width, s.Height)
 	}
 	dir, _ := sceneDir(id)
 
@@ -1570,7 +1635,7 @@ func GenerateLayer(ctx context.Context, q *jobqueue.Queue, id, lid string) (*Sce
 	if err := runSceneFFmpeg(ctx, append(args, input)); err != nil {
 		return nil, fmt.Errorf("cropping the region: %w", err)
 	}
-	refs, err := resolveLayerRefs(ctx, s, idx, dir, region, sceneRefs(l.Options))
+	refs, err := resolveLayerRefs(ctx, s, idx, dir, region, sceneRefs(l.Options), input)
 	if err != nil {
 		os.Remove(input)
 		return nil, err
@@ -1586,7 +1651,7 @@ func GenerateLayer(ctx context.Context, q *jobqueue.Queue, id, lid string) (*Sce
 	switch l.Kind {
 	case SceneKindStill:
 		command = "retouch"
-		opt("prompt", prompt)
+		opt("prompt", sceneFinishPrompt(l.Options, prompt, refs))
 		if len(refs) > 0 {
 			if err := checkSceneRefs(SceneKindStill, refs, false); err != nil {
 				os.Remove(input)
@@ -1696,7 +1761,12 @@ func GenerateLayer(ctx context.Context, q *jobqueue.Queue, id, lid string) (*Sce
 	}
 	l.Region = region
 	l.Error = ""
-	l.startJob(&SceneJob{ID: ids[len(ids)-1], Chain: ids, State: "pending", Region: region, Prompt: prompt, Input: input, Below: sceneBelow(s.Layers[:idx])})
+	refPaths := make([]string, len(refs))
+	for i, r := range refs {
+		refPaths[i] = r.Path
+	}
+	l.startJob(&SceneJob{ID: ids[len(ids)-1], Chain: ids, State: "pending", Region: region, Prompt: prompt, Input: input, Refs: refPaths,
+		Below: sceneBelow(s.Layers[:idx])})
 	if err := saveSceneLocked(s); err != nil {
 		return nil, err
 	}
@@ -1844,7 +1914,8 @@ func versionRaw(id string, v SceneVersion) string {
 // its file name up to the first _locked / _refined / _reshoot suffix + .png.
 func sceneVersionCrop(v SceneVersion) string {
 	base := filepath.Base(v.Path)
-	for _, suf := range []string{"_locked", "_refined", "_reshoot"} {
+	// Motion: the engine's output and its finishes; still: retouch's.
+	for _, suf := range []string{"_locked", "_refined", "_reshoot", "_edit"} {
 		if i := strings.Index(base, suf); i > 0 {
 			p := filepath.Join(filepath.Dir(v.Path), base[:i]+".png")
 			if fileExists(p) {

@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { invoke, isElectron, send } from '../../platform';
-import { clampRect, imageOp, maskImagesReady, opsDeep, preloadMaskImages, rasterizeLayerMask, rasterizeProtect, regionAround, type MaskLookup, type MaskOp, type MaskOpts, type Rect } from './mask';
+import { clampRect, imageOp, motionRegion, maskImagesReady, opsDeep, preloadMaskImages, rasterizeLayerMask, rasterizeProtect, regionAround, type MaskLookup, type MaskOp, type MaskOpts, type Rect } from './mask';
 import {
   generationsInFlight,
   layerRate,
@@ -16,7 +16,7 @@ import {
   type SceneSummary,
   versionStale,
 } from './scene-api';
-import Stage, { type MaskView, type Tool } from './stage';
+import Stage, { isTyping, type MaskView, type Tool } from './stage';
 import MaskPanel from './mask-panel';
 import PaintPanel from './paint-panel';
 import { Inspector, KEY_GENERATE, KEY_UNDO, LayerList } from './panel';
@@ -136,7 +136,9 @@ function withMask(s: Scene, l: SceneLayer): SceneLayer {
     feather: l.feather,
     minSide: l.kind === 'motion' ? 320 : 96,
   });
-  return { ...l, mask: r.mask, region: region || { x: 0, y: 0, w: 0, h: 0 } };
+  // Motion: the trained shape the server grows it to, so the box shows what the engine really sees.
+  const shaped = region && l.kind === 'motion' ? motionRegion(clampRect(region, s.width, s.height), s.width, s.height) : region;
+  return { ...l, mask: r.mask, region: shaped || { x: 0, y: 0, w: 0, h: 0 } };
 }
 
 const linksMasks = (l: SceneLayer) => (l.shapes || []).some((op) => op.t === 'layer');
@@ -176,13 +178,6 @@ function loadSwatches(): string[] {
   }
 }
 
-/** The prompt "Finish with AI" starts an Edit layer with: colour from a guide (its token), or finish paint in the picture. */
-function finishPrompt(token: string | null): string {
-  if (token) {
-    return `Colour <image1> the way the rough colours painted on ${token} show: keep every line, shape and detail of <image1> exactly as it is, fill each area with the colour painted over it, and finish it with clean, natural shading.`;
-  }
-  return 'Finish the rough colour painted on <image1>: keep every line, shape and detail exactly as it is, and turn the rough strokes into clean, evenly filled colour with natural shading.';
-}
 
 function layerDefaults(kind: LayerKind): LayerOptions {
   try {
@@ -463,7 +458,9 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
       const s = docRef.current;
       const guide = !!paint.options?.guide;
       const refs = guide ? [{ id: newRefId(), path: '', layer: paint.id, note: 'the rough colour guide' }] : [];
-      const token = guide ? refTokens('still', refs, false)[0] : null;
+      // The engine sees the whole picture: what a sketch should become depends on everything around it (a disc in a
+      // crop of flat sky reads as a ball or the moon; with the land and the house in view it is the sun).
+      const context = 'full';
       const layer: SceneLayer = {
         id: newId(),
         name: `Finish ${paint.name || 'paint'}`,
@@ -473,8 +470,8 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
         shapes: [{ t: 'layer', id: paint.id }],
         maskOpts: { expand: Math.round(Math.min(s.width, s.height) * 0.01) || undefined },
         feather: defaultFeather(s),
-        prompt: finishPrompt(token),
-        options: { ...layerDefaults('still'), refs },
+        prompt: '',
+        options: { ...layerDefaults('still'), context, refs, fit: true, finish: guide ? 'colour' : 'sketch', paint: paint.id },
         versions: [],
         active: -1,
       };
@@ -486,7 +483,8 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
       });
       setSelectedId(layer.id);
       setTool('select');
-      flash('info', guide ? 'Added an Edit layer that colours the picture from your guide: check the prompt, then generate.' : 'Added an Edit layer that finishes your paint: check the prompt, then generate.');
+      flash('info', guide ? 'Added an Edit layer that colours the picture from your guide: add any notes, then generate.' : 'Added an Edit layer that makes your sketch real: say what it is, then generate.');
+      window.setTimeout(() => document.getElementById('sc-prompt')?.focus(), 50);
     },
     [mutate, flash]
   );
@@ -586,7 +584,7 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
       flash('info', 'Paint or box the area this layer should change first.');
       return;
     }
-    if (l.kind === 'still' && !l.prompt.trim()) {
+    if (l.kind === 'still' && !l.prompt.trim() && !l.options?.finish) {
       flash('info', 'Describe the edit first.');
       return;
     }
@@ -665,6 +663,36 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
     [motionMap, patchLayer, pushUndo, flash]
   );
 
+  // Fit mask to result: a still layer with `fit` carries the change map of its shown version as one image op,
+  // replaced whenever another version is shown (each version is fitted once per session; a failure is not retried).
+  const fitting = useRef(new Set<string>());
+  useEffect(() => {
+    doc.layers.forEach((l) => {
+      if (l.kind !== 'still') return;
+      const ops = l.shapes || [];
+      const fitted = ops.filter((op) => op.t === 'image' && op.fit);
+      const v = l.options?.fit ? l.versions[l.active] : undefined;
+      if (!v) {
+        if (fitted.length) patchLayer(l.id, { shapes: ops.filter((op) => !(op.t === 'image' && op.fit)) }, true);
+        return;
+      }
+      if (fitted.length === 1 && fitted[0].fit === v.path) return;
+      const key = `${l.id}|${v.path}`;
+      if (fitting.current.has(key)) return;
+      fitting.current.add(key);
+      sceneApi
+        .changeMap(doc.id, l.id, l.active)
+        .then(async (m) => {
+          const op = await imageOp(m.dataUrl, m.region, 40);
+          const cur = docRef.current.layers.find((x) => x.id === l.id);
+          if (!cur || cur.versions[cur.active]?.path !== v.path) return;
+          const rest = (cur.shapes || []).filter((x) => !(x.t === 'image' && x.fit));
+          patchLayer(l.id, { shapes: op ? [...rest, { ...op, fit: v.path }] : rest }, true);
+        })
+        .catch((e) => flash('error', `Could not fit the mask to the result: ${e instanceof Error ? e.message : e}`));
+    });
+  }, [doc.layers, doc.id, patchLayer, flash]);
+
   // A voice reference: a native dialog in Electron, the server's file browser in the web build.
   const chooseVoice = useCallback(async (): Promise<string | null> => {
     try {
@@ -702,7 +730,7 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const typing = e.target instanceof HTMLElement && !!e.target.closest('input, textarea, select, [contenteditable]');
+      const typing = isTyping(e.target);
       const mod = e.ctrlKey || e.metaKey;
       if (mod && e.key === 'Enter') {
         e.preventDefault();

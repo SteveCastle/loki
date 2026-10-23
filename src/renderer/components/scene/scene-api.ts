@@ -18,6 +18,8 @@ export interface SceneVersion {
   jobId?: string;
   /** The stills it was generated from ("<layer id>:<version path>", bottom up; see stackBelow). */
   below?: string[];
+  /** The images the engine was given: the crop, then the references in order (generations only). */
+  inputs?: string[];
   created: string;
 }
 
@@ -91,11 +93,53 @@ export interface LayerOptions {
   refs?: SceneRefItem[];
   /** paint: a guide only (used as a reference, never in the picture) */
   guide?: boolean;
+  /**
+   * still: fit the mask to the shown version, adding wherever it changed the picture near the mask, so a result
+   * that corrects a rough sketch's shape (or casts a shadow) is not cut off at the sketch's edge.
+   */
+  fit?: boolean;
+  /** still: a finish layer ("Finish with AI"): its prompt is what the paint is, wrapped in this grounding. */
+  finish?: FinishMode;
+  /** still, finish: the paint layer it finishes */
+  paint?: string;
+  /** still, finish: the user's own grounding ({what} = the prompt, {guide} = the guide's token); empty = the default */
+  grounding?: string;
   /** motion: lock the static parts to the still (default on; see media-server/tasks/scene_lock.go) */
   lock?: boolean;
   /** motion: output at the region's size with the still's fine detail (default on) */
   detail?: boolean;
   seed?: number;
+}
+
+export type FinishMode = 'sketch' | 'colour';
+
+/**
+ * How a finish layer's words are read: the instruction around them. Style-neutral ("this picture", never
+ * "photograph"): the scene may be a photo or a painting. Mirrors sceneFinishGrounding in media-server/tasks/scene_finish.go.
+ */
+export const FINISH_GROUNDING: Record<FinishMode, string> = {
+  sketch:
+    'In <image1>, a rough painted sketch stands in for {what}: replace it with {what} as it would really appear in this picture. ' +
+    'The sketch is a crude placeholder that only marks where it goes, roughly how big it is and a hint of its colours, ' +
+    'so do not copy its flat paint or hard outline: correct its shape and proportions, and give it the real look, light, texture and focus ' +
+    "it would have here, in the picture's own style. Leave everything that was not sketched as it is.",
+  colour:
+    'Colour <image1> using the rough colours painted on {guide} as a guide: {what}. ' +
+    'The paint is loose and only marks which colour goes where: give each whole object or area the colour painted mostly over it, ' +
+    'following the shapes and edges of <image1> rather than the edges of the brush strokes. ' +
+    'Keep every line and detail of <image1> as it is, and finish with clean, natural shading.',
+};
+
+/** Fill a grounding's placeholders; with no words a "…: {what}." clause folds away, any other {what} reads "the real thing". Mirrors composeFinish. */
+export function composeFinish(grounding: string, what: string, guide: string): string {
+  const w = what.trim().replace(/\.+$/, '');
+  let out = grounding;
+  if (!w) out = out.split(': {what}.').join('.');
+  return out
+    .split('{what}')
+    .join(w || 'the real thing')
+    .split('{guide}')
+    .join(guide);
 }
 
 export interface SceneLayer {
@@ -226,6 +270,9 @@ export const sceneApi = {
   loop: (id: string, layer: string, n: number, kind: LoopKind) =>
     call<Scene>('POST', `/api/scenes/${enc(id)}/layers/${enc(layer)}/versions/${n}/loop`, { kind }, 180000),
   /** Where version n moves: a PNG data URL (alpha = motion) covering `region`. */
+  /** Where still version n changed the picture it was made from, near the layer's mask: a PNG data URL (alpha = change) covering `region`. */
+  changeMap: (id: string, layer: string, n: number) =>
+    call<{ dataUrl: string; region: Rect }>('POST', `/api/scenes/${enc(id)}/layers/${enc(layer)}/versions/${n}/change`, {}, 60000),
   motionMap: (id: string, layer: string, n: number) =>
     call<{ dataUrl: string; region: Rect }>('POST', `/api/scenes/${enc(id)}/layers/${enc(layer)}/versions/${n}/motion`, {}, 120000),
   render: (id: string, format: 'video' | 'still') => call<Scene>('POST', `/api/scenes/${enc(id)}/render`, { format }),
