@@ -1,6 +1,7 @@
 package stream
 
 import (
+	"net/http/httptest"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -303,4 +304,57 @@ func TestMultipleClients(t *testing.T) {
 	if finalCount != initialCount {
 		t.Errorf("Final activeCount = %d; want %d", finalCount, initialCount)
 	}
+}
+
+// A reaped/removed client must end its handler instead of spinning on a
+// closed channel (which wrote empty SSE events in a tight loop).
+func TestStreamHandlerExitsWhenClientRemoved(t *testing.T) {
+	req := httptest.NewRequest("GET", "/stream", nil)
+	rec := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() { StreamHandler(rec, req); close(done) }()
+
+	// Wait for the handler to register, then remove it the way the reaper does.
+	deadline := time.Now().Add(2 * time.Second)
+	var removed bool
+	for !removed && time.Now().Before(deadline) {
+		manager.clients.Range(func(key, value any) bool {
+			if value.(*Client).RemoteAddr == req.RemoteAddr {
+				RemoveClient(key.(clientChan))
+				removed = true
+				return false
+			}
+			return true
+		})
+		time.Sleep(5 * time.Millisecond)
+	}
+	if !removed {
+		t.Fatal("handler never registered")
+	}
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("StreamHandler did not return after its client was removed")
+	}
+}
+
+// Broadcasting while clients disconnect must never panic (send on closed channel).
+func TestBroadcastRacingRemoveDoesNotPanic(t *testing.T) {
+	stop := make(chan struct{})
+	go func() {
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				Broadcast(Message{Type: "x", Msg: "y"})
+			}
+		}
+	}()
+	for i := 0; i < 2000; i++ {
+		c := make(chan Message, 1)
+		AddClient(c, "race", "ua")
+		RemoveClient(c)
+	}
+	close(stop)
 }
