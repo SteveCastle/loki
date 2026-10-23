@@ -73,6 +73,9 @@ func (r *Runners) runJob(j *jobqueue.Job) {
 	r.running++
 	go func() {
 		defer func() {
+			// The task has returned: a job cancelled mid-run can give back
+			// its buckets now (before claiming the next job).
+			r.queue.ReleaseCancelled(j.ID)
 			r.mu.Lock()
 			r.running--
 			// After finishing this job, try fetching another one

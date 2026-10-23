@@ -229,8 +229,13 @@ func TestCancelReleasesLock(t *testing.T) {
 		t.Fatal("Expected 1")
 	}
 
-	// Cancel 1 (must be in progress to release lock from running counts)
+	// Cancel 1: its slot stays held until the task returns...
 	q.CancelJob(id1)
+	if job, _ := q.ClaimJob(); job != nil {
+		t.Fatalf("claimed %s while the cancelled task still holds the slot", job.ID)
+	}
+	// ...which the runner reports.
+	q.ReleaseCancelled(id1)
 
 	// Claim 2 should succeed
 	job, _ = q.ClaimJob()

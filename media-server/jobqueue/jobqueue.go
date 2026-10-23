@@ -138,6 +138,10 @@ type Job struct {
 	State        JobState           `json:"state"`
 	Ctx          context.Context    `json:"-"`
 	Cancel       context.CancelFunc `json:"-"`
+	// cancelHold: the job was cancelled while running and still holds its
+	// host/resource buckets until its task actually returns (see
+	// ReleaseCancelled).
+	cancelHold bool
 
 	// Timestamps for various states
 	CreatedAt   time.Time `json:"created_at"`
@@ -837,7 +841,10 @@ func (q *Queue) CancelJob(id string) error {
 	job.Cancel()
 
 	if job.State == StateInProgress {
-		q.decRunningLocked(job)
+		// Keep the buckets until the task has really stopped: a cancelled
+		// diffusion/ffmpeg run can take seconds to wind down, and freeing
+		// its GPU slot now let the next ~20 GB job start on top of it.
+		job.cancelHold = true
 	}
 
 	job.State = StateCancelled
@@ -855,6 +862,21 @@ func (q *Queue) CancelJob(id string) error {
 	}
 
 	return nil
+}
+
+// ReleaseCancelled frees the buckets of a job cancelled mid-run, once its
+// task has returned. The runner calls it after every task; it is a no-op
+// for any job that is not holding buckets past its cancellation.
+func (q *Queue) ReleaseCancelled(id string) {
+	q.mu.Lock()
+	job, ok := q.Jobs[id]
+	if !ok || !job.cancelHold {
+		q.mu.Unlock()
+		return
+	}
+	job.cancelHold = false
+	q.decRunningLocked(job)
+	q.mu.Unlock()
 }
 
 // RequestPause asks a running or pending job to pause. A pending job pauses
@@ -1290,7 +1312,7 @@ func (q *Queue) RemoveJob(id string) error {
 		return errors.New("job not found")
 	}
 
-	if job.State == StateInProgress {
+	if job.State == StateInProgress || job.cancelHold {
 		q.decRunningLocked(job)
 	}
 
@@ -1355,6 +1377,9 @@ func (q *Queue) ClearFinishedJobs() (int, error) {
 	}
 
 	for _, jobID := range jobsToRemove {
+		if q.Jobs[jobID].cancelHold {
+			q.decRunningLocked(q.Jobs[jobID])
+		}
 		q.dropJobItemsLocked(jobID)
 		delete(q.Jobs, jobID)
 		delete(q.dirty, jobID)
