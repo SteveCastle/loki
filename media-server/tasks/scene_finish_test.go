@@ -556,8 +556,13 @@ func TestSceneRefinishVersion(t *testing.T) {
 	if job.Input != raw {
 		t.Errorf("input %q, want the engine output", job.Input)
 	}
-	if _, err := RefinishVersion(q, id, "m", 0); err != ErrSceneBusy {
-		t.Errorf("a second re-finish while one runs: %v", err)
+	// A second re-finish while one runs waits behind it.
+	s2, err := RefinishVersion(q, id, "m", 0)
+	if err != nil || len(s2.Layers[0].Queued) != 1 || s2.Layers[0].Job.ID != j.ID {
+		t.Fatalf("a second re-finish should queue: %v %+v", err, s2.Layers[0].Queued)
+	}
+	if _, err := CancelLayer(q, id, "m", s2.Layers[0].Queued[0].ID); err != nil {
+		t.Fatal(err)
 	}
 	// It finishes: a new version that remembers the raw output.
 	claim(t, q, j.ID)

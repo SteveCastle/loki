@@ -460,8 +460,8 @@ func state(q *jobqueue.Queue, id string) jobqueue.JobState {
 }
 
 // The bug report: the lock step got cancelled before it ran while the engine
-// was still generating. The generation must not be dropped (and a second one
-// queued behind it); the engine keeps going and the lock is queued again.
+// was still generating. The generation must not be dropped; the engine keeps
+// going and the lock is queued again.
 func TestSceneChainLockCancelledBeforeItRan(t *testing.T) {
 	q := jobqueue.NewQueue()
 	id := "0123abcd-0000-0000-0000-00000000c001"
@@ -481,10 +481,6 @@ func TestSceneChainLockCancelledBeforeItRan(t *testing.T) {
 	if state(q, gen) != jobqueue.StateInProgress {
 		t.Fatal("the engine step must keep running")
 	}
-	if _, err := GenerateLayer(context.Background(), q, id, "m"); err != ErrSceneBusy {
-		t.Fatalf("a second generation must be refused while the first runs, got %v", err)
-	}
-
 	// The engine finishes: the lock is queued again on its output.
 	raw := filepath.Join(dir, ".loki-temp", "raw.mp4")
 	_ = os.MkdirAll(filepath.Dir(raw), 0755)
@@ -543,7 +539,7 @@ func TestSceneCancelLayerCancelsWholeChain(t *testing.T) {
 	id := "0123abcd-0000-0000-0000-00000000c004"
 	_, gen, lock := chainScene(t, q, id)
 	claim(t, q, gen)
-	s, err := CancelLayer(q, id, "m")
+	s, err := CancelLayer(q, id, "m", "")
 	if err != nil || s.Layers[0].Job != nil {
 		t.Fatalf("cancel: %v %+v", err, s.Layers[0].Job)
 	}
@@ -566,5 +562,100 @@ func TestSceneDeletingLayerCancelsWholeChain(t *testing.T) {
 	}
 	if state(q, gen) != jobqueue.StateCancelled || state(q, lock) != jobqueue.StateCancelled {
 		t.Fatalf("both steps cancelled? gen %v lock %v", state(q, gen), state(q, lock))
+	}
+}
+
+// queuedScene is chainScene plus a second motion generation queued behind it.
+func queuedScene(t *testing.T, q *jobqueue.Queue, id string) (dir, gen, lock, gen2, lock2 string) {
+	t.Helper()
+	dir, gen, lock = chainScene(t, q, id)
+	gen2, lock2 = gen+"-2", lock+"-2"
+	input := filepath.Join(dir, "motion-m-1.2.png")
+	if _, err := q.AddWorkflow(jobqueue.Workflow{Tasks: []jobqueue.WorkflowTask{
+		{ID: gen2, Command: "reshoot", Input: input},
+		{ID: lock2, Command: "scene-lock", Arguments: []string{"--still=" + input}, Dependencies: []string{gen2}},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	s, _ := GetScene(q, id)
+	s.Layers[0].Queued = []*SceneJob{{ID: lock2, Chain: []string{gen2, lock2}, State: "pending", Region: SceneRect{W: 50, H: 50}, Prompt: "p2", Input: input}}
+	writeTestScene(t, s)
+	return dir, gen, lock, gen2, lock2
+}
+
+// A generation started while another runs waits its turn, then lands as the
+// next version.
+func TestSceneQueuedGenerationRunsAfterTheFirst(t *testing.T) {
+	q := jobqueue.NewQueue()
+	id := "0123abcd-0000-0000-0000-00000000c006"
+	dir, gen, lock, gen2, lock2 := queuedScene(t, q, id)
+	claim(t, q, gen)
+	finish(t, q, gen, filepath.Join(dir, "raw.mp4"))
+	claim(t, q, lock)
+	finish(t, q, lock, filepath.Join(dir, "motion-m-1_locked.mp4"))
+	s, _ := GetScene(q, id)
+	l := s.Layers[0]
+	if len(l.Versions) != 1 || l.Job == nil || l.Job.ID != lock2 || len(l.Queued) != 0 {
+		t.Fatalf("the queued generation should be running: versions %d job %+v queued %d", len(l.Versions), l.Job, len(l.Queued))
+	}
+	claim(t, q, gen2)
+	finish(t, q, gen2, filepath.Join(dir, "raw2.mp4"))
+	claim(t, q, lock2)
+	finish(t, q, lock2, filepath.Join(dir, "motion-m-1.2_locked.mp4"))
+	s, _ = GetScene(q, id)
+	l = s.Layers[0]
+	if l.Job != nil || len(l.Versions) != 2 || l.Active != 1 || l.Versions[1].Prompt != "p2" {
+		t.Fatalf("second version expected: job %+v versions %+v active %d", l.Job, l.Versions, l.Active)
+	}
+}
+
+// Both generations ended while nobody looked: one read folds both in.
+func TestSceneQueuedGenerationsFoldInOneRead(t *testing.T) {
+	q := jobqueue.NewQueue()
+	id := "0123abcd-0000-0000-0000-00000000c007"
+	dir, gen, lock, gen2, lock2 := queuedScene(t, q, id)
+	for _, st := range []struct{ id, out string }{{gen, "raw.mp4"}, {lock, "motion-m-1_locked.mp4"}, {gen2, "raw2.mp4"}, {lock2, "motion-m-1.2_locked.mp4"}} {
+		claim(t, q, st.id)
+		finish(t, q, st.id, filepath.Join(dir, st.out))
+	}
+	s, _ := GetScene(q, id)
+	if l := s.Layers[0]; l.Job != nil || len(l.Queued) != 0 || len(l.Versions) != 2 {
+		t.Fatalf("both versions expected: job %+v queued %d versions %d", l.Job, len(l.Queued), len(l.Versions))
+	}
+}
+
+// Cancelling the running generation starts the queued one; cancelling a
+// queued one leaves the running one alone; no id cancels them all.
+func TestSceneCancelOneGeneration(t *testing.T) {
+	q := jobqueue.NewQueue()
+	id := "0123abcd-0000-0000-0000-00000000c008"
+	_, gen, lock, gen2, lock2 := queuedScene(t, q, id)
+	claim(t, q, gen)
+	s, err := CancelLayer(q, id, "m", lock2)
+	if err != nil || s.Layers[0].Job == nil || s.Layers[0].Job.ID != lock || len(s.Layers[0].Queued) != 0 {
+		t.Fatalf("cancel queued: %v job %+v queued %d", err, s.Layers[0].Job, len(s.Layers[0].Queued))
+	}
+	if state(q, gen) != jobqueue.StateInProgress || state(q, gen2) != jobqueue.StateCancelled || state(q, lock2) != jobqueue.StateCancelled {
+		t.Fatalf("only the queued chain cancelled? gen %v gen2 %v lock2 %v", state(q, gen), state(q, gen2), state(q, lock2))
+	}
+
+	q = jobqueue.NewQueue()
+	id = "0123abcd-0000-0000-0000-00000000c009"
+	_, gen, lock, gen2, lock2 = queuedScene(t, q, id)
+	claim(t, q, gen)
+	s, err = CancelLayer(q, id, "m", lock)
+	if err != nil || s.Layers[0].Job == nil || s.Layers[0].Job.ID != lock2 || s.Layers[0].Error != "" {
+		t.Fatalf("cancel running: %v job %+v err %q", err, s.Layers[0].Job, s.Layers[0].Error)
+	}
+	if state(q, gen) != jobqueue.StateCancelled || state(q, gen2) != jobqueue.StatePending {
+		t.Fatalf("gen %v gen2 %v", state(q, gen), state(q, gen2))
+	}
+
+	q = jobqueue.NewQueue()
+	id = "0123abcd-0000-0000-0000-00000000c00a"
+	_, _, _, gen2, _ = queuedScene(t, q, id)
+	s, err = CancelLayer(q, id, "m", "")
+	if err != nil || s.Layers[0].Job != nil || len(s.Layers[0].Queued) != 0 || state(q, gen2) != jobqueue.StateCancelled {
+		t.Fatalf("cancel all: %v job %+v queued %d gen2 %v", err, s.Layers[0].Job, len(s.Layers[0].Queued), state(q, gen2))
 	}
 }

@@ -2,7 +2,9 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { invoke, isElectron, send } from '../../platform';
 import { imageOp, maskBounds, maskImagesReady, preloadMaskImages, rasterizeMask, rasterizeProtect, regionFor, type MaskOp, type Rect } from './mask';
 import {
+  generationsInFlight,
   layerRate,
+  MAX_GENERATIONS,
   mergeServer,
   sceneApi,
   sceneBusy,
@@ -391,7 +393,7 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
 
   const generate = useCallback(() => {
     const l = selected;
-    if (!l || l.job) return;
+    if (!l || generationsInFlight(l) >= MAX_GENERATIONS) return;
     if (!maskBounds(l.shapes || [])) {
       flash('info', 'Paint or box the area this layer should change first.');
       return;
@@ -593,7 +595,7 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
   }, [doc.layers]);
   const render = doc.render;
   const exporting = !!render && ['pending', 'in_progress', 'paused'].includes(render.state);
-  const generating = doc.layers.filter((l) => l.job).length;
+  const generating = doc.layers.reduce((n, l) => n + generationsInFlight(l), 0);
 
   return (
     <div className="sc-app">
@@ -766,7 +768,7 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
                 rememberLayerDefaults(selected.kind, next);
               }}
               onGenerate={generate}
-              onCancel={() => serverAction(() => sceneApi.cancel(doc.id, selected.id), 'Could not cancel')}
+              onCancel={(job) => serverAction(() => sceneApi.cancel(doc.id, selected.id, job), 'Could not cancel')}
               onDelete={() => deleteLayer(selected.id)}
               onClearMask={() => {
                 const before = selected.shapes || [];

@@ -12,8 +12,8 @@ package main
 //   GET    /api/scenes/{id}                          the document (finished jobs folded in)
 //   PUT    /api/scenes/{id}                          save the editor's fields
 //   DELETE /api/scenes/{id}                          delete the scene and its files
-//   POST   /api/scenes/{id}/layers/{lid}/generate    queue the layer's next generation
-//   POST   /api/scenes/{id}/layers/{lid}/cancel      cancel it
+//   POST   /api/scenes/{id}/layers/{lid}/generate    queue the layer's next generation (behind any in flight)
+//   POST   /api/scenes/{id}/layers/{lid}/cancel      cancel {job} (running or queued), or all of them
 //   POST   /api/scenes/{id}/layers/{lid}/versions/{n}/loop {kind}  seamless-loop copy of a motion version
 //                                                               (crossfade | natural | boomerang)
 //   POST   /api/scenes/{id}/layers/{lid}/versions/{n}/motion    where a motion version moves {dataUrl, region}
@@ -145,7 +145,11 @@ func sceneLayerActionHandler(deps *Dependencies) http.HandlerFunc {
 			s, err := tasks.GenerateLayer(r.Context(), deps.Queue, id, lid)
 			sceneReply(w, s, err)
 		case "cancel":
-			s, err := tasks.CancelLayer(deps.Queue, id, lid)
+			var req struct {
+				Job string `json:"job"`
+			}
+			_ = readJSONBody(r, &req)
+			s, err := tasks.CancelLayer(deps.Queue, id, lid, req.Job)
 			sceneReply(w, s, err)
 		default:
 			http.NotFound(w, r)

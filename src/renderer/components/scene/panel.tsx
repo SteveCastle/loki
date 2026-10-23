@@ -3,7 +3,7 @@ import { mediaUrl } from '../../platform';
 import { maskBounds, rectContains, type ContextSize } from './mask';
 import References from './references';
 import type { RefKind } from './refs';
-import { DIALOGUE_LANGUAGES, dialogueSeconds, jobPhase, layerTiming, type DialogueLine, type LayerOptions, type LoopKind, type SceneLayer } from './scene-api';
+import { DIALOGUE_LANGUAGES, MAX_GENERATIONS, dialogueSeconds, generationsInFlight, jobPhase, layerTiming, type DialogueLine, type LayerOptions, type LoopKind, type SceneLayer } from './scene-api';
 
 // Shortcut labels: ⌃/↵ have no glyph in Windows' UI fonts and render as junk.
 const IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
@@ -77,7 +77,8 @@ function Eye({ off }: { off?: boolean }) {
 function statusOf(l: SceneLayer): { text: string; tone: 'busy' | 'error' | 'ok' | 'idle' } {
   if (l.job) {
     const { label, percent } = jobPhase(l.job);
-    return { text: `${label.toLowerCase()}${percent !== null ? ` ${percent}%` : ''}`, tone: 'busy' };
+    const more = l.queued?.length ? ` +${l.queued.length}` : '';
+    return { text: `${label.toLowerCase()}${percent !== null ? ` ${percent}%` : ''}${more}`, tone: 'busy' };
   }
   if (l.error) return { text: 'failed', tone: 'error' };
   if (l.versions.length) return { text: l.active >= 0 ? `v${l.active + 1}/${l.versions.length}` : 'off', tone: 'ok' };
@@ -154,7 +155,8 @@ export interface InspectorProps {
   onPatch: (patch: Partial<SceneLayer>) => void;
   onOptions: (patch: LayerOptions) => void;
   onGenerate: () => void;
-  onCancel: () => void;
+  /** Cancel one generation (its job id), or all of the layer's when omitted. */
+  onCancel: (job?: string) => void;
   onDelete: () => void;
   onClearMask: () => void;
   onDeleteVersion: (n: number) => void;
@@ -294,6 +296,8 @@ export function Inspector(props: InspectorProps) {
   const painted = maskBounds(l.shapes || []);
   const version = l.versions[l.active];
   const running = !!l.job;
+  const queued = l.queued || [];
+  const full = generationsInFlight(l) >= MAX_GENERATIONS;
   const needPrompt = !motion && !l.prompt.trim();
   const outside = version && painted && !rectContains(version.region, painted);
   const ideas = motion ? MOTION_IDEAS : STILL_IDEAS;
@@ -553,31 +557,59 @@ export function Inspector(props: InspectorProps) {
       </div>
 
       <div className="sc-generate">
-        {running ? (
+        {l.job && (
           <>
             <div className="sc-progress">
-              <div className="sc-progress-bar" style={{ width: `${l.job && l.job.total ? (l.job.done / l.job.total) * 100 : 3}%` }} />
+              <div className="sc-progress-bar" style={{ width: `${l.job.total ? (l.job.done / l.job.total) * 100 : 3}%` }} />
             </div>
-            <div className="sc-job-line">{l.job?.step === 'scene-lock'
+            <div className="sc-job-line">{l.job.step === 'scene-lock'
                 ? 'Finishing: blending the motion into the picture (static edges, detail)…'
-                : l.job?.state === 'pending'
+                : l.job.state === 'pending'
                 ? 'Waiting for the GPU (one diffusion job at a time)…'
-                : l.job?.line || 'Starting…'}</div>
-            <button type="button" className="sc-btn" onClick={props.onCancel}>
+                : l.job.line || 'Starting…'}</div>
+            <button type="button" className="sc-btn" onClick={() => props.onCancel(l.job?.id)}>
               Cancel
             </button>
           </>
-        ) : (
-          <button
-            type="button"
-            className="sc-btn sc-btn-primary sc-btn-wide"
-            disabled={busy || !painted || needPrompt}
-            onClick={props.onGenerate}
-            title={!painted ? 'Paint or box the area first' : needPrompt ? 'Describe the edit first' : KEY_GENERATE}
-          >
-            {!painted ? 'Paint the area first' : needPrompt ? 'Describe the edit first' : `${l.versions.length ? 'Generate again' : motion ? 'Animate this area' : 'Generate'}  ${KEY_GENERATE}`}
-          </button>
         )}
+        {queued.length > 0 && (
+          <div className="sc-queue">
+            <div className="sc-queue-head">
+              <span className="sc-label">Up next</span>
+              <button type="button" className="sc-btn sc-btn-quiet" onClick={() => props.onCancel()} title="Cancel the running generation and every queued one">
+                Cancel all
+              </button>
+            </div>
+            {queued.map((j, i) => (
+              <div key={j.id} className="sc-queue-row">
+                <span className="sc-queue-n">{i + 1}</span>
+                <span className="sc-queue-text" title={j.prompt}>{j.note || j.prompt || (motion ? 'Ambient motion' : 'Edit')}</span>
+                <button type="button" className="sc-btn sc-btn-quiet sc-queue-x" onClick={() => props.onCancel(j.id)} title="Remove from the queue">
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+        <button
+          type="button"
+          className={`sc-btn ${running ? '' : 'sc-btn-primary '}sc-btn-wide`}
+          disabled={busy || !painted || needPrompt || full}
+          onClick={props.onGenerate}
+          title={
+            !painted
+              ? 'Paint or box the area first'
+              : needPrompt
+              ? 'Describe the edit first'
+              : full
+              ? `At most ${MAX_GENERATIONS} generations per layer`
+              : running
+              ? `Runs after the ones before it, with the prompt and settings as they are now (${KEY_GENERATE})`
+              : KEY_GENERATE
+          }
+        >
+          {!painted ? 'Paint the area first' : needPrompt ? 'Describe the edit first' : `${running ? 'Queue another' : l.versions.length ? 'Generate again' : motion ? 'Animate this area' : 'Generate'}  ${KEY_GENERATE}`}
+        </button>
         {l.error && <div className="sc-error">{l.error}</div>}
         {outside && !running && <div className="sc-warn">The mask now reaches past the area this version was made for: generate again to fill it.</div>}
       </div>
@@ -637,7 +669,7 @@ export function Inspector(props: InspectorProps) {
                     <button
                       type="button"
                       className="sc-btn"
-                      disabled={busy || !!l.job}
+                      disabled={busy || full}
                       onClick={() => props.onRefinish(l.active)}
                       title="Redo this version's finish (static edges, detail) from the engine's original output with the current Edges/Detail settings, as a new version. No regeneration: a few seconds on the CPU."
                     >

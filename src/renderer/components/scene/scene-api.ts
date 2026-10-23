@@ -27,6 +27,8 @@ export interface SceneJob {
   prompt: string;
   input?: string;
   line?: string;
+  /** What the version it makes will be called (e.g. "re-finished v2"); empty for a plain generation. */
+  note?: string;
   /** The step running now: the engine (retouch / reshoot) or scene-lock (fixing the edges to the still). */
   step?: string;
 }
@@ -105,6 +107,8 @@ export interface SceneLayer {
   versions: SceneVersion[];
   active: number;
   job?: SceneJob | null;
+  /** Generations started while `job` runs, oldest first: each takes its turn on the GPU. */
+  queued?: SceneJob[];
   error?: string;
 }
 
@@ -205,7 +209,8 @@ export const sceneApi = {
   save: (scene: Scene) => call<Scene>('PUT', `/api/scenes/${enc(scene.id)}`, scene),
   remove: (id: string) => call<{ ok: boolean }>('DELETE', `/api/scenes/${enc(id)}`),
   generate: (id: string, layer: string) => call<Scene>('POST', `/api/scenes/${enc(id)}/layers/${enc(layer)}/generate`, {}, 60000),
-  cancel: (id: string, layer: string) => call<Scene>('POST', `/api/scenes/${enc(id)}/layers/${enc(layer)}/cancel`, {}),
+  /** Cancel one generation (running or queued) by its job id, or all of the layer's when job is omitted. */
+  cancel: (id: string, layer: string, job?: string) => call<Scene>('POST', `/api/scenes/${enc(id)}/layers/${enc(layer)}/cancel`, job ? { job } : {}),
   deleteVersion: (id: string, layer: string, n: number) => call<Scene>('DELETE', `/api/scenes/${enc(id)}/layers/${enc(layer)}/versions/${n}`),
   /** Discard every version of a layer but n. */
   keepOnly: (id: string, layer: string, n: number) => call<Scene>('DELETE', `/api/scenes/${enc(id)}/layers/${enc(layer)}/versions?keep=${n}`),
@@ -272,6 +277,14 @@ export function jobPhase(job: SceneJob): { label: 'Queued' | 'Generating' | 'Fin
   return { label: 'Generating', percent };
 }
 
+/** The most generations a layer may have in flight (running + queued). Mirrors sceneMaxGenerations in scene.go. */
+export const MAX_GENERATIONS = 8;
+
+/** A layer's generations still to come: the running one plus those queued behind it. */
+export function generationsInFlight(l: SceneLayer): number {
+  return (l.job ? 1 : 0) + (l.queued?.length || 0);
+}
+
 /** Whether a layer (or the scene's export) has server work in flight. */
 export function sceneBusy(s: Scene): boolean {
   return s.layers.some((l) => !!l.job) || (!!s.render && ['pending', 'in_progress', 'paused'].includes(s.render.state));
@@ -292,7 +305,7 @@ export function mergeServer(local: Scene, server: Scene): Scene {
       const s = byId.get(l.id);
       if (!s) return l;
       const grew = s.versions.length !== l.versions.length;
-      return { ...l, versions: s.versions, job: s.job || null, error: s.error, active: grew ? s.active : l.active };
+      return { ...l, versions: s.versions, job: s.job || null, queued: s.queued || [], error: s.error, active: grew ? s.active : l.active };
     }),
   };
 }

@@ -138,7 +138,7 @@ type SceneJob struct {
 
 // SceneLayer is one masked edit. Kind still = an edited image region; motion
 // = an animated one. The editor owns Name/Hidden/Region/Mask/Shapes/Feather/
-// Prompt/Options/Active; Versions, Job and Error are server-owned.
+// Prompt/Options/Active; Versions, Job, Queued and Error are server-owned.
 type SceneLayer struct {
 	ID     string    `json:"id"`
 	Name   string    `json:"name"`
@@ -156,7 +156,28 @@ type SceneLayer struct {
 	Versions []SceneVersion `json:"versions"`
 	Active   int            `json:"active"` // index into Versions; -1 = none shown
 	Job      *SceneJob      `json:"job,omitempty"`
-	Error    string         `json:"error,omitempty"`
+	// Queued are generations started while Job was in flight, oldest first.
+	// Each is already in the job queue (the GPU runs them one at a time); the
+	// next becomes Job when Job ends, so Job is the only one ever reconciled.
+	Queued []*SceneJob `json:"queued,omitempty"`
+	Error  string      `json:"error,omitempty"`
+}
+
+// jobs is every generation of the layer in flight, the running one first.
+func (l *SceneLayer) jobs() []*SceneJob {
+	if l.Job == nil {
+		return l.Queued
+	}
+	return append([]*SceneJob{l.Job}, l.Queued...)
+}
+
+// startJob makes j the layer's generation, or queues it behind the one in flight.
+func (l *SceneLayer) startJob(j *SceneJob) {
+	if l.Job == nil {
+		l.Job = j
+		return
+	}
+	l.Queued = append(l.Queued, j)
 }
 
 func (l *SceneLayer) active() *SceneVersion {
@@ -212,7 +233,7 @@ var (
 	ErrSceneNotFound = errors.New("scene not found")
 	ErrLayerNotFound = errors.New("layer not found")
 	// ErrSceneBusy: the layer already has a generation in flight.
-	ErrSceneBusy = errors.New("layer is already generating")
+	ErrSceneBusy = fmt.Errorf("layer already has %d generations queued", sceneMaxGenerations)
 )
 
 // sceneMu serialises every load-modify-save of scene documents: edits are
@@ -462,7 +483,9 @@ func DeleteScene(q *jobqueue.Queue, id string) error {
 		return err
 	}
 	for _, l := range s.Layers {
-		cancelSceneJob(q, l.Job, "the scene was deleted")
+		for _, j := range l.jobs() {
+			cancelSceneJob(q, j, "the scene was deleted")
+		}
 	}
 	dir, _ := sceneDir(id)
 	return os.RemoveAll(dir)
@@ -525,7 +548,9 @@ func UpdateScene(q *jobqueue.Queue, id string, in *Scene) (*Scene, error) {
 		if seen[oid] {
 			continue
 		}
-		cancelSceneJob(q, l.Job, fmt.Sprintf("layer %q was deleted in the Scene editor", l.Name))
+		for _, j := range l.jobs() {
+			cancelSceneJob(q, j, fmt.Sprintf("layer %q was deleted in the Scene editor", l.Name))
+		}
 		for _, v := range l.Versions {
 			if inSceneDir(id, v.Path) {
 				os.Remove(v.Path)
@@ -560,8 +585,22 @@ func reconcileScene(q *jobqueue.Queue, s *Scene) bool {
 	}
 	changed := false
 	for _, l := range s.Layers {
-		if l.Job != nil && reconcileLayerJob(q, s, l) {
-			changed = true
+		// When a generation ends the next queued one takes its place, and is
+		// reconciled at once: it may have finished (or failed) meanwhile.
+		for l.Job != nil || len(l.Queued) > 0 {
+			if l.Job == nil {
+				l.Job, l.Queued = l.Queued[0], l.Queued[1:]
+				changed = true
+			}
+			if reconcileLayerJob(q, s, l) {
+				changed = true
+			}
+			if l.Job != nil {
+				break
+			}
+		}
+		if len(l.Queued) == 0 {
+			l.Queued = nil
 		}
 	}
 	if r := s.Render; r != nil && (r.State == "pending" || r.State == "in_progress" || r.State == "paused") {
@@ -586,6 +625,9 @@ func reconcileScene(q *jobqueue.Queue, s *Scene) bool {
 	}
 	return changed
 }
+
+// sceneMaxGenerations bounds a layer's generations in flight (running + queued).
+const sceneMaxGenerations = 8
 
 // sceneMaxRequeue bounds how often a generation's later step is queued again.
 const sceneMaxRequeue = 2
@@ -1380,7 +1422,7 @@ func GenerateLayer(ctx context.Context, q *jobqueue.Queue, id, lid string) (*Sce
 		return nil, ErrLayerNotFound
 	}
 	l := s.Layers[idx]
-	if l.Job != nil {
+	if len(l.jobs()) >= sceneMaxGenerations {
 		return nil, ErrSceneBusy
 	}
 	prompt := strings.TrimSpace(l.Prompt)
@@ -1532,15 +1574,17 @@ func GenerateLayer(ctx context.Context, q *jobqueue.Queue, id, lid string) (*Sce
 	}
 	l.Region = region
 	l.Error = ""
-	l.Job = &SceneJob{ID: ids[len(ids)-1], Chain: ids, State: "pending", Region: region, Prompt: prompt, Input: input}
+	l.startJob(&SceneJob{ID: ids[len(ids)-1], Chain: ids, State: "pending", Region: region, Prompt: prompt, Input: input})
 	if err := saveSceneLocked(s); err != nil {
 		return nil, err
 	}
 	return s, nil
 }
 
-// CancelLayer cancels a layer's generation in flight.
-func CancelLayer(q *jobqueue.Queue, id, lid string) (*Scene, error) {
+// CancelLayer cancels one of a layer's generations in flight (jobID: its
+// SceneJob.ID, running or queued), or all of them when jobID is empty.
+// Cancelling the running one starts the next queued.
+func CancelLayer(q *jobqueue.Queue, id, lid, jobID string) (*Scene, error) {
 	sceneMu.Lock()
 	defer sceneMu.Unlock()
 	s, err := loadSceneLocked(id)
@@ -1548,12 +1592,24 @@ func CancelLayer(q *jobqueue.Queue, id, lid string) (*Scene, error) {
 		return nil, err
 	}
 	for _, l := range s.Layers {
-		if l.ID == lid && l.Job != nil {
-			cancelSceneJob(q, l.Job, fmt.Sprintf("Cancel pressed on layer %q in the Scene editor", l.Name))
-			l.Job = nil
-			l.Error = ""
+		if l.ID != lid {
+			continue
 		}
+		var keep []*SceneJob
+		for _, j := range l.jobs() {
+			if jobID == "" || j.ID == jobID {
+				cancelSceneJob(q, j, fmt.Sprintf("Cancel pressed on layer %q in the Scene editor", l.Name))
+				continue
+			}
+			keep = append(keep, j)
+		}
+		l.Job, l.Queued = nil, nil
+		for _, j := range keep {
+			l.startJob(j)
+		}
+		l.Error = ""
 	}
+	reconcileScene(q, s)
 	if err := saveSceneLocked(s); err != nil {
 		return nil, err
 	}
@@ -1700,7 +1756,7 @@ func RefinishVersion(q *jobqueue.Queue, id, lid string, n int) (*Scene, error) {
 		if l.Kind != SceneKindMotion || n < 0 || n >= len(l.Versions) {
 			return nil, fmt.Errorf("no motion version %d", n+1)
 		}
-		if l.Job != nil {
+		if len(l.jobs()) >= sceneMaxGenerations {
 			return nil, ErrSceneBusy
 		}
 		v := l.Versions[n]
@@ -1726,8 +1782,8 @@ func RefinishVersion(q *jobqueue.Queue, id, lid string, n int) (*Scene, error) {
 			return nil, err
 		}
 		l.Error = ""
-		l.Job = &SceneJob{ID: ids[0], Chain: ids, State: "pending", Region: v.Region, Prompt: v.Prompt, Input: crop,
-			Step: "scene-lock", Note: fmt.Sprintf("re-finished v%d", n+1), Raw: raw}
+		l.startJob(&SceneJob{ID: ids[0], Chain: ids, State: "pending", Region: v.Region, Prompt: v.Prompt, Input: crop,
+			Step: "scene-lock", Note: fmt.Sprintf("re-finished v%d", n+1), Raw: raw})
 		if err := saveSceneLocked(s); err != nil {
 			return nil, err
 		}

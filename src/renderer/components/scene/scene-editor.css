@@ -1027,6 +1027,50 @@ body.sc-body {
   text-overflow: ellipsis;
 }
 
+.sc-queue {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 0;
+  border-top: 1px solid var(--sc-hairline);
+  border-bottom: 1px solid var(--sc-hairline);
+}
+
+.sc-queue-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.sc-queue-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--sc-dim);
+}
+
+.sc-queue-n {
+  flex: none;
+  width: 14px;
+  color: var(--sc-faint);
+  text-align: right;
+}
+
+.sc-queue-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.sc-queue-x {
+  flex: none;
+  height: 22px;
+  padding: 0 6px;
+}
+
 .sc-error,
 .sc-warn {
   padding: 6px 8px;

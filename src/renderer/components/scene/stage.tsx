@@ -453,6 +453,7 @@ export default function Stage(props: StageProps) {
                 <span>
                   {jobPhase(l.job).label}
                   {jobPhase(l.job).percent !== null ? ` ${jobPhase(l.job).percent}%` : '…'}
+                  {l.queued?.length ? ` · ${l.queued.length} queued` : ''}
                 </span>
               </div>
             )
