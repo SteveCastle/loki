@@ -196,9 +196,14 @@ func sceneTrackTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 	if video == "" || prompts == "" {
 		return fail("needs a clip and a prompts file", nil)
 	}
+	// Installed on first use like the other engines (the tool and SAM 3.1's weights, ~1.8 GB).
 	bin, err := segBinary()
 	if err != nil {
-		return fail(err.Error(), err)
+		run, rerr := resolveAITool(ctx, q, j.ID, tag, segSpec)
+		if rerr != nil {
+			return fail(rerr.Error(), rerr)
+		}
+		bin = run.Bin
 	}
 	defer beginGPUHeavy()()
 
@@ -213,7 +218,7 @@ func sceneTrackTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 	args = append(args, video)
 	q.PushJobStdout(j.ID, fmt.Sprintf("%s: tracking %s", tag, filepath.Base(video)))
 	cmd := exec.CommandContext(ctx, bin, args...)
-	cmd.Env = append(os.Environ(), aiToolEnv(aiToolSpec{Bin: "loki-segment"})...)
+	cmd.Env = append(os.Environ(), aiToolEnv(segSpec)...)
 	stderr, _ := cmd.StderrPipe()
 	var stdout strings.Builder
 	cmd.Stdout = &stdout

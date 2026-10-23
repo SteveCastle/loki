@@ -202,6 +202,9 @@ func setupModelGroups() []setupModelGroup {
 			setupModelGroup{ID: "ai-video", Title: "AI video from references (NVIDIA GPU)",
 				Desc:   "Turn photos, clips and audio into video with generated sound, fully on this machine. Needs an RTX 40-series or newer GPU with 24 GB of VRAM.",
 				Models: []string{"loki-reshoot", "minimax-h3-ref2va"}},
+			setupModelGroup{ID: "ai-select", Title: "Object selection and roto (NVIDIA GPU)",
+				Desc:   "Select people and objects by clicking or naming them in the Scene editor, and track them through video for clean, frame-by-frame masks (SAM 3.1).",
+				Models: []string{"loki-segment", "sam3.1"}},
 		)
 	}
 	// Splat training (Lowkey Studio's "3D scene from video / photos"): COLMAP

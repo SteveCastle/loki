@@ -38,16 +38,20 @@ import (
 
 const segSessionIdle = 3 * time.Minute
 
-// segBinary finds loki-segment: $LOKI_SEGMENT_BIN, else PATH. A variable so
-// tests can stand in a fake engine.
+// segSpec is loki-segment and its weights as dependencies (deps/models).
+var segSpec = aiToolSpec{Bin: "loki-segment", Model: "sam3.1"}
+
+// segBinary finds loki-segment without installing anything: $LOKI_SEGMENT_BIN,
+// else PATH, else the Dependencies page's copy. A variable so tests can stand
+// in a fake engine.
 var segBinary = func() (string, error) {
 	if p := strings.TrimSpace(os.Getenv("LOKI_SEGMENT_BIN")); p != "" {
 		return p, nil
 	}
-	if p, err := exec.LookPath("loki-segment"); err == nil {
-		return p, nil
+	if run, ok := locateAITool(segSpec); ok {
+		return run.Bin, nil
 	}
-	return "", errors.New("loki-segment is not installed (put it on PATH: tools/loki-segment)")
+	return "", errors.New("object selection isn't installed: add “Object selection and roto” on the Dependencies page (or put loki-segment on PATH)")
 }
 
 // gpuHeavy counts diffusion / tracking runs holding the GPU right now.
@@ -113,7 +117,7 @@ func (s *segSession) start() error {
 		return err
 	}
 	cmd := exec.Command(bin, "--serve", "-q")
-	cmd.Env = append(os.Environ(), aiToolEnv(aiToolSpec{Bin: "loki-segment"})...)
+	cmd.Env = append(os.Environ(), aiToolEnv(segSpec)...)
 	in, err := cmd.StdinPipe()
 	if err != nil {
 		return err

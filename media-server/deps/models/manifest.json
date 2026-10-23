@@ -372,6 +372,59 @@
         ]
       },
       {
+          "id": "loki-segment",
+          "name": "loki-segment",
+          "category": "tool",
+          "feature": "Object selection and roto",
+          "description": "Command-line engine for the Scene editor's Select tool and roto: picks objects by click, box or name and tracks them through video (SAM 3.1). Needs an NVIDIA RTX 40-series (or newer) GPU; Windows or Linux.",
+          "version": "latest",
+          "consumers": [
+              "scene-track"
+          ],
+          "size_bytes": 20000000,
+          "files": [
+              {
+                  "url": "https://github.com/SteveCastle/loki/releases/latest/download/loki-segment-windows-amd64.zip",
+                  "rel_path": "loki-segment.exe",
+                  "sha256_url": "https://github.com/SteveCastle/loki/releases/latest/download/loki-segment-windows-amd64.zip.sha256",
+                  "os": "windows",
+                  "size_bytes": 20000000,
+                  "archive": "zip",
+                  "archive_member": "loki-segment-windows-amd64/loki-segment.exe",
+                  "exec": true
+              },
+              {
+                  "url": "https://github.com/SteveCastle/loki/releases/latest/download/loki-segment-linux-amd64.zip",
+                  "rel_path": "loki-segment",
+                  "sha256_url": "https://github.com/SteveCastle/loki/releases/latest/download/loki-segment-linux-amd64.zip.sha256",
+                  "os": "linux",
+                  "size_bytes": 20000000,
+                  "archive": "zip",
+                  "archive_member": "loki-segment-linux-amd64/loki-segment",
+                  "exec": true
+              }
+          ]
+      },
+      {
+          "id": "sam3.1",
+          "name": "SAM 3.1 (fp16)",
+          "feature": "Object selection and roto",
+          "description": "Meta's Segment Anything 3.1 weights used by loki-segment (SAM License: free to use and redistribute with the license text; see tools/loki-segment/LICENSE-SAM.txt).",
+          "version": "1.0.0",
+          "consumers": [
+              "scene-track"
+          ],
+          "size_bytes": 1745546848,
+          "files": [
+              {
+                  "url": "https://huggingface.co/Comfy-Org/sam3.1/resolve/main/checkpoints/sam3.1_multiplex_fp16.safetensors",
+                  "rel_path": "sam3.1_multiplex_fp16.safetensors",
+                  "sha256": "9ba99c92703c2e8b4f47de2d34a539bb8e18923049e238b780d70dbe6368eb03",
+                  "size_bytes": 1745546848
+              }
+          ]
+      },
+      {
         "id": "fasth3-omni",
         "name": "FastH3 Omni reference-to-video (int8, 8-step)",
         "feature": "AI video from references",
