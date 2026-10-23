@@ -8,6 +8,10 @@ import { seededShuffle } from './seeded-random';
 // Single-entry memoization cache keyed by libraryLoadId + filters + sortBy
 let lastCacheKey: string | null = null;
 let lastResult: Item[] | null = null;
+// The input behind lastResult, so stream order can extend it (below).
+let lastLibrary: Item[] | null = null;
+let lastFilters: FilterOption | null = null;
+let lastSortBy: SortByOption | null = null;
 
 /** Whether the media-type filter setting lets `itemPath` into the view. */
 export function passesTypeFilter(filters: FilterOption, itemPath: string) {
@@ -35,11 +39,41 @@ function filter(
   if (!textFilter && !filters && !sortBy) {
     lastCacheKey = cacheKey;
     lastResult = library;
+    lastSortBy = null; // not a stream result: never extend it
     return library;
   }
+  // A scan batch only appends to the library, and every batch mints a new
+  // libraryLoadId, so stream order used to re-run the type filter over the
+  // whole library per 500 files. When this library extends the one behind
+  // the cached stream result, filter just the appended tail.
+  if (
+    sortBy === 'stream' &&
+    lastSortBy === 'stream' &&
+    lastFilters === filters &&
+    lastLibrary &&
+    lastResult &&
+    library.length >= lastLibrary.length &&
+    lastLibrary.length > 0 &&
+    library[0] === lastLibrary[0] &&
+    library[lastLibrary.length - 1] === lastLibrary[lastLibrary.length - 1]
+  ) {
+    const tail: Item[] = [];
+    for (let i = lastLibrary.length; i < library.length; i++) {
+      if (passesTypeFilter(filters, library[i].path)) tail.push(library[i]);
+    }
+    const result = tail.length ? lastResult.concat(tail) : lastResult;
+    lastCacheKey = cacheKey;
+    lastResult = result;
+    lastLibrary = library;
+    return result;
+  }
+
   const filtered = library.filter((item) =>
     passesTypeFilter(filters, item.path)
   );
+  lastLibrary = library;
+  lastFilters = filters;
+  lastSortBy = sortBy;
 
   if (sortBy === 'stream') {
     // Preserve insertion order during streaming

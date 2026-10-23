@@ -41,6 +41,7 @@ import { cursorAfterRemoval, libraryWithout } from './library-cursor';
 import { extendSelection } from './context-selection';
 import { movedPath, moveRange } from './media-path';
 import filter, { passesTypeFilter } from './filter';
+import { appendUnique } from './scan-index';
 import {
   initSessionStore,
   getSessionValue,
@@ -2119,29 +2120,37 @@ export const libraryMachine = createMachine(
                   !event.data?.scanId || event.data.scanId === context.fsScanId,
                 actions: assign<LibraryState, AnyEventObject>(
                   (context, event) => {
+                    // Case-insensitive de-dupe (Windows), kept incrementally
+                    // across batches — see scan-index.ts.
+                    const incoming = (event.data?.files || []) as Item[];
+                    const updatedLibrary = appendUnique(
+                      context.library,
+                      incoming
+                    );
+
+                    const nextLibraryLoadId = newLoadId();
+                    let nextCursor = context.cursor;
+                    // Once streaming, the view is in insertion order and a
+                    // batch only appends, so the selected item keeps its
+                    // index: skip the O(library) view rebuild + path search
+                    // that made every batch of a big scan slower than the last.
+                    if (context.streaming) {
+                      return {
+                        library: updatedLibrary,
+                        cursor: nextCursor,
+                        libraryLoadId: nextLibraryLoadId,
+                        streaming: true,
+                      };
+                    }
                     const currentView = filter(
                       context.libraryLoadId,
                       context.textFilter,
                       context.library,
                       context.settings.filters,
-                      (context.streaming
-                        ? 'stream'
-                        : context.settings.sortBy) as any
+                      context.settings.sortBy
                     );
                     const previousSelectedPath =
                       context.pinnedPath || currentView[context.cursor]?.path;
-                    // Use case-insensitive path matching to avoid duplicates on Windows
-                    const existing = new Set(
-                      context.library.map((item) => item.path.toLowerCase())
-                    );
-                    const incoming = (event.data?.files || []) as Item[];
-                    const newItems = incoming.filter(
-                      (f) => f?.path && !existing.has(f.path.toLowerCase())
-                    );
-                    const updatedLibrary = context.library.concat(newItems);
-
-                    const nextLibraryLoadId = newLoadId();
-                    let nextCursor = context.cursor;
                     if (previousSelectedPath) {
                       // Same id the view will render under — see the onDone
                       // handler above.
@@ -2150,15 +2159,15 @@ export const libraryMachine = createMachine(
                         context.textFilter,
                         updatedLibrary,
                         context.settings.filters,
-                        (context.streaming
-                          ? 'stream'
-                          : context.settings.sortBy) as any
+                        context.settings.sortBy
                       );
+                      const target = path
+                        .normalize(previousSelectedPath)
+                        .toLowerCase();
                       const newIndex = sorted.findIndex(
                         (item: Item) =>
                           item?.path &&
-                          path.normalize(item.path).toLowerCase() ===
-                            path.normalize(previousSelectedPath).toLowerCase()
+                          path.normalize(item.path).toLowerCase() === target
                       );
                       if (newIndex !== -1) {
                         updatePersistedCursor(context, newIndex);
@@ -2663,75 +2672,8 @@ export const libraryMachine = createMachine(
             states: {
               idle: {
                 on: {
-                  LOAD_FILES_BATCH: {
-                    actions: assign<LibraryState, AnyEventObject>({
-                      library: (context, event) => {
-                        // Use the sorted/filtered view to look up the current item,
-                        // since cursor is an index into the sorted view, not the raw library
-                        const currentView = filter(
-                          context.libraryLoadId,
-                          context.textFilter,
-                          context.library,
-                          context.settings.filters,
-                          context.settings.sortBy
-                        );
-                        const previousSelectedPath =
-                          context.pinnedPath ||
-                          currentView[context.cursor]?.path;
-                        // Use case-insensitive path matching to avoid duplicates on Windows
-                        const existing = new Set(
-                          context.library.map((item) => item.path.toLowerCase())
-                        );
-                        const incoming = (event.data?.files || []) as Item[];
-                        const newItems = incoming.filter(
-                          (f) => f?.path && !existing.has(f.path.toLowerCase())
-                        );
-                        const updatedLibrary = context.library.concat(newItems);
-
-                        // Stashed for the libraryLoadId assigner below: the
-                        // cursor lookup must sort under the id the view will
-                        // actually render with, or shuffle/battle order puts
-                        // the cursor on the wrong item.
-                        const nextLibraryLoadId = newLoadId();
-                        (event as any).__newLoadId = nextLibraryLoadId;
-
-                        if (previousSelectedPath) {
-                          const sorted = filter(
-                            nextLibraryLoadId,
-                            context.textFilter,
-                            updatedLibrary,
-                            context.settings.filters,
-                            (context.streaming
-                              ? 'stream'
-                              : context.settings.sortBy) as any
-                          );
-                          const newIndex = sorted.findIndex(
-                            (item: Item) =>
-                              item?.path &&
-                              path.normalize(item.path).toLowerCase() ===
-                                path.normalize(previousSelectedPath).toLowerCase()
-                          );
-                          if (newIndex !== -1) {
-                            updatePersistedCursor(context, newIndex);
-                            (event as any).__newCursor = newIndex;
-                          }
-                        }
-
-                        return updatedLibrary;
-                      },
-                      cursor: (context, event) => {
-                        const computed = (event as any).__newCursor as
-                          | number
-                          | undefined;
-                        return typeof computed === 'number'
-                          ? computed
-                          : context.cursor;
-                      },
-                      libraryLoadId: (_, event) =>
-                        ((event as any).__newLoadId as string) || newLoadId(),
-                      streaming: () => true,
-                    }),
-                  },
+                  // No LOAD_FILES_BATCH here: a scan only streams inside loadingFromFS,
+                  // whose exit cancels it, so a batch arriving now is a stale leftover.
                   SET_SCROLL_POSITION: {
                     actions: assign<LibraryState, AnyEventObject>({
                       scrollPosition: (context, event) => {
@@ -2913,72 +2855,8 @@ export const libraryMachine = createMachine(
             ],
             on: {
               ...queryMutationOn,
-              LOAD_FILES_BATCH: {
-                actions: assign<LibraryState, AnyEventObject>({
-                  library: (context, event) => {
-                    // Use the sorted/filtered view to look up the current item,
-                    // since cursor is an index into the sorted view, not the raw library
-                    const currentView = filter(
-                      context.libraryLoadId,
-                      context.textFilter,
-                      context.library,
-                      context.settings.filters,
-                      context.settings.sortBy
-                    );
-                    const previousSelectedPath =
-                      context.pinnedPath ||
-                      currentView[context.cursor]?.path;
-                    // Use case-insensitive path matching to avoid duplicates on Windows
-                    const existing = new Set(
-                      context.library.map((item) => item.path.toLowerCase())
-                    );
-                    const incoming = (event.data?.files || []) as Item[];
-                    const newItems = incoming.filter(
-                      (f) => f?.path && !existing.has(f.path.toLowerCase())
-                    );
-                    const updatedLibrary = context.library.concat(newItems);
-                    // Stashed for the libraryLoadId assigner below: the cursor
-                    // lookup must sort under the id the view will actually
-                    // render with, or shuffle/battle order puts the cursor on
-                    // the wrong item.
-                    const nextLibraryLoadId = newLoadId();
-                    (event as any).__newLoadId = nextLibraryLoadId;
-                    if (previousSelectedPath) {
-                      const sorted = filter(
-                        nextLibraryLoadId,
-                        context.textFilter,
-                        updatedLibrary,
-                        context.settings.filters,
-                        (context.streaming
-                          ? 'stream'
-                          : context.settings.sortBy) as any
-                      );
-                      const newIndex = sorted.findIndex(
-                        (item: Item) =>
-                          item?.path &&
-                          path.normalize(item.path).toLowerCase() ===
-                            path.normalize(previousSelectedPath).toLowerCase()
-                      );
-                      if (newIndex !== -1) {
-                        updatePersistedCursor(context, newIndex);
-                        (event as any).__newCursor = newIndex;
-                      }
-                    }
-                    return updatedLibrary;
-                  },
-                  cursor: (context, event) => {
-                    const computed = (event as any).__newCursor as
-                      | number
-                      | undefined;
-                    return typeof computed === 'number'
-                      ? computed
-                      : context.cursor;
-                  },
-                  libraryLoadId: (_, event) =>
-                    ((event as any).__newLoadId as string) || newLoadId(),
-                  streaming: () => true,
-                }),
-              },
+              // No LOAD_FILES_BATCH here: a scan only streams inside loadingFromFS,
+              // whose exit cancels it, so a batch arriving now is a stale leftover.
               SELECT_FILE: {
                 target: 'selecting',
               },
