@@ -2768,7 +2768,7 @@ func main() {
 		Addr: appconfig.Get().ListenAddr(),
 		// Activity tracking wraps everything: user-intent requests feed the
 		// auto-scheduler's "app is in use" signal.
-		Handler: withActivityTracking(mux),
+		Handler: withActivityTracking(withCompression(mux)),
 		// Bound how long a client may dribble headers or hold an idle
 		// keep-alive socket. No WriteTimeout: SSE and video streams are
 		// long-lived by design.

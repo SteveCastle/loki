@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -2227,6 +2229,24 @@ func lokiDBLoadHandler(deps *Dependencies) http.HandlerFunc {
 
 // ---- SPA handler ----
 
+// spaETags caches each embedded SPA file's content-hash ETag; the embedded
+// FS never changes while the process runs.
+var spaETags sync.Map // path -> string
+
+func spaETag(spaFS fs.FS, name string) string {
+	if v, ok := spaETags.Load(name); ok {
+		return v.(string)
+	}
+	data, err := fs.ReadFile(spaFS, name)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(data)
+	etag := `"` + hex.EncodeToString(sum[:12]) + `"`
+	spaETags.Store(name, etag)
+	return etag
+}
+
 func lokiSPAHandler(spaFS fs.FS) http.HandlerFunc {
 	fileServer := http.FileServer(http.FS(spaFS))
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -2242,6 +2262,12 @@ func lokiSPAHandler(spaFS fs.FS) http.HandlerFunc {
 			// any heuristic caching serves a stale app after a server
 			// upgrade. Force revalidation on every load.
 			w.Header().Set("Cache-Control", "no-cache")
+			// ...but give revalidation something to match: without a
+			// validator every load re-downloaded the multi-MB chunks. A
+			// content-hash ETag lets ServeContent answer 304.
+			if etag := spaETag(spaFS, reqPath); etag != "" {
+				w.Header().Set("ETag", etag)
+			}
 			// Serve the static file
 			http.StripPrefix("/app/", fileServer).ServeHTTP(w, r)
 			return
