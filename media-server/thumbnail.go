@@ -110,23 +110,40 @@ func thumbKey(mediaPath, cache string, timeStamp float64) string {
 // and deduplication. If the same thumbnail is already being generated, it waits
 // for that to finish instead of spawning a second ffmpeg process.
 // Returns the thumbnail path and any error.
-func generateThumbnailThrottled(mediaPath, basePath, cache string, timeStamp float64) (string, error) {
+//
+// Waiting (for a semaphore slot or for another request's in-flight run) ends
+// when ctx does: a fast scroll past hundreds of uncached tiles used to queue
+// an ffmpeg run for every one of them, and the tiles actually on screen
+// waited behind the abandoned ones. A generation that has started is left
+// to finish so its result is cached.
+func generateThumbnailThrottled(ctx context.Context, mediaPath, basePath, cache string, timeStamp float64) (string, error) {
 	key := thumbKey(mediaPath, cache, timeStamp)
+	thumbPath := getThumbnailPath(mediaPath, basePath, cache, timeStamp)
 
-	// Check if this thumbnail is already being generated
-	inflightMu.Lock()
-	if ch, ok := inflight[key]; ok {
+	for attempt := 0; ; attempt++ {
+		inflightMu.Lock()
+		ch, busy := inflight[key]
+		if !busy {
+			break // still holding inflightMu
+		}
 		inflightMu.Unlock()
 		// Wait for the in-flight generation to finish
-		<-ch
+		select {
+		case <-ch:
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
 		// The other goroutine already generated it; check the result on disk
-		thumbPath := getThumbnailPath(mediaPath, basePath, cache, timeStamp)
 		if thumbnailFileValid(thumbPath) {
 			return thumbPath, nil
 		}
-		return "", fmt.Errorf("in-flight thumbnail generation failed for %s", mediaPath)
+		// Its requester may have given up before generating; try once
+		// ourselves rather than failing.
+		if attempt > 0 {
+			return "", fmt.Errorf("in-flight thumbnail generation failed for %s", mediaPath)
+		}
 	}
-	// Register ourselves as in-flight
+	// Register ourselves as in-flight (inflightMu is held)
 	done := make(chan struct{})
 	inflight[key] = done
 	inflightMu.Unlock()
@@ -138,8 +155,12 @@ func generateThumbnailThrottled(mediaPath, basePath, cache string, timeStamp flo
 		inflightMu.Unlock()
 	}()
 
-	// Acquire semaphore slot (blocks if 4 ffmpeg processes already running)
-	thumbSem <- struct{}{}
+	// Acquire semaphore slot (waits while 4 ffmpeg processes are running)
+	select {
+	case thumbSem <- struct{}{}:
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
 	defer func() { <-thumbSem }()
 
 	return generateThumbnail(mediaPath, basePath, cache, timeStamp)
@@ -209,7 +230,11 @@ func generateS3ThumbnailThrottled(ctx context.Context, mediaPath string, backend
 	inflightMu.Lock()
 	if ch, ok := inflight[key]; ok {
 		inflightMu.Unlock()
-		<-ch
+		select {
+		case <-ch:
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
 		thumbPath := getS3ThumbnailPath(mediaPath, backend, cache, timeStamp)
 		exists, _ := backend.Exists(ctx, thumbPath)
 		if exists {
@@ -228,7 +253,11 @@ func generateS3ThumbnailThrottled(ctx context.Context, mediaPath string, backend
 		inflightMu.Unlock()
 	}()
 
-	thumbSem <- struct{}{}
+	select {
+	case thumbSem <- struct{}{}:
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
 	defer func() { <-thumbSem }()
 
 	// Download source to temp file

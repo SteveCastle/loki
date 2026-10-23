@@ -834,7 +834,7 @@ func lokiMediaPreviewHandler(deps *Dependencies) http.HandlerFunc {
 			return
 		}
 
-		generated, err := generateThumbnailThrottled(req.Path, basePath, cache, req.TimeStamp)
+		generated, err := generateThumbnailThrottled(r.Context(), req.Path, basePath, cache, req.TimeStamp)
 		if err != nil {
 			log.Printf("Thumbnail generation failed for %s: %v", req.Path, err)
 			httpError(w, fmt.Sprintf("thumbnail generation failed: %v", err), http.StatusInternalServerError)
@@ -970,7 +970,7 @@ func mediaThumbnailHandler(deps *Dependencies) http.HandlerFunc {
 			}
 
 			// Generate the thumbnail
-			generated, genErr := generateThumbnailThrottled(filePath, basePath, cache, timeStamp)
+			generated, genErr := generateThumbnailThrottled(r.Context(), filePath, basePath, cache, timeStamp)
 			if genErr != nil {
 				log.Printf("Thumbnail generation failed for %s: %v", filePath, genErr)
 				http.Error(w, "Thumbnail generation failed", http.StatusInternalServerError)
@@ -1876,7 +1876,7 @@ func resolveThumbnailPath(ctx context.Context, deps *Dependencies, mediaPath, ca
 	generated := getThumbnailPath(mediaPath, basePath, cache, timeStamp)
 	if !thumbnailFileValid(generated) {
 		var genErr error
-		generated, genErr = generateThumbnailThrottled(mediaPath, basePath, cache, timeStamp)
+		generated, genErr = generateThumbnailThrottled(ctx, mediaPath, basePath, cache, timeStamp)
 		if genErr != nil {
 			return "", genErr
 		}
@@ -2097,7 +2097,7 @@ func lokiRegenerateThumbnailHandler(deps *Dependencies) http.HandlerFunc {
 		oldPath := getThumbnailPath(req.Path, basePath, cache, req.TimeStamp)
 		os.Remove(oldPath)
 
-		generated, err := generateThumbnailThrottled(req.Path, basePath, cache, req.TimeStamp)
+		generated, err := generateThumbnailThrottled(r.Context(), req.Path, basePath, cache, req.TimeStamp)
 		if err != nil {
 			httpError(w, err.Error(), http.StatusInternalServerError)
 			return
