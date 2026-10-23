@@ -88,7 +88,12 @@ export type Channels =
   | 'list-monitors'
   | 'set-wallpaper'
   | 'studio-media-saved'
-  | 'startup-first-media';
+  | 'startup-first-media'
+  | 'server-install-status'
+  | 'server-install-dismiss-prompt'
+  | 'server-install'
+  | 'server-start'
+  | 'server-install-progress';
 
 // Renderer -> main error/diagnostics channel. Fire-and-forget; persisted to
 // <userData>/app-log.jsonl alongside main-process errors.

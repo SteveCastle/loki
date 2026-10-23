@@ -16,6 +16,7 @@ import ScenePickBanner from './components/scene/pick-banner';
 import AutoPlayController from './components/controls/autoplay-controller';
 import { PERFORMANCE_CONSTANTS } from './constants/performance';
 import { OnboardingGate } from './onboarding/OnboardingGate';
+import { ServerInstallPrompt } from './components/controls/server-install';
 import {
   useLongPressContextMenu,
   useBlockBrowserPinchZoom,
@@ -85,6 +86,7 @@ export default function App(): JSX.Element {
         <ToastSystem />
         <ScenePickBanner />
         <OnboardingGate />
+        <ServerInstallPrompt />
       </DndProvider>
     </QueryClientProvider>
   );

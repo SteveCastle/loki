@@ -26,6 +26,7 @@ import DbPathWidget from './db-path';
 import GridSizePicker from './gridsize-picker';
 import CacheSetting from './cache-setting';
 import LoginWidget from './login-widget';
+import { ServerInstallWidget } from './server-install';
 import CommandPaletteSearch from './command-palette-search';
 
 // Assets (Icons)
@@ -553,6 +554,7 @@ const MenuContentArea: React.FC<MenuContentAreaProps> = React.memo(
             <div className="tabContent">
               {canWrite && <DbPathWidget />}
               <CacheSetting />
+              <ServerInstallWidget />
               <LoginWidget />
             </div>
           );

@@ -27,6 +27,7 @@ import { isValidFilePath, filePathFromArgv } from './file-handling';
 import { registerStudioProtocol, openStudioWindow } from './studio-window';
 import { openSceneWindow, registerScenePickRelay } from './scene-window';
 import { registerWallpaperHandlers } from './wallpaper';
+import { registerServerInstallHandlers } from './server-install';
 import { heicDisplayFile, isHeicPath } from './heic';
 import {
   mark,
@@ -337,6 +338,7 @@ ipcMain.on('set-always-on-top', async (event, args) => {
 
 // Electron Store Provider (for settings/config)
 const store = new Store();
+registerServerInstallHandlers(store);
 
 // Session Store Provider (for ephemeral session data like library, cursor, etc.)
 registerSessionStoreHandlers();

@@ -1,0 +1,121 @@
+.ServerInstallWidget {
+  width: 100%;
+  padding: 8px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  box-sizing: border-box;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.ServerInstallWidget .server-install-progress {
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.ServerInstallWidget .server-install-progress.error {
+  color: #ff6b6b;
+}
+
+.ServerInstallWidget button {
+  background: rgba(0, 150, 136, 0.3);
+  color: white;
+  border: 1px solid rgba(0, 150, 136, 0.4);
+  padding: 4px 8px;
+  border-radius: 2px;
+  cursor: pointer;
+  font-size: 11px;
+  transition: all 0.2s;
+}
+
+.ServerInstallWidget button:hover:not(:disabled) {
+  background: rgba(0, 150, 136, 0.5);
+}
+
+.ServerInstallWidget button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.server-install-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+
+.server-install-modal {
+  background: var(--bg-secondary, #1e1e1e);
+  border: 1px solid var(--border-color, #333);
+  border-radius: 8px;
+  width: 440px;
+  max-width: 90vw;
+  padding: 20px 24px;
+  color: var(--text-primary, #e0e0e0);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.server-install-modal h3 {
+  margin: 0 0 8px;
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.server-install-modal p {
+  margin: 0 0 10px;
+  opacity: 0.85;
+}
+
+.server-install-modal p.error {
+  color: #ff6b6b;
+  opacity: 1;
+}
+
+.server-install-bar {
+  height: 4px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 2px;
+  overflow: hidden;
+  margin-bottom: 12px;
+}
+
+.server-install-bar > div {
+  height: 100%;
+  background: #00c896;
+  transition: width 150ms;
+}
+
+.server-install-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.server-install-actions button {
+  background: transparent;
+  color: inherit;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  padding: 6px 14px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.server-install-actions button.primary {
+  background: rgba(0, 150, 136, 0.5);
+  border-color: rgba(0, 150, 136, 0.7);
+}
+
+.server-install-actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
