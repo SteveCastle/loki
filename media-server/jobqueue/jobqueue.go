@@ -555,7 +555,7 @@ func (q *Queue) AddJob(id string, command string, arguments []string, input stri
 	}
 
 	// Broadcast the new job to the Signal channel
-	q.Signal <- id
+	q.signalLocked(id)
 	error := serializeListUpdate("create", job)
 	if error != nil {
 		return "", error
@@ -644,7 +644,7 @@ func (q *Queue) CopyJob(id string) (string, error) {
 	}
 
 	// Broadcast the new job to the Signal channel
-	q.Signal <- newID
+	q.signalLocked(newID)
 	error := serializeListUpdate("create", &newJob)
 	if error != nil {
 		return "", error
@@ -1084,6 +1084,18 @@ func (q *Queue) RegisterOutputFiles(id string, paths []string) error {
 	}
 
 	return nil
+}
+
+// signalLocked wakes the runner for id without ever blocking while q.mu is
+// held. The runner's consumer takes q.mu (ClaimJob) after receiving, so a
+// blocking send on a full channel under the lock deadlocks the whole queue;
+// when the buffer is full the send is handed to a goroutine instead.
+func (q *Queue) signalLocked(id string) {
+	select {
+	case q.Signal <- id:
+	default:
+		go func() { q.Signal <- id }()
+	}
 }
 
 // CompleteJob marks the specified job as completed if it is currently InProgress.
