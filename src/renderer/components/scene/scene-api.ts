@@ -256,6 +256,19 @@ export function loopSpeed(L: number, d: number): number {
   return L / (n * d);
 }
 
+/**
+ * What a layer's generation is doing, for people: Queued (waiting for the GPU), Generating (the engine), Finishing
+ * (the scene-lock pass: static edges, detail; also a Re-finish) or Paused, with its progress when known.
+ */
+export function jobPhase(job: SceneJob): { label: 'Queued' | 'Generating' | 'Finishing' | 'Paused'; percent: number | null } {
+  const percent = job.total > 0 ? Math.round((job.done / job.total) * 100) : null;
+  if (job.state === 'paused') return { label: 'Paused', percent };
+  // The finish step queues behind nothing heavy: once it's the current step it is finishing, even if not started.
+  if (job.step === 'scene-lock') return { label: 'Finishing', percent };
+  if (job.state === 'pending') return { label: 'Queued', percent: null };
+  return { label: 'Generating', percent };
+}
+
 /** Whether a layer (or the scene's export) has server work in flight. */
 export function sceneBusy(s: Scene): boolean {
   return s.layers.some((l) => !!l.job) || (!!s.render && ['pending', 'in_progress', 'paused'].includes(s.render.state));

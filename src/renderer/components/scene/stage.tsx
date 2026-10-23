@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { mediaUrl } from '../../platform';
 import { pointInRect, simplifyPath, type MaskOp, type Rect } from './mask';
-import { layerRate, layerTiming, type Scene, type SceneLayer } from './scene-api';
+import { jobPhase, layerRate, layerTiming, type Scene, type SceneLayer } from './scene-api';
 
 // The canvas of the Scene editor: the base frame with every generated layer
 // composited live the way the export will be (each result placed over the
@@ -451,8 +451,8 @@ export default function Stage(props: StageProps) {
             !compare && (
               <div key={`job-${l.id}`} className="sc-job" style={regionStyle(l.job.region, scene)}>
                 <span>
-                  {l.job.state === 'pending' ? 'Queued' : 'Generating'}
-                  {l.job.total > 0 ? ` ${Math.round((l.job.done / l.job.total) * 100)}%` : '…'}
+                  {jobPhase(l.job).label}
+                  {jobPhase(l.job).percent !== null ? ` ${jobPhase(l.job).percent}%` : '…'}
                 </span>
               </div>
             )

@@ -175,3 +175,16 @@ describe('scene dialogue', () => {
     expect(dialogueSeconds([{ text: 'こんにちは、元気ですか？今日', lang: 'Japanese' }])).toBeCloseTo(14 / 6 + 0.6);
   });
 });
+
+describe('scene job phases', () => {
+  // eslint-disable-next-line global-require
+  const { jobPhase } = require('../renderer/components/scene/scene-api');
+  const job = (p: Record<string, unknown>) => ({ id: 'j', state: 'in_progress', done: 0, total: 0, region: { x: 0, y: 0, w: 1, h: 1 }, prompt: '', ...p });
+  it('names the engine and the finish step differently', () => {
+    expect(jobPhase(job({ state: 'pending', step: 'reshoot' }))).toEqual({ label: 'Queued', percent: null });
+    expect(jobPhase(job({ step: 'reshoot', done: 4, total: 10 }))).toEqual({ label: 'Generating', percent: 40 });
+    expect(jobPhase(job({ state: 'pending', step: 'scene-lock' }))).toEqual({ label: 'Finishing', percent: null });
+    expect(jobPhase(job({ step: 'scene-lock', done: 1, total: 2 }))).toEqual({ label: 'Finishing', percent: 50 });
+    expect(jobPhase(job({ state: 'paused', done: 3, total: 10 }))).toEqual({ label: 'Paused', percent: 30 });
+  });
+});

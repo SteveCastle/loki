@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { mediaUrl } from '../../platform';
 import { maskBounds, rectContains, type ContextSize } from './mask';
-import { DIALOGUE_LANGUAGES, dialogueSeconds, layerTiming, type DialogueLine, type LayerOptions, type LoopKind, type SceneLayer } from './scene-api';
+import { DIALOGUE_LANGUAGES, dialogueSeconds, jobPhase, layerTiming, type DialogueLine, type LayerOptions, type LoopKind, type SceneLayer } from './scene-api';
 
 // The Scene editor's right-hand panel: the layer stack (top of the list = top
 // of the picture) and the selected layer's settings, generation and versions.
@@ -69,10 +69,8 @@ function Eye({ off }: { off?: boolean }) {
 
 function statusOf(l: SceneLayer): { text: string; tone: 'busy' | 'error' | 'ok' | 'idle' } {
   if (l.job) {
-    if (l.job.step === 'scene-lock') return { text: 'locking edges', tone: 'busy' };
-    if (l.job.state === 'pending') return { text: 'queued', tone: 'busy' };
-    if (l.job.state === 'paused') return { text: 'paused', tone: 'busy' };
-    return { text: l.job.total ? `${Math.round((l.job.done / l.job.total) * 100)}%` : 'starting', tone: 'busy' };
+    const { label, percent } = jobPhase(l.job);
+    return { text: `${label.toLowerCase()}${percent !== null ? ` ${percent}%` : ''}`, tone: 'busy' };
   }
   if (l.error) return { text: 'failed', tone: 'error' };
   if (l.versions.length) return { text: l.active >= 0 ? `v${l.active + 1}/${l.versions.length}` : 'off', tone: 'ok' };
@@ -523,7 +521,7 @@ export function Inspector(props: InspectorProps) {
               <div className="sc-progress-bar" style={{ width: `${l.job && l.job.total ? (l.job.done / l.job.total) * 100 : 3}%` }} />
             </div>
             <div className="sc-job-line">{l.job?.step === 'scene-lock'
-                ? 'Locking the still parts to the picture so the edges stay static…'
+                ? 'Finishing: blending the motion into the picture (static edges, detail)…'
                 : l.job?.state === 'pending'
                 ? 'Waiting for the GPU (one diffusion job at a time)…'
                 : l.job?.line || 'Starting…'}</div>
