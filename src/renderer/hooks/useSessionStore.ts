@@ -74,6 +74,7 @@ let initPromise: Promise<void> | null = null;
 // Debounce timers for each key
 const debounceTimers: Partial<Record<SessionKey, NodeJS.Timeout>> = {};
 let batchTimer: NodeJS.Timeout | null = null;
+let pendingBatch: Partial<SessionData> = {};
 
 // Debounce durations (ms)
 const DEBOUNCE_TIMES: Record<SessionKey, number> = {
@@ -186,6 +187,8 @@ export function setSessionValue<K extends SessionKey>(
 ): void {
   // Update cache immediately for fast reads
   cache[key] = value;
+  // This newer value wins over any copy still waiting in a batch.
+  delete pendingBatch[key];
 
   // Clear existing timer for this key
   if (debounceTimers[key]) {
@@ -223,13 +226,18 @@ export function setSessionValues(updates: Partial<SessionData>): void {
     }
   }
 
-  // Use a combined batch timer
+  // Use a combined batch timer. Merge into the batch still waiting: a second
+  // call within the debounce used to replace the first one's updates, so
+  // e.g. a library saved just before its FS base never reached the store.
   if (batchTimer) {
     clearTimeout(batchTimer);
   }
+  pendingBatch = { ...pendingBatch, ...updates };
 
   batchTimer = setTimeout(() => {
-    sessionStore.setMany(updates).catch((error) => {
+    const batch = pendingBatch;
+    pendingBatch = {};
+    sessionStore.setMany(batch).catch((error) => {
       console.error('[SessionStore] Failed to write batch:', error);
     });
     batchTimer = null;
@@ -281,6 +289,12 @@ export async function flushSession(): Promise<void> {
     if (timer) clearTimeout(timer);
     delete debounceTimers[key as SessionKey];
   }
+
+  if (batchTimer) {
+    clearTimeout(batchTimer);
+    batchTimer = null;
+  }
+  pendingBatch = {};
 
   // Write current cache state
   await sessionStore.setMany(cache);

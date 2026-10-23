@@ -71,6 +71,13 @@ const DEFAULT_SESSION_DATA: SessionData = {
   version: 1,
 };
 
+// The two keys that hold whole item lists live in their own files, written
+// only when they change. Keeping them in session.json meant every debounced
+// cursor write re-stringified the entire library (and the FS base snapshot)
+// on the main process — seconds per arrow key with a million items.
+const LARGE_KEYS = ['library', 'previous'] as const;
+type LargeKey = (typeof LARGE_KEYS)[number];
+
 class SessionStore {
   private filePath: string;
   private cache: SessionData;
@@ -104,6 +111,10 @@ class SessionStore {
     this.isInitialized = true;
   }
 
+  private largeFilePath(key: LargeKey): string {
+    return this.filePath.replace(/\.json$/, `-${key}.json`);
+  }
+
   private async _loadFromDisk(): Promise<void> {
     try {
       if (fs.existsSync(this.filePath)) {
@@ -122,6 +133,26 @@ class SessionStore {
       console.error('[SessionStore] Failed to load session data:', error);
       this.cache = { ...DEFAULT_SESSION_DATA };
     }
+    // Large keys come from their own files. A session.json from before the
+    // split still carries them inline: keep those and move them out on the
+    // next write.
+    await Promise.all(
+      LARGE_KEYS.map(async (key) => {
+        const file = this.largeFilePath(key);
+        if (this.cache[key] != null) {
+          this.pendingWrites[key] = this.cache[key] as any;
+          return;
+        }
+        try {
+          const content = await fs.promises.readFile(file, 'utf-8');
+          (this.cache as any)[key] = JSON.parse(content);
+        } catch (error: any) {
+          if (error?.code !== 'ENOENT') {
+            console.error(`[SessionStore] Failed to load ${key}:`, error);
+          }
+        }
+      })
+    );
   }
 
   /**
@@ -225,6 +256,13 @@ class SessionStore {
     }, debounceMs);
   }
 
+  // Write to a temp file first, then rename (atomic operation).
+  private async _writeAtomic(file: string, data: string): Promise<void> {
+    const tempPath = file + '.tmp';
+    await fs.promises.writeFile(tempPath, data, 'utf-8');
+    await fs.promises.rename(tempPath, file);
+  }
+
   private async _writeToDisk(): Promise<void> {
     // If a write is in progress, queue this write
     if (this.writeInProgress) {
@@ -234,17 +272,34 @@ class SessionStore {
     }
 
     this.writeInProgress = true;
+    const dirty = Object.keys(this.pendingWrites);
     this.pendingWrites = {};
 
     try {
-      const tempPath = this.filePath + '.tmp';
-      const data = JSON.stringify(this.cache);
-
-      // Write to temp file first, then rename (atomic operation)
-      await fs.promises.writeFile(tempPath, data, 'utf-8');
-      await fs.promises.rename(tempPath, this.filePath);
+      // Large keys: rewritten only when they changed.
+      for (const key of LARGE_KEYS) {
+        if (dirty.includes(key)) {
+          await this._writeAtomic(
+            this.largeFilePath(key),
+            JSON.stringify(this.cache[key])
+          );
+        }
+      }
+      // Everything else is small; written whenever anything changed (also
+      // the first time after a pre-split load, which drops the inline copies).
+      if (dirty.length > 0) {
+        const small: Record<string, unknown> = { ...this.cache };
+        for (const key of LARGE_KEYS) delete small[key];
+        await this._writeAtomic(this.filePath, JSON.stringify(small));
+      }
     } catch (error) {
       console.error('[SessionStore] Failed to write session data:', error);
+      // Retry these keys with the next write.
+      for (const key of dirty) {
+        if (!(key in this.pendingWrites)) {
+          (this.pendingWrites as any)[key] = (this.cache as any)[key];
+        }
+      }
     } finally {
       this.writeInProgress = false;
 
