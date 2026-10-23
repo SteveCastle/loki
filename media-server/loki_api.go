@@ -683,6 +683,13 @@ func lokiMediaMetadataHandler(deps *Dependencies) http.HandlerFunc {
 			httpError(w, "bad request", http.StatusBadRequest)
 			return
 		}
+		// Opens the file itself (generation text chunks): scope it for
+		// public visitors like the preview and file handlers, or any local
+		// path on the server is readable.
+		if !mediaReadAllowed(deps, r, req.Path) {
+			httpError(w, "path is not within any configured storage root", http.StatusForbidden)
+			return
+		}
 
 		var width, height, size sql.NullInt64
 		var description, transcript, hash sql.NullString
