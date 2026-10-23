@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { mediaUrl } from '../../platform';
 import { maskBounds, rectContains, type ContextSize } from './mask';
+import { PromptLibrary } from './prompt-library';
 import References from './references';
 import type { RefKind } from './refs';
 import { DIALOGUE_LANGUAGES, MAX_GENERATIONS, dialogueSeconds, generationsInFlight, jobPhase, layerTiming, type DialogueLine, type LayerOptions, type LoopKind, type SceneLayer } from './scene-api';
@@ -341,9 +342,15 @@ export function Inspector(props: InspectorProps) {
         />
       </div>
 
-      <label className="sc-label" htmlFor="sc-prompt">
-        {motion ? 'How should it move?' : 'What should change here?'}
-      </label>
+      <PromptLibrary
+        kind={l.kind}
+        label={motion ? 'How should it move?' : 'What should change here?'}
+        prompt={l.prompt}
+        onUse={(prompt) => {
+          props.onPatch({ prompt });
+          window.setTimeout(() => promptRef.current?.focus(), 0);
+        }}
+      />
       <textarea
         id="sc-prompt"
         ref={promptRef}

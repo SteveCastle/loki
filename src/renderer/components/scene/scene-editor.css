@@ -751,6 +751,121 @@ body.sc-body {
   line-height: 1.45;
 }
 
+.sc-promptlib {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sc-promptlib-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.sc-promptlib-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.sc-chip:disabled {
+  opacity: 0.45;
+  cursor: default;
+  border-color: var(--sc-hairline);
+  color: var(--sc-dim);
+}
+
+.sc-chip.on {
+  color: #fff;
+  border-color: var(--sc-accent);
+}
+
+.sc-promptlib-saved {
+  color: var(--sc-accent);
+  cursor: default;
+}
+
+.sc-promptlib-saved:hover {
+  color: var(--sc-accent);
+  border-color: var(--sc-hairline);
+}
+
+.sc-promptlib-name {
+  display: flex;
+  gap: 6px;
+}
+
+.sc-promptlib-name .sc-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.sc-promptlib-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+  background: var(--sc-field);
+  border: 1px solid var(--sc-hairline);
+  border-radius: 5px;
+}
+
+.sc-promptlib-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.sc-promptlib-row {
+  display: flex;
+  align-items: center;
+  border-radius: 4px;
+}
+
+.sc-promptlib-row.cursor {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.sc-promptlib-use {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  padding: 4px 6px;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.sc-promptlib-rowname {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.sc-promptlib-row.current .sc-promptlib-rowname::after {
+  content: ' ★';
+  color: var(--sc-accent);
+}
+
+.sc-promptlib-text,
+.sc-promptlib-empty {
+  overflow: hidden;
+  color: var(--sc-faint);
+  font-size: 11px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.sc-promptlib-empty {
+  padding: 4px 6px;
+  white-space: normal;
+}
+
 .sc-ideas {
   display: flex;
   flex-wrap: wrap;
