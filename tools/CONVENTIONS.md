@@ -2,7 +2,7 @@
 
 Small tools, one job each, composable with each other and with ordinary Unix tools. Every `loki-*` tool follows these rules
 (`loki-retouch`: image editing, `loki-reshoot`: references -> video with sound, `loki-segment`: masks of images and tracked video
-objects; `lokictl`, the Lowkey Media Server client, is a separate tool and not part of this contract).
+objects, `loki-dream`: text -> image; `lokictl`, the Lowkey Media Server client, is a separate tool and not part of this contract).
 
 ## Streams
 - **stdin**: an input may be `-`. The tool reads that one input from stdin (at most one per run). Images are sniffed from content.
