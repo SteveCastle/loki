@@ -48,14 +48,6 @@ func DetectScenePose(ctx context.Context, id, lid string, box SceneRect) (*Scene
 	if err := startModelInstalls("pose detection model", scenePoseModel); err != nil {
 		return nil, err
 	}
-	model, err := deps.ModelPath(scenePoseModel, "model.onnx")
-	if err != nil || model == "" {
-		return nil, fmt.Errorf("the pose detection model is not installed")
-	}
-	embedBin := deps.BundledOrEmpty("embed")
-	if embedBin == "" {
-		return nil, bundledMissing("embed")
-	}
 
 	sceneMu.Lock()
 	s, err := loadSceneLocked(id)
@@ -89,7 +81,20 @@ func DetectScenePose(ctx context.Context, id, lid string, box SceneRect) (*Scene
 	if err := runSceneFFmpeg(ctx, append([]string{"-y"}, append(args, pic)...)); err != nil {
 		return nil, fmt.Errorf("flattening the picture: %w", err)
 	}
+	return detectPoseInImage(ctx, pic, box)
+}
 
+// detectPoseInImage runs RTMPose on the person in box (image pixels) of the
+// image file pic. The model must already be installed (startModelInstalls).
+func detectPoseInImage(ctx context.Context, pic string, box SceneRect) (*ScenePose, error) {
+	model, err := deps.ModelPath(scenePoseModel, "model.onnx")
+	if err != nil || model == "" {
+		return nil, fmt.Errorf("the pose detection model is not installed")
+	}
+	embedBin := deps.BundledOrEmpty("embed")
+	if embedBin == "" {
+		return nil, bundledMissing("embed")
+	}
 	cmdArgs := []string{"--pose", "--model=" + model, "--image=" + pic, fmt.Sprintf("--box=%d,%d,%d,%d", box.X, box.Y, box.W, box.H)}
 	if ortLib := deps.BundledOrEmpty("onnxruntime"); ortLib != "" {
 		cmdArgs = append(cmdArgs, "--ort="+ortLib)

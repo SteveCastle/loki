@@ -83,6 +83,9 @@ type retouchParams struct {
 	// MetaFile, when set by the task, carries a long one instead.
 	Meta     string
 	MetaFile string
+	// View is the camera-angle preset whose prompt Prompt is (no prompt of the
+	// caller's own): each input gets it again with its subject's facing.
+	View *retouchView
 }
 
 func optString(opts map[string]any, k string) string {
@@ -154,6 +157,7 @@ func retouchParamsFromOptions(opts map[string]any) retouchParams {
 	// A camera-angle preset is its prompt; an explicit prompt replaces it.
 	if v, ok := retouchViewByID(p.Preset); ok && p.Prompt == "" {
 		p.Prompt = v.Prompt()
+		p.View = &v
 	}
 	if p.Scale < 0 {
 		p.Scale = 0
@@ -596,7 +600,23 @@ func runRetouchJob(j *jobqueue.Job, q *jobqueue.Queue, tag string, p retouchPara
 		}
 		ran++
 		itemRefs := append(append([]string{}, item.refs...), refs...)
-		args := buildRetouchArgs(ip, input, itemRefs, output, promptFile)
+		itemPrompt := promptFile
+		if p.View != nil {
+			// A camera move said for the way this picture's subject faces.
+			if facing, ok := detectSubjectFacing(ctx, input); ok {
+				ip.Prompt = p.View.PromptFacing(facing, true)
+				q.PushJobStdout(j.ID, fmt.Sprintf("%s: %s: subject seen %s", tag, base, viewOf(facing)))
+				f, ferr := writePromptFile(ip.Prompt)
+				if ferr != nil {
+					return fail("failed to write prompt file: "+ferr.Error(), ferr)
+				}
+				if f != "" {
+					defer os.Remove(f)
+				}
+				itemPrompt = f
+			}
+		}
+		args := buildRetouchArgs(ip, input, itemRefs, output, itemPrompt)
 
 		msg := fmt.Sprintf("%s: running on %s -> %s", tag, base, filepath.Base(output))
 		if len(itemRefs) > 0 {
