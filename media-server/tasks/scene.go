@@ -1570,10 +1570,15 @@ func sceneMotionPrompt(in sceneMotionPromptInput) string {
 	// smoke into photographic smoke (measured: an impressionist plume drifted
 	// to realistic grey within a second).
 	action += " Whatever moves keeps the picture's own look and medium for the whole shot: in a painting it moves as paint, its brushstrokes and colours included; in a photograph it stays photographic."
+	// A subject on a plain or flat-colour background gets scenery invented
+	// behind it; the region composites back over the still, so the
+	// background must stay exactly as painted.
+	action += " The background stays exactly as it is in <Picture 1>: a plain, flat-colour or empty background stays plain, flat and empty, with no scenery, texture, gradient, lighting change or objects added to it."
 	if lockEdges {
 		// The crop's border is context around the mask: keeping the motion
 		// away from it is what lets the region blend back into the still.
-		action += " The motion stays in the middle of the frame and fades out towards its borders: everything near the edges of the frame stays perfectly still for the whole shot."
+		// No "fades out" here: the model read it as a fade to black in time.
+		action += " The motion is strongest in the middle of the frame and gentler towards its borders: everything near the edges of the frame stays perfectly still for the whole shot."
 	}
 	soundLine := "Silent."
 	scape := "N/A"
@@ -1665,7 +1670,7 @@ func sceneMotionPrompt(in sceneMotionPromptInput) string {
 		"",
 		"detailed_description:",
 		"The target video keeps the exact look, rendering style, colors, lighting and framing of <Picture 1>.",
-		"[Shot 1] The shot begins exactly from <Picture 1> and stays one uninterrupted, unedited take with the same composition. " + action + speech + unchanged + " The edges of the frame stay continuous with what surrounds them. The camera is perfectly steady, locked off on a tripod, with no movement, zoom or shake at all. " + soundLine,
+		"[Shot 1] The shot begins exactly from <Picture 1> and stays one uninterrupted, unedited take with the same composition, at full brightness to the very last frame: no fade-out, no dissolve, no cut to black. " + action + speech + unchanged + " The edges of the frame stay continuous with what surrounds them. The camera is perfectly steady, locked off on a tripod, with no movement, zoom or shake at all. " + soundLine,
 		"",
 		"overall_soundscape:",
 		scape,
