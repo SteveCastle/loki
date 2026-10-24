@@ -291,9 +291,13 @@ func runItemOps(j *jobqueue.Job, q *jobqueue.Queue, opIDs []string, prefixed boo
 		workers = 1
 	}
 
-	// Prepare every op up front (load models, start worker pools, prefetch).
-	// A prepare failure fails the whole job: silently dropping one of the
-	// requested ops would break the "these ops ran on these items" contract.
+	// Prepare every op up front (load models — downloading them on first
+	// use — start worker pools, prefetch). When one of several ops can't be
+	// prepared (its model download failed, say) it is dropped with a logged
+	// warning and the others still run, so cheap ops (hash, dimensions) are
+	// not held hostage; the job then ends FAILED, never complete, so the
+	// "a completed job ran every requested op" contract holds and a retry
+	// picks up the dropped op (skip-existing makes the rest free).
 	background := false
 	for _, a := range j.Arguments {
 		if a == "--scheduled" {
@@ -314,7 +318,7 @@ func runItemOps(j *jobqueue.Job, q *jobqueue.Queue, opIDs []string, prefixed boo
 		Workers:    workers,
 		Background: background,
 	}
-	procs := make([]*ItemProcessor, len(ops))
+	var procs []*ItemProcessor
 	closeProcs := func() {
 		for _, p := range procs {
 			if p != nil && p.Close != nil {
@@ -322,19 +326,41 @@ func runItemOps(j *jobqueue.Job, q *jobqueue.Queue, opIDs []string, prefixed boo
 			}
 		}
 	}
-	for i, op := range ops {
+	var prepared []ItemOp
+	var dropped []string
+	var firstErr error
+	for _, op := range ops {
 		opRun := *run
 		opRun.Opts = opOptionValues(j, op, prefixed)
 		p, perr := op.Prepare(&opRun)
-		if perr != nil {
-			closeProcs()
-			q.PushJobStdout(j.ID, fmt.Sprintf("%s: %v", op.ID, perr))
-			q.ErrorJob(j.ID)
-			return fmt.Errorf("prepare %s: %w", op.ID, perr)
+		if perr != nil && ctx != nil && ctx.Err() != nil {
+			closeProcs() // cancelled during setup (a model download)
+			q.PushJobStdout(j.ID, "Canceled during setup")
+			_ = q.CancelJob(j.ID)
+			return ctx.Err()
 		}
-		procs[i] = p
+		if perr != nil {
+			if len(ops) == 1 {
+				q.PushJobStdout(j.ID, fmt.Sprintf("%s: %v", op.ID, perr))
+				q.ErrorJob(j.ID)
+				return fmt.Errorf("prepare %s: %w", op.ID, perr)
+			}
+			q.PushJobStdout(j.ID, fmt.Sprintf("%s: skipped — %v (the other operations still run; the job will end as failed)", op.ID, perr))
+			dropped = append(dropped, op.ID)
+			if firstErr == nil {
+				firstErr = fmt.Errorf("prepare %s: %w", op.ID, perr)
+			}
+			continue
+		}
+		prepared = append(prepared, op)
+		procs = append(procs, p)
 	}
 	defer closeProcs()
+	if len(prepared) == 0 {
+		q.ErrorJob(j.ID)
+		return firstErr
+	}
+	ops = prepared
 
 	if workers > 1 {
 		q.PushJobStdout(j.ID, fmt.Sprintf("Processing with %d parallel worker(s)", workers))
@@ -539,6 +565,11 @@ func runItemOps(j *jobqueue.Job, q *jobqueue.Queue, opIDs []string, prefixed boo
 	}
 
 	q.PushJobStdout(j.ID, fmt.Sprintf("Completed: %d processed, %d skipped, %d failed", processed, skipped, failed))
+	if len(dropped) > 0 {
+		q.PushJobStdout(j.ID, fmt.Sprintf("Not run: %s (see above) — run the job again to finish them", strings.Join(dropped, ", ")))
+		q.ErrorJob(j.ID)
+		return firstErr
+	}
 	q.CompleteJob(j.ID)
 	return nil
 }

@@ -68,6 +68,14 @@ type Provider interface {
 	Transcribe(ctx context.Context, req Request) (Result, error)
 }
 
+// Installable is implemented by a provider whose runtime is a managed
+// dependency (deps/models) that a job can download on first use.
+type Installable interface {
+	// MissingDeps lists the dependency ids to install before Available can
+	// succeed; empty when the provider is ready (or configured by path).
+	MissingDeps() []string
+}
+
 // DefaultProviderID is used when the config names no provider.
 const DefaultProviderID = "whisper-cli"
 

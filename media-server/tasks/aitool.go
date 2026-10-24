@@ -49,7 +49,8 @@ func reshootSpec(model string) aiToolSpec {
 	return reshootTool
 }
 
-// installAIDep installs a dependency on demand; a variable so tests never touch the network.
+// installAIDep installs one dependency on demand (EnsureModels' downloader);
+// a variable so tests never touch the network.
 var installAIDep = installDep
 
 // aiToolRun is what a task needs to launch an engine.
@@ -86,9 +87,8 @@ func resolveAITool(ctx context.Context, q *jobqueue.Queue, jobID, tag string, sp
 		exe := spec.Bin + platform.BinaryExtension()
 		p, err := deps.ModelPath(spec.Bin, exe)
 		if err != nil {
-			logf("installing %s (one-time)", spec.Bin)
-			if ierr := installAIDep(ctx, logf, spec.Bin); ierr != nil {
-				return run, fmt.Errorf("could not install %s: %w (it can also be put on PATH)", spec.Bin, ierr)
+			if ierr := EnsureModels(ctx, func(s string) { logf("%s", s) }, spec.Bin); ierr != nil {
+				return run, fmt.Errorf("%w (%s can also be put on PATH)", ierr, spec.Bin)
 			}
 			if p, err = deps.ModelPath(spec.Bin, exe); err != nil {
 				return run, fmt.Errorf("%s was installed but %s is missing", spec.Bin, exe)
@@ -96,15 +96,8 @@ func resolveAITool(ctx context.Context, q *jobqueue.Queue, jobID, tag string, sp
 		}
 		run.Bin = p
 
-		for _, id := range spec.modelIDs() {
-			if dirHasModel(id) {
-				continue
-			}
-			m, _ := models.Lookup(id)
-			logf("downloading the %s model files (%.0f GB, one-time; resumable, also available on the Dependencies page)", m.Name, float64(m.EffectiveSizeBytes())/1e9)
-			if ierr := installAIDep(ctx, logf, id); ierr != nil {
-				return run, fmt.Errorf("could not install %s: %w", m.Name, ierr)
-			}
+		if err := EnsureModels(ctx, func(s string) { logf("%s", s) }, spec.modelIDs()...); err != nil {
+			return run, err
 		}
 	}
 
@@ -147,18 +140,16 @@ var locateAITool = func(spec aiToolSpec) (aiToolRun, bool) {
 }
 
 // dirHasModel reports whether a model dependency is completely installed.
-func dirHasModel(id string) bool {
-	models.RebuildState()
-	return models.Cached()[id] == models.StatusInstalled
-}
+func dirHasModel(id string) bool { return modelInstalled(id) }
 
 // installDep installs one dependency synchronously, logging progress roughly
-// every 5% (and never more often than every 2 s) to the job.
+// every 5% (and never more often than every 2 s) to the job. It runs as a
+// tracked install, so the Dependencies page shows it (see EnsureModels).
 func installDep(ctx context.Context, logf func(string, ...any), id string) error {
 	var lastPct int64 = -5
 	var lastFile string
 	var lastAt time.Time
-	err := models.InstallModel(ctx, id, func(file string, done, total int64) {
+	err := models.Tracker.InstallSync(ctx, id, func(file string, done, total int64) {
 		pct := int64(0)
 		if total > 0 {
 			pct = done * 100 / total

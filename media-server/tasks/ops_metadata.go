@@ -13,6 +13,7 @@ import (
 	"github.com/stevecastle/shrike/appconfig"
 	"github.com/stevecastle/shrike/media"
 	"github.com/stevecastle/shrike/mediaext"
+	"github.com/stevecastle/shrike/transcribe"
 )
 
 // The per-item ops classify their inputs by extension; the lists live in
@@ -97,6 +98,16 @@ func prepareDescribeOp(run *ItemRun) (*ItemProcessor, error) {
 func prepareTranscribeOp(run *ItemRun) (*ItemProcessor, error) {
 	q, jobID := run.Queue, run.Job.ID
 	db := q.Db
+
+	// A local engine that isn't installed yet is downloaded on first use
+	// (logged to the job), then the run proceeds.
+	if p, err := transcribe.Active(); err == nil {
+		if inst, ok := p.(transcribe.Installable); ok {
+			if err := EnsureModels(run.Job.Ctx, jobLogf(q, jobID), inst.MissingDeps()...); err != nil {
+				return nil, err
+			}
+		}
+	}
 
 	return &ItemProcessor{
 		SkipExisting: func(path string) (bool, error) { return hasExistingMetadata(db, path, "transcript") },

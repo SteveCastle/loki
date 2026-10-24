@@ -29,8 +29,12 @@ func installArchiveFile(ctx context.Context, f File, dst string, progress Progre
 		return fmt.Errorf("models: unsupported archive type %q", f.Archive)
 	}
 	archivePath := dst + ".archive." + f.Archive
-	if _, err := downloadFileWithRetry(ctx, f.URL, archivePath, f.SHA256, progress); err != nil {
-		return err
+	// An archive that finished downloading before its extraction was
+	// interrupted is reused rather than fetched again.
+	if VerifySHA256(archivePath, f.SHA256) != nil {
+		if _, err := downloadFileWithRetry(ctx, f.URL, archivePath, f.SHA256, progress); err != nil {
+			return err
+		}
 	}
 	isDir := strings.HasSuffix(f.ArchiveMember, "/")
 	var err error

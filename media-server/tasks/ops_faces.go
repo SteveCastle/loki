@@ -212,7 +212,7 @@ func prepareFacesOp(run *ItemRun) (*ItemProcessor, error) {
 
 	embedBin := deps.BundledOrEmpty("embed")
 	if embedBin == "" {
-		return nil, fmt.Errorf("embed binary not installed; install it from Dependencies")
+		return nil, bundledMissing("embed")
 	}
 
 	st := &facesOpState{
@@ -242,7 +242,16 @@ func prepareFacesOp(run *ItemRun) (*ItemProcessor, error) {
 		st.pinnedModel = m
 		st.candidateIDs = []string{m.ID}
 	} else if FaceRoutingEnabled() {
-		anchors, err := domainAnchors(j.Ctx)
+		// Routing encodes its photo/anime anchors (and un-embedded items)
+		// with the text-search model: first use downloads it.
+		err := EnsureModels(j.Ctx, jobLogf(q, j.ID), TextSearchModel().ID)
+		if err != nil && j.Ctx != nil && j.Ctx.Err() != nil {
+			return nil, err // cancelled mid-download
+		}
+		var anchors *anchorCache
+		if err == nil {
+			anchors, err = domainAnchors(j.Ctx)
+		}
 		if err != nil {
 			q.PushJobStdout(j.ID, "Domain routing unavailable ("+err.Error()+"); scanning everything with the active model")
 			st.pinnedModel = ActiveFaceModel()
@@ -261,6 +270,12 @@ func prepareFacesOp(run *ItemRun) (*ItemProcessor, error) {
 	} else {
 		st.pinnedModel = ActiveFaceModel()
 		st.candidateIDs = []string{st.pinnedModel.ID}
+	}
+
+	// First use downloads every model a scan can reach (detectors,
+	// recognizers, fusion components), then proceeds.
+	if err := EnsureModels(j.Ctx, jobLogf(q, j.ID), faceModelDeps(st.candidateIDs)...); err != nil {
+		return nil, err
 	}
 
 	return &ItemProcessor{
@@ -357,6 +372,38 @@ func (st *facesOpState) modelFor(ctx context.Context, run *ItemRun, path, localP
 		return routeVec(fresh, st.anchors)
 	}
 	return ActiveFaceModel()
+}
+
+// faceModelDeps lists the dependency ids the given face models need: each
+// one's detector, recognizer and fusion component (BYO recognizers are files
+// on disk, not dependencies).
+func faceModelDeps(modelIDs []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	add := func(id string) {
+		if id != "" && !seen[id] {
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	for _, id := range modelIDs {
+		m, ok := FaceModelByID(id)
+		if !ok {
+			continue
+		}
+		if m.DetectorDepID != "" {
+			add(m.DetectorDepID)
+		} else {
+			add(FaceDetectorDepID)
+		}
+		if !m.BYO {
+			add(m.DepID)
+		}
+		if m.Secondary != nil {
+			add(m.Secondary.DepID)
+		}
+	}
+	return out
 }
 
 // routingPool lazily starts (and caches) the SigLIP serve pool that embeds

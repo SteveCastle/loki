@@ -91,6 +91,15 @@ func (w *whisperCLI) binaryPath() string {
 	return ""
 }
 
+// MissingDeps implements Installable: the faster-whisper dependency when no
+// binary is configured, installed or on PATH.
+func (w *whisperCLI) MissingDeps() []string {
+	if w.binaryPath() == "" {
+		return []string{"faster-whisper"}
+	}
+	return nil
+}
+
 func (w *whisperCLI) Available() error {
 	if w.binaryPath() == "" {
 		return fmt.Errorf("faster-whisper not found: download it from the Dependencies page (Transcription), set fasterWhisperPath in settings, or put faster-whisper-xxl / whisper-faster on PATH")

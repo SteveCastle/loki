@@ -18,6 +18,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stevecastle/shrike/jobqueue"
+	"github.com/stevecastle/shrike/platform"
 )
 
 // --- Roto: a motion version's matte, tracked through its clip ---
@@ -196,9 +197,11 @@ func sceneTrackTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 	if video == "" || prompts == "" {
 		return fail("needs a clip and a prompts file", nil)
 	}
-	// Installed on first use like the other engines (the tool and SAM 3.1's weights, ~1.8 GB).
-	bin, err := segBinary()
-	if err != nil {
+	// Installed on first use like the other engines (the tool and SAM 3.1's
+	// weights, ~1.8 GB): a managed loki-segment is only used with its weights
+	// in place. $LOKI_SEGMENT_BIN and a binary on PATH bring their own.
+	bin := strings.TrimSpace(os.Getenv("LOKI_SEGMENT_BIN"))
+	if bin == "" {
 		run, rerr := resolveAITool(ctx, q, j.ID, tag, segSpec)
 		if rerr != nil {
 			return fail(rerr.Error(), rerr)
@@ -218,6 +221,7 @@ func sceneTrackTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 	args = append(args, video)
 	q.PushJobStdout(j.ID, fmt.Sprintf("%s: tracking %s", tag, filepath.Base(video)))
 	cmd := exec.CommandContext(ctx, bin, args...)
+	platform.HideSubprocessWindow(cmd)
 	cmd.Env = append(os.Environ(), aiToolEnv(segSpec)...)
 	stderr, _ := cmd.StderrPipe()
 	var stdout strings.Builder

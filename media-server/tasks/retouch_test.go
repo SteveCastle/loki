@@ -1,8 +1,10 @@
 package tasks
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"image"
 	"image/color"
@@ -45,6 +47,12 @@ func TestMain(m *testing.M) {
 	if os.Getenv("LOKI_FAKE_SEG") == "1" {
 		os.Exit(fakeSegMain())
 	}
+	// No test may download a model: on-demand installs fail offline and
+	// background ones are dropped unless a test stands in its own.
+	installAIDep = func(context.Context, func(string, ...any), string) error {
+		return errors.New("offline (tests never download models)")
+	}
+	startModelInstall = func(string) {}
 	os.Exit(m.Run())
 }
 
@@ -634,7 +642,7 @@ func TestRetouchTaskMissingBinary(t *testing.T) {
 	if q.GetJob(j.ID).State != jobqueue.StateError {
 		t.Errorf("state = %v; want error", q.GetJob(j.ID).State)
 	}
-	if !strings.Contains(jobLog(q, j.ID), "retouch: could not install loki-retouch") {
+	if !strings.Contains(jobLog(q, j.ID), "retouch: could not install the AI image editing engine (loki-retouch)") {
 		t.Errorf("log:\n%s", jobLog(q, j.ID))
 	}
 
@@ -643,7 +651,7 @@ func TestRetouchTaskMissingBinary(t *testing.T) {
 	if err := fourKifyTask(j, q, &sync.Mutex{}); err == nil {
 		t.Fatal("4kify: expected error")
 	}
-	if !strings.Contains(jobLog(q, j.ID), "could not install loki-retouch") {
+	if !strings.Contains(jobLog(q, j.ID), "could not install the AI image editing engine (loki-retouch)") {
 		t.Errorf("4kify log:\n%s", jobLog(q, j.ID))
 	}
 }

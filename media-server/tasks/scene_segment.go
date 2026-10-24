@@ -20,6 +20,9 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/stevecastle/shrike/deps"
+	"github.com/stevecastle/shrike/platform"
 )
 
 // --- Scene editor selection: loki-segment (SAM 3.1) behind the editor ---
@@ -41,17 +44,26 @@ const segSessionIdle = 3 * time.Minute
 // segSpec is loki-segment and its weights as dependencies (deps/models).
 var segSpec = aiToolSpec{Bin: "loki-segment", Model: "sam3.1"}
 
-// segBinary finds loki-segment without installing anything: $LOKI_SEGMENT_BIN,
-// else PATH, else the Dependencies page's copy. A variable so tests can stand
-// in a fake engine.
+// segBinary finds loki-segment for a pick: $LOKI_SEGMENT_BIN, else PATH (a
+// binary there finds its own weights), else the managed copy — which also
+// needs SAM 3.1's weights. Picks are interactive and never wait for a
+// download: a missing tool or weights start installing in the background and
+// the pick fails with a "downloading, try again shortly" error. A variable so
+// tests can stand in a fake engine.
 var segBinary = func() (string, error) {
 	if p := strings.TrimSpace(os.Getenv("LOKI_SEGMENT_BIN")); p != "" {
 		return p, nil
 	}
-	if run, ok := locateAITool(segSpec); ok {
-		return run.Bin, nil
+	if p, err := exec.LookPath(segSpec.Bin); err == nil {
+		return p, nil
 	}
-	return "", errors.New("object selection isn't installed: add “Object selection and roto” on the Dependencies page (or put loki-segment on PATH)")
+	if err := startModelInstalls("object selection model", append([]string{segSpec.Bin}, segSpec.modelIDs()...)...); err != nil {
+		return "", err
+	}
+	if p, err := deps.ModelPath(segSpec.Bin, segSpec.Bin+platform.BinaryExtension()); err == nil {
+		return p, nil
+	}
+	return "", errors.New("object selection is installed but loki-segment is missing: reinstall “Object selection and roto” on the Dependencies page (or put loki-segment on PATH)")
 }
 
 // gpuHeavy counts diffusion / tracking runs holding the GPU right now.
@@ -117,6 +129,7 @@ func (s *segSession) start() error {
 		return err
 	}
 	cmd := exec.Command(bin, "--serve", "-q")
+	platform.HideSubprocessWindow(cmd)
 	cmd.Env = append(os.Environ(), aiToolEnv(segSpec)...)
 	in, err := cmd.StdinPipe()
 	if err != nil {

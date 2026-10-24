@@ -7,10 +7,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"sync"
 	"time"
@@ -21,36 +23,82 @@ type ProgressFn func(file string, bytesDone, bytesTotal int64)
 
 var ErrChecksumMismatch = errors.New("models: sha256 checksum mismatch")
 
+// ErrUnavailable marks a model with no files for this OS (a CUDA engine on
+// macOS, say): there is nothing to download.
+var ErrUnavailable = errors.New("models: not available on this platform")
+
 // Install lock per model id so two concurrent callers for the same model
-// don't tread on each other; different models may install in parallel.
+// don't tread on each other; different models may install in parallel. A
+// one-slot channel rather than a mutex so a waiter can give up when its
+// context ends (a job cancelled while another install of its model runs).
 var (
-	installLocks   = map[string]*sync.Mutex{}
+	installLocks   = map[string]chan struct{}{}
 	installLocksMu sync.Mutex
 )
 
-func lockForModel(id string) *sync.Mutex {
+func lockForModel(id string) chan struct{} {
 	installLocksMu.Lock()
 	defer installLocksMu.Unlock()
 	if l, ok := installLocks[id]; ok {
 		return l
 	}
-	l := &sync.Mutex{}
+	l := make(chan struct{}, 1)
 	installLocks[id] = l
 	return l
+}
+
+// acquireInstall takes id's install lock, or fails when ctx ends first.
+func acquireInstall(ctx context.Context, id string) (release func(), err error) {
+	l := lockForModel(id)
+	select {
+	case l <- struct{}{}:
+		return func() { <-l }, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// Available reports whether the model has anything to install on this OS.
+func Available(id string) bool {
+	m, ok := Lookup(id)
+	return ok && len(m.EffectiveFiles()) > 0
+}
+
+// IsInstalled reports whether the model is completely installed, straight
+// from disk (no state cache, no state.json write): cheap enough for a
+// request path.
+func IsInstalled(id string) bool {
+	m, ok := Lookup(id)
+	return ok && statusFor(m) == StatusInstalled
 }
 
 // InstallModel downloads every file of the named model, verifies its
 // SHA-256, atomically installs it, and writes <ModelDir>/.meta.json on
 // success.
+//
+// It is safe to call from anywhere at any time: callers for one id are
+// serialized, and a model that became installed while the caller waited
+// (another job, the Dependencies page) returns at once. Files an earlier,
+// interrupted attempt finished are kept (see fileDone), and an interrupted
+// download resumes from its .partial.
 func InstallModel(ctx context.Context, id string, progress ProgressFn) error {
 	m, ok := Lookup(id)
 	if !ok {
 		return fmt.Errorf("models: unknown id %q", id)
 	}
-	l := lockForModel(id)
-	l.Lock()
-	defer l.Unlock()
+	if len(m.EffectiveFiles()) == 0 {
+		return fmt.Errorf("%w: %s has no download for %s", ErrUnavailable, m.Name, runtime.GOOS)
+	}
+	release, err := acquireInstall(ctx, id)
+	if err != nil {
+		return err
+	}
+	defer release()
+	if statusFor(m) == StatusInstalled {
+		return nil
+	}
 
+	marks := readFileMarks(id)
 	for _, f := range m.EffectiveFiles() {
 		dst := filepath.Join(ModelDir(id), f.RelPath)
 		sum, err := resolveChecksum(ctx, f)
@@ -58,31 +106,91 @@ func InstallModel(ctx context.Context, id string, progress ProgressFn) error {
 			return fmt.Errorf("file %s: %w", f.RelPath, err)
 		}
 		f.SHA256 = sum
+		if fileDone(f, dst, marks) {
+			if progress != nil {
+				progress(filepath.Base(dst), f.SizeBytes, f.SizeBytes)
+			}
+			continue
+		}
 		if f.Archive != "" {
 			if err := installArchiveFile(ctx, f, dst, progress); err != nil {
 				return fmt.Errorf("file %s: %w", f.RelPath, err)
 			}
-			continue
-		}
-		if _, err := downloadFileWithRetry(ctx, f.URL, dst, f.SHA256, progress); err != nil {
-			return fmt.Errorf("file %s: %w", f.RelPath, err)
-		}
-		if f.Exec {
-			if err := markExecutable(dst); err != nil {
+		} else {
+			if _, err := downloadFileWithRetry(ctx, f.URL, dst, f.SHA256, progress); err != nil {
 				return fmt.Errorf("file %s: %w", f.RelPath, err)
 			}
+			if f.Exec {
+				if err := markExecutable(dst); err != nil {
+					return fmt.Errorf("file %s: %w", f.RelPath, err)
+				}
+			}
 		}
+		marks[f.RelPath] = f.SHA256
+		writeFileMarks(id, marks)
 	}
 	return writeMeta(id, m)
 }
 
+// filesMarker records, per model, the files a previous attempt finished:
+// rel_path -> the SHA-256 it was verified against (for an archive, the
+// archive's). A model only counts as installed once .meta.json is written,
+// so without this a failure on file 5 of 6 would fetch files 1-4 again.
+const filesMarker = ".files.json"
+
+func readFileMarks(id string) map[string]string {
+	out := map[string]string{}
+	if b, err := os.ReadFile(filepath.Join(ModelDir(id), filesMarker)); err == nil {
+		_ = json.Unmarshal(b, &out)
+	}
+	return out
+}
+
+// writeFileMarks persists the marks; a failure only costs a re-download.
+func writeFileMarks(id string, marks map[string]string) {
+	b, err := json.Marshal(marks)
+	if err != nil {
+		return
+	}
+	_ = os.WriteFile(filepath.Join(ModelDir(id), filesMarker), b, 0o644)
+}
+
+// fileDone reports whether f is already installed at dst: marked complete
+// against the same checksum, or (a plain file from before the marks existed)
+// present with the expected size and a matching SHA-256, which is then
+// marked. A moving "latest" asset whose checksum changed is never done.
+func fileDone(f File, dst string, marks map[string]string) bool {
+	info, err := os.Stat(dst)
+	if err != nil || f.SHA256 == "" {
+		return false
+	}
+	if marks[f.RelPath] == f.SHA256 {
+		return true
+	}
+	if f.Archive != "" || info.IsDir() || (f.SizeBytes > 0 && info.Size() != f.SizeBytes) {
+		return false
+	}
+	if VerifySHA256(dst, f.SHA256) != nil {
+		return false
+	}
+	marks[f.RelPath] = f.SHA256
+	return true
+}
+
 // downloadFileWithRetry wraps downloadFile with exponential backoff:
-// 1s, 4s, 16s. Network errors retry; HTTP 4xx (except 416) and checksum
-// mismatch don't.
+// 1s, 4s, 16s. Network errors retry; HTTP 4xx (except 416), cancellation and
+// checksum mismatch don't.
+//
+// The .partial survives network errors and cancellation, so each retry (and
+// the next install attempt, possibly days later) resumes where the last one
+// stopped. A checksum mismatch discards it; when that attempt had resumed an
+// older partial (stale or corrupt bytes), one fresh download is tried before
+// giving up.
 func downloadFileWithRetry(ctx context.Context, url, dst, want string, progress ProgressFn) (int64, error) {
 	delays := []time.Duration{0, time.Second, 4 * time.Second, 16 * time.Second}
 	var lastErr error
-	for i, d := range delays {
+	freshRetried := false
+	for _, d := range delays {
 		if d > 0 {
 			select {
 			case <-time.After(d):
@@ -90,15 +198,22 @@ func downloadFileWithRetry(ctx context.Context, url, dst, want string, progress 
 				return 0, ctx.Err()
 			}
 		}
+		resumed := false
+		if info, err := os.Stat(dst + ".partial"); err == nil && info.Size() > 0 {
+			resumed = true
+		}
 		n, err := downloadFile(ctx, url, dst, want, progress)
 		if err == nil {
 			return n, nil
 		}
 		lastErr = err
-		if errors.Is(err, ErrChecksumMismatch) || isPermanentHTTPError(err) || errors.Is(err, context.Canceled) {
+		if errors.Is(err, ErrChecksumMismatch) && resumed && !freshRetried {
+			freshRetried = true // the partial is gone; start over once
+			continue
+		}
+		if errors.Is(err, ErrChecksumMismatch) || isPermanentHTTPError(err) || ctx.Err() != nil {
 			return 0, err
 		}
-		_ = i
 	}
 	return 0, lastErr
 }
@@ -120,10 +235,11 @@ func isPermanentHTTPError(err error) bool {
 	return false
 }
 
-// downloadFile streams url -> dst with optional resume from <dst>.partial,
-// verifying the running SHA-256 against want before renaming.
+// downloadFile streams url -> dst with resume from <dst>.partial, verifying
+// the running SHA-256 against want before renaming. The partial is kept on
+// network errors and cancellation (the next call resumes it with a Range
+// request) and discarded only on a checksum mismatch.
 func downloadFile(ctx context.Context, url, dst, want string, progress ProgressFn) (int64, error) {
-	// Try to resume.
 	w, existing, err := OpenAtomicResume(dst)
 	if err != nil {
 		return 0, err
@@ -139,7 +255,7 @@ func downloadFile(ctx context.Context, url, dst, want string, progress ProgressF
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		_ = w.Abort()
+		_ = w.Close()
 		return 0, err
 	}
 	if existing > 0 {
@@ -147,7 +263,7 @@ func downloadFile(ctx context.Context, url, dst, want string, progress ProgressF
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		_ = w.Abort()
+		_ = w.Close() // keep the partial: the next attempt resumes it
 		return 0, err
 	}
 	defer resp.Body.Close()
@@ -161,16 +277,21 @@ func downloadFile(ctx context.Context, url, dst, want string, progress ProgressF
 			if err != nil {
 				return 0, err
 			}
-			_ = os.Truncate(w.partial, 0)
 			h = sha256.New()
 			existing = 0
 		}
 	case http.StatusPartialContent:
 		// Good — append.
 	case http.StatusRequestedRangeNotSatisfiable:
-		// Existing file size matches or exceeds; verify checksum below.
+		// The partial already holds the whole file (or more): there is
+		// nothing to append, and the body is an error page, not file bytes.
+		if existing == 0 {
+			_ = w.Close()
+			return 0, &httpStatusError{Status: resp.StatusCode, URL: url}
+		}
+		return finishDownload(w, h, want, existing, 0)
 	default:
-		_ = w.Abort()
+		_ = w.Close()
 		return 0, &httpStatusError{Status: resp.StatusCode, URL: url}
 	}
 
@@ -181,10 +302,15 @@ func downloadFile(ctx context.Context, url, dst, want string, progress ProgressF
 	mw := io.MultiWriter(w, h)
 	written, err := copyWithProgress(ctx, mw, resp.Body, existing, total, progress, filepath.Base(dst))
 	if err != nil {
-		_ = w.Abort()
+		_ = w.Close() // keep the partial: the next attempt resumes it
 		return 0, err
 	}
+	return finishDownload(w, h, want, existing, written)
+}
 
+// finishDownload checks the running hash and commits, or discards the
+// partial on a mismatch.
+func finishDownload(w *AtomicWriter, h hash.Hash, want string, existing, written int64) (int64, error) {
 	got := hex.EncodeToString(h.Sum(nil))
 	if got != want {
 		_ = w.Abort()
