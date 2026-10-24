@@ -1704,6 +1704,45 @@ body.sc-body {
   line-height: 1.45;
 }
 
+.sc-finish {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.sc-finish-modes {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sc-finish-mode {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  background: var(--sc-field);
+  border: 1px solid var(--sc-hairline);
+  border-radius: 5px;
+  cursor: pointer;
+  transition: background-color 0.1s, border-color 0.1s;
+}
+
+.sc-finish-mode:hover {
+  background: var(--sc-accent-soft);
+  border-color: var(--sc-accent);
+}
+
+.sc-finish-mode span {
+  color: var(--sc-faint);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 .sc-paint-used {
   display: flex;
   flex-wrap: wrap;

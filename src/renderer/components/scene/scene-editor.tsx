@@ -2,12 +2,14 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { invoke, isElectron, mediaUrl, send } from '../../platform';
 import { clampRect, imageOp, motionRegion, pickedOp, maskImagesReady, opsDeep, preloadMaskImages, rasterizeLayerMask, rasterizeProtect, regionAround, type MaskLookup, type MaskOp, type MaskOpts, type Rect } from './mask';
 import {
+  FINISH_MODES,
   generationsInFlight,
   layerRate,
   MAX_GENERATIONS,
   mergeServer,
   sceneApi,
   sceneBusy,
+  type FinishMode,
   type LayerKind,
   type LayerOptions,
   type LoopKind,
@@ -165,6 +167,26 @@ function remask(s: Scene, id: string): Scene {
   const once = { ...s, layers: s.layers.map((l) => (l.id === id ? withMask(s, l) : l)) };
   return { ...once, layers: once.layers.map((l) => (l.id !== id && linksMasks(l) ? withMask(once, l) : l)) };
 }
+
+/**
+ * A finish layer's settings for mode over paint: the paint as a reference when the mode reads it as a guide (keeping
+ * an existing reference, so its token in the prompt stays), the mode's own grounding, and a mask grown past the paint
+ * as far as the mode reaches.
+ */
+function finishSetup(s: Scene, paint: SceneLayer, mode: FinishMode, prev: LayerOptions, maskOpts: MaskOpts | undefined) {
+  const m = FINISH_MODES[mode];
+  const others = (prev.refs || []).filter((r) => r.layer !== paint.id);
+  const had = (prev.refs || []).find((r) => r.layer === paint.id);
+  const refs = m.guide ? [...others, { ...(had || { id: newRefId(), path: '' }), layer: paint.id, note: m.refNote }] : others;
+  return {
+    options: { ...prev, refs, finish: mode, paint: paint.id, grounding: '' } as LayerOptions,
+    maskOpts: { ...(maskOpts || {}), expand: Math.round(Math.min(s.width, s.height) * m.expand) || undefined },
+  };
+}
+
+/** paint read the way a finish mode needs it: in the picture (a sketch to make real) or as a guide only. */
+const paintFor = (paint: SceneLayer, mode: FinishMode): SceneLayer =>
+  !!paint.options?.guide === FINISH_MODES[mode].guide ? paint : { ...paint, options: { ...(paint.options || {}), guide: FINISH_MODES[mode].guide } };
 
 // New layers start from the settings last used for their kind (never the text: prompt, subject, seed).
 const DEFAULTS_KEY = 'loki.scene.layerDefaults.v1';
@@ -469,43 +491,60 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
   );
 
   /**
-   * "Finish with AI" on a paint layer: an Edit layer just above it, masked to what is painted (a live link, grown a
-   * little: rough paint stops short of edges), prompted to finish it. A guide is given to it as a reference.
+   * "Finish with AI" on a paint layer, in one of its modes (FINISH_MODES): an Edit layer just above it, masked to what
+   * is painted (a live link, grown: rough paint stops short of edges, a new pose reaches past the drawing). The paint
+   * becomes a guide or part of the picture as the mode reads it.
    */
   const finishPaint = useCallback(
-    (paint: SceneLayer) => {
+    (paint: SceneLayer, mode: FinishMode) => {
       const s = docRef.current;
-      const guide = !!paint.options?.guide;
-      const refs = guide ? [{ id: newRefId(), path: '', layer: paint.id, note: 'the rough colour guide' }] : [];
+      const setup = finishSetup(s, paint, mode, { ...layerDefaults('still'), refs: [] }, undefined);
       // The engine sees the whole picture: what a sketch should become depends on everything around it (a disc in a
       // crop of flat sky reads as a ball or the moon; with the land and the house in view it is the sun).
       const context = 'full';
       const layer: SceneLayer = {
         id: newId(),
-        name: `Finish ${paint.name || 'paint'}`,
+        name: `${FINISH_MODES[mode].label} ${paint.name || 'paint'}`,
         kind: 'still',
         region: { x: 0, y: 0, w: 0, h: 0 },
         mask: '',
         shapes: [{ t: 'layer', id: paint.id }],
-        maskOpts: { expand: Math.round(Math.min(s.width, s.height) * 0.01) || undefined },
+        maskOpts: setup.maskOpts,
         feather: defaultFeather(s),
         prompt: '',
-        options: { ...layerDefaults('still'), context, refs, fit: true, finish: guide ? 'colour' : 'sketch', paint: paint.id },
+        options: { ...setup.options, context, fit: true },
         versions: [],
         active: -1,
       };
       mutate((d) => {
         const at = d.layers.findIndex((l) => l.id === paint.id) + 1;
-        const layers = [...d.layers];
+        const layers = d.layers.map((l) => (l.id === paint.id ? paintFor(l, mode) : l));
         layers.splice(at > 0 ? at : layers.length, 0, layer);
         return remask({ ...d, layers }, layer.id);
       });
       setSelectedId(layer.id);
       setTool('select');
-      flash('info', guide ? 'Added an Edit layer that colours the picture from your guide: add any notes, then generate.' : 'Added an Edit layer that makes your sketch real: say what it is, then generate.');
+      flash('info', FINISH_MODES[mode].added);
       window.setTimeout(() => document.getElementById('sc-prompt')?.focus(), 50);
     },
     [mutate, flash]
+  );
+
+  /** Switch a finish layer to another mode: its grounding, guide reference and mask reach, and how its paint is read. */
+  const changeFinish = useCallback(
+    (id: string, mode: FinishMode) => {
+      mutate((d) => {
+        const l = d.layers.find((x) => x.id === id);
+        const paint = l && d.layers.find((x) => x.id === l.options?.paint && x.kind === 'paint');
+        if (!l || !paint) return d;
+        const setup = finishSetup(d, paint, mode, l.options || {}, l.maskOpts);
+        const layers = d.layers.map((x) =>
+          x.id === id ? { ...x, options: setup.options, maskOpts: setup.maskOpts } : x.id === paint.id ? paintFor(x, mode) : x
+        );
+        return remask({ ...d, layers }, id);
+      });
+    },
+    [mutate]
   );
 
   /** Replace the selected layer's shapes (the mask panel, the Shape tool): one undo step. */
@@ -1361,7 +1400,7 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
                 patchLayer(selected.id, { options: next });
                 rememberLayerDefaults('paint', next);
               }}
-              onFinish={() => finishPaint(selected)}
+              onFinish={(mode) => finishPaint(selected, mode)}
               onSelectLayer={setSelectedId}
               onDelete={() => deleteLayer(selected.id)}
             />
@@ -1387,6 +1426,7 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
               onDeleteVersion={(n) => serverAction(() => sceneApi.deleteVersion(doc.id, selected.id, n), 'Could not discard the version')}
               onKeepOnly={(n) => serverAction(() => sceneApi.keepOnly(doc.id, selected.id, n), 'Could not discard the other versions')}
               onLoop={(n, kind) => loopVersion(selected.id, n, kind)}
+              onFinishMode={(mode) => changeFinish(selected.id, mode)}
               onRefinish={(n) => serverAction(() => sceneApi.refinish(doc.id, selected.id, n), 'Could not re-finish the version')}
               motionShown={!!motionView && motionView.layerId === selected.id && motionView.n === selected.active}
               onShowMotion={() => toggleMotion(selected)}

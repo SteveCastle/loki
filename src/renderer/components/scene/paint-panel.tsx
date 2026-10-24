@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import type { LayerOptions, SceneLayer } from './scene-api';
+import { FINISH_MODES, type FinishMode, type LayerOptions, type SceneLayer } from './scene-api';
 
 // The inspector of a Paint layer: the user's own colour painting. In the
 // picture it is part of what every layer above is made from (rough colour an
@@ -16,8 +16,8 @@ export interface PaintPanelProps {
   usedBy: Array<{ id: string; name: string; token: string | null }>;
   onPatch: (patch: Partial<SceneLayer>) => void;
   onOptions: (patch: LayerOptions) => void;
-  /** Add an Edit layer above that finishes this painting (masked to it, prompted for it). */
-  onFinish: () => void;
+  /** Add an Edit layer above that finishes this painting in a mode (masked to it, prompted for it). */
+  onFinish: (mode: FinishMode) => void;
   onSelectLayer: (id: string) => void;
   onDelete: () => void;
 }
@@ -65,20 +65,28 @@ export default function PaintPanel(props: PaintPanelProps) {
 
       {props.maskPanel}
 
-      <div className="sc-generate">
-        <button
-          type="button"
-          className="sc-btn sc-btn-primary sc-btn-wide"
-          disabled={!l.mask}
-          onClick={props.onFinish}
-          title={
-            guide
-              ? 'Adds an Edit layer above, masked to what you painted, that colours the picture the way your paint shows (this layer as its <image2>)'
-              : 'Adds an Edit layer above, masked to what you painted, that turns the rough paint into finished colour'
-          }
-        >
-          {l.mask ? 'Finish with AI' : 'Paint something first'}
-        </button>
+      <div className="sc-finish">
+        <span className="sc-label">Finish with AI</span>
+        {l.mask ? (
+          <div className="sc-finish-modes">
+            {(Object.keys(FINISH_MODES) as FinishMode[]).map((mode) => (
+              <button
+                key={mode}
+                type="button"
+                className="sc-finish-mode"
+                onClick={() => props.onFinish(mode)}
+                title={`Adds an Edit layer above, masked to what you painted.${
+                  FINISH_MODES[mode].guide === guide ? '' : FINISH_MODES[mode].guide ? ' This paint becomes a guide only.' : ' This paint goes back into the picture.'
+                }`}
+              >
+                <strong>{FINISH_MODES[mode].label}</strong>
+                <span>{FINISH_MODES[mode].help}</span>
+              </button>
+            ))}
+          </div>
+        ) : (
+          <p className="sc-faint">Paint something first.</p>
+        )}
       </div>
 
       {usedBy.length > 0 && (

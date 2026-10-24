@@ -4,7 +4,7 @@ import { maskBounds, rectContains, type ContextSize } from './mask';
 import { PromptLibrary } from './prompt-library';
 import References from './references';
 import { refTokens, type RefKind } from './refs';
-import { composeFinish, FINISH_GROUNDING, DIALOGUE_LANGUAGES, MAX_GENERATIONS, dialogueSeconds, generationsInFlight, jobPhase, layerTiming, type DialogueLine, type LayerOptions, type LoopKind, type SceneLayer } from './scene-api';
+import { composeFinish, FINISH_GROUNDING, FINISH_MODES, finishStrength, DIALOGUE_LANGUAGES, MAX_GENERATIONS, dialogueSeconds, generationsInFlight, jobPhase, layerTiming, type DialogueLine, type FinishMode, type LayerOptions, type LoopKind, type SceneLayer } from './scene-api';
 
 // Shortcut labels: ⌃/↵ have no glyph in Windows' UI fonts and render as junk.
 const IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
@@ -232,6 +232,8 @@ export interface InspectorProps {
   onLoop: (n: number, kind: LoopKind) => void;
   /** Redo version n's finish (edges, detail) with the current settings. */
   onRefinish: (n: number) => void;
+  /** A finish layer: switch what it does with its paint (add, recolour, repose). */
+  onFinishMode: (mode: FinishMode) => void;
   /** Whether the active version's motion map is shown; toggled by onShowMotion. */
   motionShown: boolean;
   onShowMotion: () => void;
@@ -442,15 +444,26 @@ export function Inspector(props: InspectorProps) {
         />
       </div>
 
+      {finish && (
+        <div className="sc-field-row">
+          <span className="sc-label" title="What this layer does with its paint layer">
+            Finish
+          </span>
+          <Seg
+            value={finish}
+            disabled={running}
+            onChange={(mode) => props.onFinishMode(mode)}
+            options={(Object.keys(FINISH_MODES) as FinishMode[]).map((mode) => ({ value: mode, label: FINISH_MODES[mode].label, title: FINISH_MODES[mode].help }))}
+          />
+        </div>
+      )}
       <PromptLibrary
         kind={l.kind}
         label={
           motion
             ? 'How should it move?'
-            : finish === 'sketch'
-            ? 'What is it?'
-            : finish === 'colour'
-            ? 'Anything about the colours?'
+            : finish
+            ? FINISH_MODES[finish].ask
             : dream
             ? 'What should be there?'
             : 'What should change here?'
@@ -470,10 +483,8 @@ export function Inspector(props: InspectorProps) {
         placeholder={
           motion
             ? 'e.g. the waterfall flows and mist drifts up (leave empty for natural ambient motion)'
-            : finish === 'sketch'
-            ? 'e.g. the sun · a stone cottage with ivy · a woman in a blue dress (optional)'
-            : finish === 'colour'
-            ? 'e.g. warm autumn light (optional)'
+            : finish
+            ? FINISH_MODES[finish].placeholder
             : dream
             ? 'e.g. a stormy sunset sky with towering clouds (describe it, don’t instruct)'
             : 'e.g. replace the sky with a stormy sunset'
@@ -498,7 +509,7 @@ export function Inspector(props: InspectorProps) {
             aria-label="Grounding"
           />
           <div className="sc-faint sc-grounding-help">
-            {'{what}'} is replaced by your words above{finish === 'colour' ? `, {guide} by the paint layer’s token (${guideToken})` : ''}.
+            {'{what}'} is replaced by your words above{FINISH_MODES[finish].guide ? `, {guide} by the paint layer’s token (${guideToken})` : ''}.
           </div>
           <div className="sc-grounding-full">
             <span className="sc-label">Sent to the engine</span>
@@ -721,11 +732,11 @@ export function Inspector(props: InspectorProps) {
                     min={10}
                     max={100}
                     step={5}
-                    value={Math.round((o.strength ?? (finish === 'sketch' ? 0.75 : finish === 'colour' ? 0.6 : 1)) * 100)}
+                    value={Math.round((o.strength ?? finishStrength(finish)) * 100)}
                     onChange={(e) => props.onOptions({ strength: Number(e.target.value) / 100 })}
                     aria-label="Strength"
                   />
-                  <span>{Math.round((o.strength ?? (finish === 'sketch' ? 0.75 : finish === 'colour' ? 0.6 : 1)) * 100)}%</span>
+                  <span>{Math.round((o.strength ?? finishStrength(finish)) * 100)}%</span>
                 </div>
               </>
             )}

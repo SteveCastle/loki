@@ -181,7 +181,7 @@ export interface LayerOptions {
   seed?: number;
 }
 
-export type FinishMode = 'sketch' | 'colour';
+export type FinishMode = 'sketch' | 'colour' | 'repose';
 
 /**
  * How a finish layer's words are read: the instruction around them. Style-neutral ("this picture", never
@@ -198,7 +198,60 @@ export const FINISH_GROUNDING: Record<FinishMode, string> = {
     'The paint is loose and only marks which colour goes where: give each whole object or area the colour painted mostly over it, ' +
     'following the shapes and edges of <image1> rather than the edges of the brush strokes. ' +
     'Keep every line and detail of <image1> as it is, and finish with clean, natural shading.',
+  repose:
+    'Repose the character in <image1> so their body takes the pose drawn over the picture on {guide}: {what}. ' +
+    'The drawing is a rough gesture sketch that only shows the new pose, where the head, body, arms, hands and legs go, ' +
+    'so do not draw its lines or colours. Keep the character exactly as they are in <image1>: the same identity, face, hair, ' +
+    'clothing, colours, proportions and style; only their pose changes. Where the new pose uncovers what was behind the character, ' +
+    'fill it in to match its surroundings. Leave everything else as it is.',
 };
+
+/**
+ * What "Finish with AI" can do with a painting, for people. guide: the paint is read as a guide (a reference over the
+ * clean picture, kept out of it) rather than as part of the picture; expand: how far past the paint the layer's mask
+ * reaches, as a share of the picture's short side (a pose moves limbs well outside a stick figure). Mirrors
+ * finishUsesGuide in media-server/tasks/scene_finish.go.
+ */
+export const FINISH_MODES: Record<
+  FinishMode,
+  { label: string; help: string; guide: boolean; expand: number; refNote: string; ask: string; placeholder: string; added: string }
+> = {
+  sketch: {
+    label: 'Add',
+    help: 'Turn the rough sketch into a real thing in the picture: draw a box-ish house, get a house',
+    guide: false,
+    expand: 0.01,
+    refNote: '',
+    ask: 'What is it?',
+    placeholder: 'e.g. the sun · a stone cottage with ivy · a woman in a blue dress (optional)',
+    added: 'Added an Edit layer that makes your sketch real: say what it is, then generate.',
+  },
+  colour: {
+    label: 'Recolour',
+    help: 'Colour what is under the paint the way it shows: loose strokes, whole objects recoloured',
+    guide: true,
+    expand: 0.01,
+    refNote: 'the rough colour guide',
+    ask: 'Anything about the colours?',
+    placeholder: 'e.g. warm autumn light (optional)',
+    added: 'Added an Edit layer that colours the picture from your paint: add any notes, then generate.',
+  },
+  repose: {
+    label: 'Repose',
+    help: 'Move a character into the pose you drew over them: a rough stick figure is enough',
+    guide: true,
+    expand: 0.06,
+    refNote: 'the pose drawing',
+    ask: 'Anything about the pose?',
+    placeholder: 'e.g. waving hello · sitting on the step (optional)',
+    added: 'Added an Edit layer that reposes the character: widen its mask over the whole character if needed, then generate.',
+  },
+};
+
+/** The Kromoss strength a finish starts at when the layer sets none. Mirrors sceneDreamArgs. */
+export function finishStrength(finish: FinishMode | undefined): number {
+  return finish === 'sketch' || finish === 'repose' ? 0.9 : finish === 'colour' ? 0.8 : 1;
+}
 
 /** Fill a grounding's placeholders; with no words a "…: {what}." clause folds away, any other {what} reads "the real thing". Mirrors composeFinish. */
 export function composeFinish(grounding: string, what: string, guide: string): string {

@@ -67,7 +67,7 @@ func sceneDreamArgs(ctx context.Context, s *Scene, l *SceneLayer, dir string, re
 	// from about 0.9, so a sketch is redrawn harder than rough colour.
 	strength := 1.0
 	switch optString(l.Options, "finish") {
-	case FinishSketch:
+	case FinishSketch, FinishRepose:
 		strength = 0.9
 	case FinishColour:
 		strength = 0.8
@@ -85,9 +85,9 @@ func sceneDreamArgs(ctx context.Context, s *Scene, l *SceneLayer, dir string, re
 	case steps >= 40:
 		opt("steps", "50")
 	}
-	// A colour guide: Kromoss takes no references, so the guide (the paint
-	// over the picture, lined up with the crop) IS the image it starts from.
-	if optString(l.Options, "finish") == FinishColour {
+	// A guide (colour or pose): Kromoss takes no references, so the guide (the
+	// paint over the picture, lined up with the crop) IS the image it starts from.
+	if finishUsesGuide(optString(l.Options, "finish")) {
 		for _, r := range refs {
 			if r.Layer != "" && r.Layer == optString(l.Options, "paint") && r.Path != "" {
 				b, err := os.ReadFile(r.Path)

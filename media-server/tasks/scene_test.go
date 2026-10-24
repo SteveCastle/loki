@@ -829,6 +829,14 @@ func TestSceneFinishPrompt(t *testing.T) {
 	if !strings.Contains(got, "painted on <image3> as a guide: warm autumn tones. The paint") {
 		t.Fatalf("colour: %s", got)
 	}
+	got = sceneFinishPrompt(map[string]any{"finish": FinishRepose, "paint": "p1"}, "waving hello", refs)
+	if !strings.Contains(got, "pose drawn over the picture on <image3>: waving hello. The drawing") {
+		t.Fatalf("repose: %s", got)
+	}
+	got = sceneFinishPrompt(map[string]any{"finish": FinishRepose, "paint": "p1"}, "", refs)
+	if !strings.Contains(got, "on <image3>. The drawing") || strings.Contains(got, "{") {
+		t.Fatalf("repose, no words: %s", got)
+	}
 	got = sceneFinishPrompt(map[string]any{"finish": FinishSketch}, "", nil)
 	if !strings.Contains(got, "stands in for the real thing: replace it with the real thing as") || strings.Contains(got, "{") {
 		t.Fatalf("sketch, no words: %s", got)
