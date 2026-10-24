@@ -527,7 +527,7 @@ describe('TransformFlowView: saved prompts', () => {
     // Already saved: the button says so while the prompt matches.
     expect(screen.queryByText(/Save prompt/)).toBeNull();
     expect(screen.getByText('★ Saved')).toBeTruthy();
-    expect(JSON.parse(window.localStorage.getItem('loki.transform.templates.v1') || '{}').edit).toEqual([
+    expect(loadTemplates('edit')).toEqual([
       expect.objectContaining({ name: 'Watercolor', prompt: 'turn it into a watercolor painting with soft edges and paper texture' }),
     ]);
     unmount();

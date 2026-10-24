@@ -4,6 +4,7 @@
 import { useSyncExternalStore } from 'react';
 import { INTENTS, intentKind, pinnable, runReferences, runSummary, settingsFor, type IntentId, type TransformSettings, type JobRequest } from './intents';
 import { EngineSetupDeferred, ensureEngines } from './engine-setup';
+import { isElectron, store } from '../../platform';
 
 export type FlowPhase = 'choose' | 'shape' | 'review';
 
@@ -137,7 +138,14 @@ export function saveRemembered(id: IntentId, s: TransformSettings): void {
 // <Picture 1> only mean something to the engine they were written for. A custom intent's is its prompt (plus the
 // settings it goes with); a preset's (Restore, Upscale, New angle…) is its settings alone, saved from a result's
 // metadata (recipe.ts).
-const TEMPLATES_KEY = 'loki.transform.templates.v1';
+//
+// Saved tasks belong to a library: they're kept per database (by its path) and only the open library's are shown.
+// v1 kept one list for every library; it is moved, once, into a single library (see readAllTemplates) and left in
+// place as a backup.
+const TEMPLATES_KEY = 'loki.transform.templates.v2';
+const LEGACY_TEMPLATES_KEY = 'loki.transform.templates.v1';
+// electron-store: the library the v1 list moves into, when it shouldn't be whichever library is open at the time.
+const LEGACY_LIBRARY_KEY = 'transformTemplatesLegacyLibrary';
 
 export interface PromptTemplate {
   id: string;
@@ -172,26 +180,77 @@ export function templateSummary(id: IntentId, t: PromptTemplate): string {
 }
 
 type TemplateStore = Partial<Record<IntentId, PromptTemplate[]>>;
+/** Saved tasks by library (templateLibraryKey of its database path). */
+type LibraryTemplates = Record<string, TemplateStore>;
 
 const NO_TEMPLATES: PromptTemplate[] = [];
-let templates: TemplateStore | null = null;
+let allTemplates: LibraryTemplates | null = null;
+let library: string | null = null;
 const templateListeners = new Set<() => void>();
 
-function readTemplates(): TemplateStore {
-  if (templates) return templates;
+/** One key per database file, however its path was spelled ('web' for the server's own library). */
+export function templateLibraryKey(dbPath: string): string {
+  return (dbPath || 'web').replace(/\\/g, '/').toLowerCase();
+}
+
+function storeGet(key: string): unknown {
+  try {
+    return store?.get(key, null);
+  } catch {
+    return null;
+  }
+}
+
+function currentLibrary(): string {
+  if (library === null) {
+    // Every window reads the library from the shared settings store; the viewer then keeps it current
+    // (setTemplateLibrary) as the user switches databases.
+    library = templateLibraryKey(isElectron ? String(storeGet('dbPath') || '') : 'web');
+  }
+  return library;
+}
+
+/** The viewer's library changed: show that library's saved tasks. */
+export function setTemplateLibrary(dbPath: string): void {
+  if (!dbPath) return;
+  const key = templateLibraryKey(isElectron ? dbPath : 'web');
+  if (key === library) return;
+  library = key;
+  templateListeners.forEach((l) => l());
+}
+
+function readAllTemplates(): LibraryTemplates {
+  if (allTemplates) return allTemplates;
+  allTemplates = {};
   try {
     const raw = window.localStorage.getItem(TEMPLATES_KEY);
-    templates = raw ? (JSON.parse(raw) as TemplateStore) : {};
+    if (raw) {
+      allTemplates = JSON.parse(raw) as LibraryTemplates;
+    } else {
+      const legacy = window.localStorage.getItem(LEGACY_TEMPLATES_KEY);
+      if (legacy) {
+        const target = String(storeGet(LEGACY_LIBRARY_KEY) || '');
+        const owner = target ? templateLibraryKey(target) : currentLibrary();
+        allTemplates = { [owner]: JSON.parse(legacy) as TemplateStore };
+        window.localStorage.setItem(TEMPLATES_KEY, JSON.stringify(allTemplates));
+      }
+    }
   } catch {
-    templates = {};
+    // unreadable: start empty
   }
-  return templates;
+  return allTemplates;
+}
+
+const NO_STORE: TemplateStore = {};
+
+function readTemplates(): TemplateStore {
+  return readAllTemplates()[currentLibrary()] || NO_STORE;
 }
 
 function writeTemplates(next: TemplateStore): void {
-  templates = next;
+  allTemplates = { ...readAllTemplates(), [currentLibrary()]: next };
   try {
-    window.localStorage.setItem(TEMPLATES_KEY, JSON.stringify(next));
+    window.localStorage.setItem(TEMPLATES_KEY, JSON.stringify(allTemplates));
   } catch {
     // storage unavailable: templates last for this session only
   }
@@ -268,11 +327,10 @@ export function useAllTemplates(): Array<{ intent: IntentId; t: PromptTemplate }
   return INTENTS.flatMap((i) => (all[i.id] || NO_TEMPLATES).map((t) => ({ intent: i.id, t })));
 }
 
-const NO_STORE: TemplateStore = {};
-
 /** Tests: forget the in-memory copy so the next read goes back to localStorage. */
 export function resetTemplateCache(): void {
-  templates = null;
+  allTemplates = null;
+  library = null;
 }
 
 // --- last run -------------------------------------------------------------------

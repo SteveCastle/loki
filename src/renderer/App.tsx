@@ -1,4 +1,4 @@
-import React, { useContext, useMemo } from 'react';
+import React, { useContext, useEffect, useMemo } from 'react';
 import { useSelector } from '@xstate/react';
 import { GlobalStateContext } from './state';
 import { isPickerWindow } from './platform';
@@ -9,6 +9,7 @@ import { HTML5Backend } from 'react-dnd-html5-backend';
 import { SetupWizard } from './components/controls/setup-wizard';
 import { Welcome } from './components/controls/welcome';
 import { useServerAuthSync } from './hooks/useServerAuthSync';
+import { setTemplateLibrary } from './components/transform/store';
 import { Panels } from './components/layout/panels';
 import './App.css';
 import { Loader } from './components/layout/loader';
@@ -57,6 +58,9 @@ export default function App(): JSX.Element {
   useLongPressContextMenu();
   useBlockBrowserPinchZoom();
   useServerAuthSync();
+  // Saved Transform tasks belong to the open library.
+  const dbPath = useSelector(libraryService, (s) => s.context.dbPath);
+  useEffect(() => setTemplateLibrary(dbPath), [dbPath]);
 
   const isLoadingState = useMemo(() => {
     return (
