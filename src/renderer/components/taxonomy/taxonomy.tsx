@@ -969,6 +969,7 @@ export default function Taxonomy() {
       {activeCategory && addingTag ? (
         <NewTagModal
           categoryLabel={activeCategory}
+          allowGroups={groupsSupported}
           handleClose={() => setAddingTag(false)}
         />
       ) : null}
@@ -976,6 +977,7 @@ export default function Taxonomy() {
         <NewTagModal
           categoryLabel={activeCategory}
           groupLabel={addingTagInGroup}
+          allowGroups={groupsSupported}
           handleClose={() => setAddingTagInGroup(null)}
         />
       ) : null}
@@ -1017,14 +1019,19 @@ export default function Taxonomy() {
             (t: Concept) => t.label === editingTag
           ) ||
           null;
+        const editingCategoryLabel =
+          editingTagConcept?.category || activeCategory || '';
         return (
           <NewTagModal
-            categoryLabel={
-              editingTagConcept?.category || activeCategory || ''
-            }
+            categoryLabel={editingCategoryLabel}
             handleClose={() => setEditingTag(null)}
             currentValue={editingTag}
             currentDescription={editingTagConcept?.description || ''}
+            groupLabel={editingTagConcept?.group ?? null}
+            allowGroups={
+              !!editingCategoryLabel &&
+              !SYSTEM_CATEGORIES.has(editingCategoryLabel)
+            }
           />
         );
       })() : null}

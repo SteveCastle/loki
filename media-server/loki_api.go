@@ -1532,14 +1532,16 @@ func lokiTaxonomyTagHandler(deps *Dependencies) http.HandlerFunc {
 			weight      float64
 			description string
 			thumbnail   string
+			group       string
 		)
 		err := deps.DB.QueryRow(`
 			SELECT COALESCE(category_label, '') AS category_label,
 			       COALESCE(weight, 0) AS weight,
 			       COALESCE(description, '') AS description,
-			       COALESCE(thumbnail_path_600, '') AS thumbnail_path_600
+			       COALESCE(thumbnail_path_600, '') AS thumbnail_path_600,
+			       COALESCE(group_label, '') AS group_label
 			FROM tag
-			WHERE label = ?`, label).Scan(&category, &weight, &description, &thumbnail)
+			WHERE label = ?`, label).Scan(&category, &weight, &description, &thumbnail, &group)
 		if err == sql.ErrNoRows {
 			httpError(w, "tag not found", http.StatusNotFound)
 			return
@@ -1553,18 +1555,24 @@ func lokiTaxonomyTagHandler(deps *Dependencies) http.HandlerFunc {
 		if thumbnail != "" {
 			thumbnailPath = &thumbnail
 		}
+		var groupLabel *string
+		if group != "" {
+			groupLabel = &group
+		}
 		writeJSON(w, struct {
 			Label       string  `json:"label"`
 			Category    string  `json:"category"`
 			Weight      float64 `json:"weight"`
 			Description string  `json:"description"`
 			Thumbnail   *string `json:"thumbnail_path_600"`
+			Group       *string `json:"group"`
 		}{
 			Label:       label,
 			Category:    category,
 			Weight:      weight,
 			Description: description,
 			Thumbnail:   thumbnailPath,
+			Group:       groupLabel,
 		})
 	}
 }

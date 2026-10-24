@@ -130,7 +130,8 @@ const getTag =
       const [tagLabel] = args;
       if (!tagLabel) return null;
       const row = await db.get(
-        `SELECT label, category_label, weight, description, thumbnail_path_600
+        `SELECT label, category_label, weight, description, thumbnail_path_600,
+                group_label
            FROM tag
           WHERE label = $1`,
         [tagLabel]
@@ -142,6 +143,7 @@ const getTag =
         weight: row.weight,
         description: row.description || '',
         thumbnail_path_600: row.thumbnail_path_600 || null,
+        group: row.group_label || null,
       };
     } catch (e) {
       console.log(e);

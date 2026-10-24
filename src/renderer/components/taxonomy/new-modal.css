@@ -95,6 +95,25 @@
   background-color: #383840;
 }
 
+.input-modal-properties .input-modal-select {
+  width: 100%;
+  padding: 0.4rem 0.5rem;
+  border-radius: 2px;
+  border: none;
+  background-color: #2d2d31;
+  color: white;
+  font-size: 0.8rem;
+  margin: 0.5rem 0;
+  box-sizing: border-box;
+  font-family: inherit;
+  outline: none;
+  cursor: pointer;
+}
+
+.input-modal-properties .input-modal-select:focus {
+  background-color: #383840;
+}
+
 .input-modal-properties textarea::placeholder {
   color: rgba(255, 255, 255, 0.2);
 }

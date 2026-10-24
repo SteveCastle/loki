@@ -1,9 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import useComponentSize from '@rehooks/component-size';
-import { useVirtualizer } from '@tanstack/react-virtual';
+import {
+  defaultRangeExtractor,
+  Range,
+  useVirtualizer,
+} from '@tanstack/react-virtual';
+import { useDragLayer } from 'react-dnd';
+import useDragAutoScroll from '../../hooks/useDragAutoScroll';
 import Tag from './tag';
 import TagListRow from './tag-list-row';
-import TagGroupHeader from './tag-group-header';
+import TagGroupHeader, { TAG_GROUP_DND_TYPE } from './tag-group-header';
 import {
   TagGroup,
   groupTags,
@@ -57,6 +63,9 @@ export default function GroupedTagView({
 }: Props) {
   const parentRef = useRef<HTMLDivElement>(null);
   const { width } = useComponentSize(parentRef);
+  // Dragging a tag (or a group header) toward the top or bottom edge scrolls
+  // the list, so a far-off group is reachable mid-drag.
+  useDragAutoScroll(parentRef, ['TAG', TAG_GROUP_DND_TYPE]);
   const columns =
     viewMode === 'list'
       ? 1
@@ -108,11 +117,41 @@ export default function GroupedTagView({
       rows[index]?.type === 'header' ? HEADER_HEIGHT : rowHeight,
     [rows, rowHeight]
   );
+
+  // The tag being dragged, if it is one of ours. Item and type are fixed for a
+  // whole drag, so this re-renders at drag start and end, not per dragover.
+  const draggedLabel = useDragLayer((monitor) => {
+    if (!monitor.isDragging() || monitor.getItemType() !== 'TAG') return null;
+    const item = monitor.getItem() as { label?: string; category?: string };
+    return item?.category === category ? item.label ?? null : null;
+  });
+  // Keep the dragged tag's row mounted while auto-scroll carries it out of
+  // view: unmounting a drag source mid-drag can end the HTML5 drag.
+  const pinnedIndex = useMemo(
+    () =>
+      draggedLabel === null
+        ? -1
+        : rows.findIndex(
+            (r) =>
+              r.type === 'tags' && r.tags.some((t) => t.label === draggedLabel)
+          ),
+    [rows, draggedLabel]
+  );
+  const rangeExtractor = useCallback(
+    (range: Range) => {
+      const indexes = defaultRangeExtractor(range);
+      if (pinnedIndex < 0 || indexes.includes(pinnedIndex)) return indexes;
+      return [...indexes, pinnedIndex].sort((a, b) => a - b);
+    },
+    [pinnedIndex]
+  );
+
   const rowVirtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => parentRef.current,
     getItemKey,
     estimateSize,
+    rangeExtractor,
     overscan: 6,
   });
 

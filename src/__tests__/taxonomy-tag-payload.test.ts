@@ -20,7 +20,8 @@ async function makeDb(): Promise<Database> {
        category_label TEXT,
        weight REAL,
        description TEXT,
-       thumbnail_path_600 TEXT
+       thumbnail_path_600 TEXT,
+       group_label TEXT
      )`
   );
   await db.run(
@@ -107,6 +108,7 @@ describe('getTag', () => {
       weight: 0,
       description: 'Low-key, heavy shadows',
       thumbnail_path_600: '/thumbs/moody.jpg',
+      group: null,
     });
     await db.close();
   });
@@ -117,6 +119,7 @@ describe('getTag', () => {
 
     expect(tag.description).toBe('');
     expect(tag.thumbnail_path_600).toBeNull();
+    expect(tag.group).toBeNull();
     await db.close();
   });
 
