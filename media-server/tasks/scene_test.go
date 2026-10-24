@@ -825,27 +825,28 @@ func TestScenePaintLayerWithFFmpeg(t *testing.T) {
 
 func TestSceneFinishPrompt(t *testing.T) {
 	refs := []sceneRef{{Path: "a.png", Kind: "image"}, {Kind: "image", Layer: "p1"}}
-	got := sceneFinishPrompt(map[string]any{"finish": FinishColour, "paint": "p1"}, "warm autumn tones.", refs)
+	got := sceneFinishPrompt(map[string]any{"finish": FinishColour, "paint": "p1"}, "warm autumn tones.", refs, "")
 	if !strings.Contains(got, "painted on <image3> as a guide: warm autumn tones. The paint") {
 		t.Fatalf("colour: %s", got)
 	}
-	got = sceneFinishPrompt(map[string]any{"finish": FinishRepose, "paint": "p1"}, "waving hello", refs)
-	if !strings.Contains(got, "pose drawn over the picture on <image3>: waving hello. The drawing") {
+	got = sceneFinishPrompt(map[string]any{"finish": FinishRepose, "paint": "p1"}, "waving hello", refs, "")
+	if !strings.Contains(got, "exact same pose as shown in <image3>: waving hello. Match the positions") {
 		t.Fatalf("repose: %s", got)
 	}
-	got = sceneFinishPrompt(map[string]any{"finish": FinishRepose, "paint": "p1"}, "", refs)
-	if !strings.Contains(got, "on <image3>. The drawing") || strings.Contains(got, "{") {
+	got = sceneFinishPrompt(map[string]any{"finish": FinishRepose, "paint": "p1"}, "", refs, "")
+	if !strings.Contains(got, "shown in <image3>. Match the positions") || strings.Contains(got, "{") {
 		t.Fatalf("repose, no words: %s", got)
 	}
-	got = sceneFinishPrompt(map[string]any{"finish": FinishSketch}, "", nil)
-	if !strings.Contains(got, "stands in for the real thing: replace it with the real thing as") || strings.Contains(got, "{") {
+	got = sceneFinishPrompt(map[string]any{"finish": FinishSketch}, "", nil, "")
+	if !strings.Contains(got, "stands in for the real thing: replace that sketch, and only it, with the real thing as") || strings.Contains(got, "{") ||
+		!strings.Contains(got, "in this picture. The sketch is") || !strings.HasSuffix(got, "any other figure or object.") {
 		t.Fatalf("sketch, no words: %s", got)
 	}
-	got = sceneFinishPrompt(map[string]any{"finish": FinishSketch, "grounding": "Paint {what} in <image1>."}, "a sun", nil)
+	got = sceneFinishPrompt(map[string]any{"finish": FinishSketch, "grounding": "Paint {what} in <image1>."}, "a sun", nil, "")
 	if got != "Paint a sun in <image1>." {
 		t.Fatalf("custom grounding: %s", got)
 	}
-	if got := sceneFinishPrompt(map[string]any{}, "make it night", nil); got != "make it night" {
+	if got := sceneFinishPrompt(map[string]any{}, "make it night", nil, ""); got != "make it night" {
 		t.Fatalf("plain layer: %s", got)
 	}
 }

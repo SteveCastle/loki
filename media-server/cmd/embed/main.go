@@ -104,11 +104,21 @@ func main() {
 	flag.Float64Var(&face2Weight, "face2-weight", 1, "Secondary recognizer's cosine-fusion weight")
 	flag.Float64Var(&faceMinScore, "min-score", 0.7, "Minimum detection confidence (faces mode)")
 	flag.IntVar(&faceMinSize, "min-size", 40, "Minimum face bbox edge in original-image pixels (faces mode)")
+	poseMode := flag.Bool("pose", false, "Pose mode: estimate the body pose of the person in --box of --image with an RTMPose --model; prints OpenPose-18 joints as JSON")
+	poseBox := flag.String("box", "", "Pose mode: the person's box x,y,w,h in image pixels")
 	flag.Parse()
 
 	if showVersion {
 		fmt.Println("embed local-build")
 		os.Exit(0)
+	}
+
+	// Pose mode: no embedding, so before the --dim check.
+	if *poseMode {
+		if err := runPose(modelPath, ortLibPath, imagePath, *poseBox); err != nil {
+			log.Fatalf("pose: %v", err)
+		}
+		return
 	}
 
 	if dim <= 0 {

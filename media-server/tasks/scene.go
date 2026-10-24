@@ -101,6 +101,24 @@ func (r SceneRect) clamp(w, h int) SceneRect {
 	return r
 }
 
+// SceneMask is a layer's mask as the editor draws it (opaque here): its
+// shapes, whole-mask settings and feather.
+type SceneMask struct {
+	Shapes   json.RawMessage `json:"shapes,omitempty"`
+	MaskOpts json.RawMessage `json:"maskOpts,omitempty"`
+	Feather  float64         `json:"feather"`
+}
+
+// SceneGenMask is the mask a generation is made with, when the editor sends
+// one: the layer's mask without what only shapes the shown version (a finish
+// layer's fit to its result), so one version's result never grows the next
+// one's crop. Mask is its full-frame raster, Region the crop around it.
+type SceneGenMask struct {
+	SceneMask
+	Mask   string    `json:"mask"`
+	Region SceneRect `json:"region"`
+}
+
 // SceneVersion is one generation of a layer: the file the engine produced
 // and the region it was generated for (the layer's mask may change later;
 // the result stays where it was made).
@@ -124,8 +142,14 @@ type SceneVersion struct {
 	// before they were recorded, and for loops and re-finishes.
 	Inputs []string `json:"inputs,omitempty"`
 	// Track is a motion version's roto: a matte tracked through its clip.
-	Track   *SceneTrack `json:"track,omitempty"`
-	Created time.Time   `json:"created"`
+	Track *SceneTrack `json:"track,omitempty"`
+	// Mask is the version's own mask: the layer's when it was generated, then
+	// whatever the editor changes while it is shown. Showing a version puts
+	// its mask back on the layer, so each result keeps the shape it was made
+	// with. Editor-owned (UpdateScene takes it by Path); nil on versions from
+	// before masks were kept per version.
+	Mask    *SceneMask `json:"mask,omitempty"`
+	Created time.Time  `json:"created"`
 }
 
 // SceneJob is a layer's generation in flight (server-owned).
@@ -155,6 +179,8 @@ type SceneJob struct {
 	Below []string `json:"below,omitempty"`
 	// Refs: the reference files the engine was given (SceneVersion.Inputs).
 	Refs []string `json:"refs,omitempty"`
+	// Mask: the mask it was started with (SceneVersion.Mask).
+	Mask *SceneMask `json:"mask,omitempty"`
 }
 
 // SceneLayer is one masked edit. Kind still = an edited image region; motion
@@ -566,6 +592,17 @@ func UpdateScene(q *jobqueue.Queue, id string, in *Scene) (*Scene, error) {
 		if nl.Active >= -1 && nl.Active < len(l.Versions) {
 			l.Active = nl.Active
 		}
+		// A version's mask is the editor's; the version itself the server's.
+		for _, nv := range nl.Versions {
+			if nv.Mask == nil {
+				continue
+			}
+			for i := range l.Versions {
+				if l.Versions[i].Path == nv.Path {
+					l.Versions[i].Mask = nv.Mask
+				}
+			}
+		}
 		next = append(next, l)
 	}
 	// A deleted layer takes its generations (and their crops) with it.
@@ -723,7 +760,7 @@ func reconcileLayerJob(q *jobqueue.Queue, s *Scene, l *SceneLayer) bool {
 		if note == "" {
 			note = l.Job.Note
 		}
-		v := SceneVersion{Path: out, Region: l.Job.Region, Prompt: l.Job.Prompt, JobID: jobID, Note: note, Raw: l.Job.Raw, Below: l.Job.Below, Created: time.Now().UTC()}
+		v := SceneVersion{Path: out, Region: l.Job.Region, Prompt: l.Job.Prompt, JobID: jobID, Note: note, Raw: l.Job.Raw, Below: l.Job.Below, Mask: l.Job.Mask, Created: time.Now().UTC()}
 		if l.Job.Raw == "" && l.Job.Input != "" {
 			v.Inputs = append([]string{l.Job.Input}, l.Job.Refs...)
 		}
@@ -1232,6 +1269,15 @@ func resolveLayerRefs(ctx context.Context, s *Scene, idx int, dir string, region
 		if paint == nil || paint.Mask == "" {
 			return nil, fmt.Errorf("the paint layer a reference names is gone or empty")
 		}
+		dst := strings.TrimSuffix(input, filepath.Ext(input)) + "-ref-" + safeLayerID(paint.ID) + ".png"
+		// A mannequin is given the way pose models read one: the skeleton on black.
+		if paintIsPose(paint) {
+			if _, err := renderPaintAlone(ctx, s, dir, paint, region, dst); err != nil {
+				return nil, err
+			}
+			out[i].Path = dst
+			continue
+		}
 		var below []*SceneLayer
 		for _, l := range s.Layers[:idx] {
 			if l.ID != paint.ID {
@@ -1247,7 +1293,6 @@ func resolveLayerRefs(ctx context.Context, s *Scene, idx int, dir string, region
 			return nil, err
 		}
 		layers = append(layers, g)
-		dst := strings.TrimSuffix(input, filepath.Ext(input)) + "-ref-" + safeLayerID(paint.ID) + ".png"
 		args := sceneGraphArgs(s.Base, s.Width, s.Height, layers, false, 0, region)
 		if err := runSceneFFmpeg(ctx, append([]string{"-y"}, append(args, dst)...)); err != nil {
 			return nil, fmt.Errorf("rendering the paint reference: %w", err)
@@ -1255,6 +1300,94 @@ func resolveLayerRefs(ctx context.Context, s *Scene, idx int, dir string, region
 		out[i].Path = dst
 	}
 	return out, nil
+}
+
+// paintIsPose reports whether a paint layer is only mannequin poses (the
+// editor's pose ops, pose.ts).
+func paintIsPose(l *SceneLayer) bool {
+	var ops []struct {
+		T   string `json:"t"`
+		Off bool   `json:"off"`
+	}
+	if json.Unmarshal(l.Shapes, &ops) != nil {
+		return false
+	}
+	n := 0
+	for _, op := range ops {
+		if op.Off {
+			continue
+		}
+		if op.T != "pose" {
+			return false
+		}
+		n++
+	}
+	return n > 0
+}
+
+// renderPaintAlone writes the paint layer's painting over black, cropped to
+// region (lined up with a generation's crop), to out, and returns where it is
+// painted in frame pixels (empty when nothing in the frame is).
+func renderPaintAlone(ctx context.Context, s *Scene, dir string, paint *SceneLayer, region SceneRect, out string) (SceneRect, error) {
+	p, err := writeSceneMask(dir, paint)
+	if err != nil {
+		return SceneRect{}, err
+	}
+	err = runSceneFFmpeg(ctx, []string{"-y", "-f", "lavfi", "-i", fmt.Sprintf("color=c=black:s=%dx%d", s.Width, s.Height), "-i", p,
+		"-filter_complex", fmt.Sprintf("[1]scale=%d:%d[p];[0][p]overlay=format=auto,crop=%d:%d:%d:%d", s.Width, s.Height, region.W, region.H, region.X, region.Y),
+		"-frames:v", "1", out})
+	if err != nil {
+		return SceneRect{}, fmt.Errorf("rendering the paint alone: %w", err)
+	}
+	f, err := os.Open(p)
+	if err != nil {
+		return SceneRect{}, err
+	}
+	defer f.Close()
+	img, err := png.Decode(f)
+	if err != nil {
+		return SceneRect{}, err
+	}
+	b := img.Bounds()
+	x0, y0, x1, y1 := b.Max.X, b.Max.Y, b.Min.X-1, b.Min.Y-1
+	for y := b.Min.Y; y < b.Max.Y; y++ {
+		for x := b.Min.X; x < b.Max.X; x++ {
+			if _, _, _, a := img.At(x, y).RGBA(); a>>8 >= 32 {
+				x0, y0, x1, y1 = min(x0, x), min(y0, y), max(x1, x), max(y1, y)
+			}
+		}
+	}
+	if x1 < x0 {
+		return SceneRect{}, nil
+	}
+	sx, sy := float64(s.Width)/float64(b.Dx()), float64(s.Height)/float64(b.Dy())
+	return SceneRect{X: int(float64(x0-b.Min.X) * sx), Y: int(float64(y0-b.Min.Y) * sy),
+		W: int(math.Ceil(float64(x1-x0+1) * sx)), H: int(math.Ceil(float64(y1-y0+1) * sy))}, nil
+}
+
+// sceneFinishTarget renders a sketch finish's paint alone on black, lined up
+// with the crop (<input>-target.png), and says where in the crop it is
+// (sketchWhere). "" when the layer names no paint or nothing of it is painted.
+func sceneFinishTarget(ctx context.Context, s *Scene, dir, paintID string, region SceneRect, input string) (string, string, error) {
+	var paint *SceneLayer
+	for _, l := range s.Layers {
+		if l.ID == paintID && l.Kind == SceneKindPaint && l.Mask != "" {
+			paint = l
+		}
+	}
+	if paint == nil {
+		return "", "", nil
+	}
+	out := strings.TrimSuffix(input, filepath.Ext(input)) + "-target.png"
+	painted, err := renderPaintAlone(ctx, s, dir, paint, region, out)
+	if err != nil {
+		return "", "", err
+	}
+	if painted.empty() {
+		os.Remove(out)
+		return "", "", nil
+	}
+	return out, sketchWhere(painted, region), nil
 }
 
 // sceneCanvases are the frame shapes loki-reshoot's model is trained on
@@ -1367,6 +1500,9 @@ type sceneRef struct {
 	// Layer names a paint layer instead of a file: Path is rendered at
 	// generation time (resolveLayerRefs).
 	Layer string
+	// Target: a finish's paint alone on black (sceneFinishTarget), added at
+	// generation time, never stored.
+	Target bool
 }
 
 // promptRef is a reference as the prompt template sees it.
@@ -1711,6 +1847,12 @@ func sceneVoiceClip(ctx context.Context, dir, lid, ref string) (string, error) {
 // from the stills below it and submits a retouch (still) or reshoot (motion)
 // job on the crop. The finished file becomes a new version on the next read.
 func GenerateLayer(ctx context.Context, q *jobqueue.Queue, id, lid string) (*Scene, error) {
+	return GenerateLayerMask(ctx, q, id, lid, nil)
+}
+
+// GenerateLayerMask is GenerateLayer made with gm (when set and valid)
+// instead of the layer's own mask and region.
+func GenerateLayerMask(ctx context.Context, q *jobqueue.Queue, id, lid string, gm *SceneGenMask) (*Scene, error) {
 	sceneMu.Lock()
 	defer sceneMu.Unlock()
 	s, err := loadSceneLocked(id)
@@ -1739,7 +1881,16 @@ func GenerateLayer(ctx context.Context, q *jobqueue.Queue, id, lid string) (*Sce
 	if l.Kind == SceneKindStill && prompt == "" && optString(l.Options, "finish") == "" {
 		return nil, fmt.Errorf("describe the edit first")
 	}
-	region := l.Region.clamp(s.Width, s.Height)
+	// genL is the layer as this generation sees it: its mask may be gm's.
+	genL := l
+	snap := &SceneMask{Shapes: l.Shapes, MaskOpts: l.MaskOpts, Feather: l.Feather}
+	if gm != nil && strings.HasPrefix(gm.Mask, "data:image/png;base64,") && !gm.Region.empty() {
+		cp := *l
+		cp.Mask, cp.Region = gm.Mask, gm.Region
+		genL = &cp
+		snap = &SceneMask{Shapes: gm.Shapes, MaskOpts: gm.MaskOpts, Feather: clampFloat(gm.Feather, 0, 512)}
+	}
+	region := genL.Region.clamp(s.Width, s.Height)
 	if region.empty() {
 		return nil, fmt.Errorf("draw the area to change first")
 	}
@@ -1782,14 +1933,27 @@ func GenerateLayer(ctx context.Context, q *jobqueue.Queue, id, lid string) (*Sce
 	case SceneKindStill:
 		if optString(l.Options, "engine") == SceneEngineDream {
 			command = "dream"
-			if err := sceneDreamArgs(ctx, s, l, dir, region, input, prompt, refs, opt); err != nil {
+			if err := sceneDreamArgs(ctx, s, genL, dir, region, input, prompt, refs, opt); err != nil {
 				os.Remove(input)
 				return nil, err
 			}
 			break
 		}
 		command = "retouch"
-		opt("prompt", sceneFinishPrompt(l.Options, prompt, refs))
+		// A sketch to make real: the engine is shown it alone, in place, and told where it is.
+		where := ""
+		if optString(l.Options, "finish") == FinishSketch {
+			target, wh, err := sceneFinishTarget(ctx, s, dir, optString(l.Options, "paint"), region, input)
+			if err != nil {
+				os.Remove(input)
+				return nil, err
+			}
+			if target != "" {
+				refs = append(refs, sceneRef{Kind: "image", Path: target, Note: "the sketch alone", Target: true})
+				where = wh
+			}
+		}
+		opt("prompt", sceneFinishPrompt(l.Options, prompt, refs, where))
 		if len(refs) > 0 {
 			if err := checkSceneRefs(SceneKindStill, refs, false); err != nil {
 				os.Remove(input)
@@ -1905,7 +2069,7 @@ func GenerateLayer(ctx context.Context, q *jobqueue.Queue, id, lid string) (*Sce
 		refPaths[i] = r.Path
 	}
 	l.startJob(&SceneJob{ID: ids[len(ids)-1], Chain: ids, State: "pending", Region: region, Prompt: prompt, Input: input, Refs: refPaths,
-		Below: sceneBelow(s.Layers[:idx])})
+		Below: sceneBelow(s.Layers[:idx]), Mask: snap})
 	if err := saveSceneLocked(s); err != nil {
 		return nil, err
 	}
@@ -2115,7 +2279,7 @@ func RefinishVersion(q *jobqueue.Queue, id, lid string, n int) (*Scene, error) {
 		}
 		l.Error = ""
 		l.startJob(&SceneJob{ID: ids[0], Chain: ids, State: "pending", Region: v.Region, Prompt: v.Prompt, Input: crop,
-			Step: "scene-lock", Note: fmt.Sprintf("re-finished v%d", n+1), Raw: raw, Below: v.Below})
+			Step: "scene-lock", Note: fmt.Sprintf("re-finished v%d", n+1), Raw: raw, Below: v.Below, Mask: v.Mask})
 		if err := saveSceneLocked(s); err != nil {
 			return nil, err
 		}

@@ -1,3 +1,5 @@
+import { drawPose, poseBox, type PoseOp } from './pose';
+
 // Scene editor masks: the vector strokes a layer's mask is drawn with, the
 // region (crop) a generation is run on, and the raster the server composites
 // through. All coordinates are base-frame pixels.
@@ -21,7 +23,8 @@
 // Any op can be switched `off` without losing it. On a paint layer ops carry
 // a colour `c` (CSS hex) and opacity `a` (0-1), and erase cuts the paint. An
 // image op with `fit` is the "Fit mask to result" piece: where version `fit`
-// (its path) changed the picture, kept in step with the shown version.
+// (its path) changed the picture, kept in step with the shown version. A `pose`
+// op is the mannequin (pose.ts): on a paint layer it draws in OpenPose's colours.
 export type MaskOp = (
   | { t: 'rect'; x: number; y: number; w: number; h: number }
   | { t: 'lasso'; pts: number[] }
@@ -29,6 +32,7 @@ export type MaskOp = (
   | { t: 'stroke'; pts: number[]; r: number; h?: number }
   | { t: 'image'; src: string; x: number; y: number; w: number; h: number; bx: number; by: number; bw: number; bh: number }
   | { t: 'layer'; id: string }
+  | PoseOp
 ) & { erase?: boolean; keep?: boolean; off?: boolean; c?: string; a?: number; fit?: string; label?: string };
 
 /** Whole-mask settings, applied after the ops in this order: expand (px; < 0 chokes), invert, feather, opacity. */
@@ -81,6 +85,10 @@ export function maskBounds(ops: MaskOp[]): Rect | null {
     } else if (op.t === 'image') {
       add(op.bx, op.by);
       add(op.bx + op.bw, op.by + op.bh);
+    } else if (op.t === 'pose') {
+      const b = poseBox(op);
+      add(b.x, b.y);
+      add(b.x + b.w, b.y + b.h);
     } else {
       const pad = op.t === 'stroke' ? op.r : 0;
       for (let i = 0; i + 1 < op.pts.length; i += 2) add(op.pts[i], op.pts[i + 1], pad);
@@ -227,6 +235,12 @@ export function drawOps(
     if (op.t === 'image') {
       const img = maskImage(op.src);
       if (img) ctx.drawImage(img, op.x * scale, op.y * scale, op.w * scale, op.h * scale);
+      return;
+    }
+    if (op.t === 'pose') {
+      // Its own colours, never the ink: they are what tells a model which limb is which.
+      if (ctx.globalCompositeOperation === 'destination-out') return;
+      drawPose(ctx, op, scale, colored);
       return;
     }
     const p = op.pts;
@@ -555,6 +569,7 @@ export function simplifyPath(pts: number[], tol: number): number[] {
 export function opBox(op: MaskOp): Rect | null {
   if (op.t === 'rect' || op.t === 'image') return { x: op.x, y: op.y, w: op.w, h: op.h };
   if (op.t === 'layer') return null;
+  if (op.t === 'pose') return poseBox(op);
   const pad = op.t === 'stroke' ? op.r : 0;
   let x0 = Infinity;
   let y0 = Infinity;
@@ -585,6 +600,8 @@ export function mapOp(op: MaskOp, from: Rect, to: Rect): MaskOp {
       const pts = op.pts.map((v, i) => (i % 2 ? Y(v) : X(v)));
       return op.t === 'stroke' ? { ...op, pts, r: Math.max(1, op.r * Math.sqrt(sx * sy)) } : { ...op, pts };
     }
+    case 'pose':
+      return { ...op, kp: op.kp.map((v, i) => (i % 2 ? Y(v) : X(v))), w: Math.max(1, Math.round(op.w * Math.sqrt(sx * sy))) };
     default:
       return op;
   }
@@ -611,6 +628,8 @@ export function opLabel(op: MaskOp, layerName?: (id: string) => string | null): 
     case 'image':
       if (op.fit) return 'Fitted to the result';
       return op.label ? `Selected · ${op.label}` : 'Painted piece';
+    case 'pose':
+      return 'Mannequin pose';
     case 'layer': {
       const name = layerName?.(op.id);
       return name === null || name === undefined ? 'Layer (deleted)' : `Layer · ${name}`;

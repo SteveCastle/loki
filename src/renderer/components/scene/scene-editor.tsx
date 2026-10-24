@@ -17,14 +17,16 @@ import {
   type SceneLayer,
   type SceneSummary,
   type SegPrompt,
+  type VersionMask,
   versionStale,
 } from './scene-api';
 import Stage, { isTyping, type MaskView, type RotoView, type Tool } from './stage';
-import { pickOps, usePick, type PickTarget } from './pick';
+import { pickOps, selectedObjects, usePick, type PickTarget } from './pick';
 import { PickBar, RotoBar } from './pick-bar';
 import MaskPanel from './mask-panel';
 import DreamDialog from './dream-dialog';
 import PaintPanel from './paint-panel';
+import { applyPreset, fromDetection, mirrorPose, presetPose } from './pose';
 import { Inspector, KEY_GENERATE, KEY_UNDO, LayerList } from './panel';
 import { requestLibraryPick } from './pick-bridge';
 import { hasVoice, newRefId, refTokens, remapRefTokens, tokenIssues, type RefKind } from './refs';
@@ -54,6 +56,12 @@ const TOOLS: Array<{ id: Tool; key: string; label: string; title: string }> = [
   { id: 'erase', key: 'E', label: 'Erase', title: 'Erase from the mask' },
   { id: 'protect', key: 'S', label: 'Protect', title: 'Paint areas this layer must leave untouched: they stay exactly the picture below (blue)' },
   { id: 'shape', key: 'T', label: 'Shape', title: 'Click a shape of the mask to select it; drag to move, drag a corner to scale (Shift = keep proportions), drag a point to reshape' },
+  {
+    id: 'pose',
+    key: 'M',
+    label: 'Mannequin',
+    title: 'Paint layers: click or drag head-to-feet to place a posable figure; drag a joint to swing that limb (Alt = move the joint alone, Shift = scale), drag the neck to move it. Use it with Finish → Repose',
+  },
   { id: 'hand', key: 'H', label: 'Pan', title: 'Pan (or hold Space); scroll to zoom, F to fit' },
 ];
 
@@ -112,6 +120,13 @@ function ToolIcon({ id }: { id: Tool }) {
           <path d="M3.5 11.5l6.8-6.8 4 4-5 5H6.5zM7 14.7h8" {...p} />
         </svg>
       );
+    case 'pose':
+      return (
+        <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden>
+          <circle cx="9" cy="3.5" r="1.7" {...p} />
+          <path d="M9 5.5v5M9 7l-3.5 2.5M9 7l3.5-1.5M9 10.5l-2.5 5M9 10.5l3 4.5" {...p} />
+        </svg>
+      );
     case 'protect':
       return (
         <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden>
@@ -166,6 +181,31 @@ const linksMasks = (l: SceneLayer) => (l.shapes || []).some((op) => op.t === 'la
 function remask(s: Scene, id: string): Scene {
   const once = { ...s, layers: s.layers.map((l) => (l.id === id ? withMask(s, l) : l)) };
   return { ...once, layers: once.layers.map((l) => (l.id !== id && linksMasks(l) ? withMask(once, l) : l)) };
+}
+
+/** A layer's shapes without the fit to its shown result: that piece belongs to the version and is re-made from it. */
+const drawnShapes = (ops: MaskOp[] | undefined) => (ops || []).filter((op) => !(op.t === 'image' && op.fit));
+
+/** The mask a layer has drawn now, as a version keeps it. */
+const maskOf = (l: SceneLayer): VersionMask => ({ shapes: drawnShapes(l.shapes), maskOpts: l.maskOpts, feather: l.feather });
+
+/** Whether two masks are the same: by reference when they share their pieces (the usual case), else by value. */
+function sameMask(a: VersionMask | undefined, b: VersionMask): boolean {
+  if (!a) return false;
+  const as = a.shapes || [];
+  const bs = b.shapes || [];
+  const opts = (m: VersionMask) => JSON.stringify(m.maskOpts || {});
+  if ((a.feather || 0) !== (b.feather || 0) || opts(a) !== opts(b) || as.length !== bs.length) return false;
+  return as.every((op, i) => op === bs[i]) || JSON.stringify(as) === JSON.stringify(bs);
+}
+
+/** l with its shown version's mask brought up to date: a mask edit belongs to the version on screen. */
+function syncVersionMask(l: SceneLayer): SceneLayer {
+  const v = l.kind === 'paint' ? undefined : l.versions[l.active];
+  if (!v) return l;
+  const m = maskOf(l);
+  if (sameMask(v.mask, m)) return l;
+  return { ...l, versions: l.versions.map((x, i) => (i === l.active ? { ...x, mask: m } : x)) };
 }
 
 /**
@@ -357,7 +397,8 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
   const patchLayer = useCallback(
     (id: string, patch: Partial<SceneLayer>, again = false): void => {
       mutate((s) => {
-        const next = { ...s, layers: s.layers.map((l) => (l.id === id ? { ...l, ...patch } : l)) };
+        const masked = 'shapes' in patch || 'maskOpts' in patch || 'feather' in patch;
+        const next = { ...s, layers: s.layers.map((l) => (l.id === id ? (masked ? syncVersionMask({ ...l, ...patch }) : { ...l, ...patch }) : l)) };
         return again ? remask(next, id) : next;
       });
       // An image piece still decoding kept the old raster: redo it once the piece is ready.
@@ -499,9 +540,10 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
     (paint: SceneLayer, mode: FinishMode) => {
       const s = docRef.current;
       const setup = finishSetup(s, paint, mode, { ...layerDefaults('still'), refs: [] }, undefined);
-      // The engine sees the whole picture: what a sketch should become depends on everything around it (a disc in a
-      // crop of flat sky reads as a ball or the moon; with the land and the house in view it is the sun).
-      const context = 'full';
+      // A crop round the paint, never the whole picture: Retouch takes no mask, so given the whole frame and "replace
+      // the sketch with a man" it replaced the biggest figure in it (a monster) and left a small stick figure alone.
+      // Normal context still shows enough around the sketch to read it; Wide or Full are a click away.
+      const context = 'normal';
       const layer: SceneLayer = {
         id: newId(),
         name: `${FINISH_MODES[mode].label} ${paint.name || 'paint'}`,
@@ -539,7 +581,7 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
         if (!l || !paint) return d;
         const setup = finishSetup(d, paint, mode, l.options || {}, l.maskOpts);
         const layers = d.layers.map((x) =>
-          x.id === id ? { ...x, options: setup.options, maskOpts: setup.maskOpts } : x.id === paint.id ? paintFor(x, mode) : x
+          x.id === id ? syncVersionMask({ ...x, options: setup.options, maskOpts: setup.maskOpts }) : x.id === paint.id ? paintFor(x, mode) : x
         );
         return remask({ ...d, layers }, id);
       });
@@ -651,7 +693,10 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
       flash('error', `${bad.join(', ')} in the prompt ${bad.length > 1 ? "don't" : "doesn't"} name any reference of this layer.`);
       return;
     }
-    serverAction(() => sceneApi.generate(doc.id, l.id), 'Could not start the generation');
+    // Made with the mask as drawn: a fit to the shown result is that version's, and must not grow the next crop.
+    const drawn = withMask(docRef.current, { ...l, shapes: drawnShapes(l.shapes) });
+    const mask = drawn.mask && drawn.region.w > 0 ? { ...maskOf(l), mask: drawn.mask, region: drawn.region } : undefined;
+    serverAction(() => sceneApi.generate(doc.id, l.id, mask), 'Could not start the generation');
   }, [selected, doc.id, serverAction, flash]);
 
   // ---- versions: loops, motion maps ---------------------------------------------------
@@ -721,35 +766,52 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
     [motionMap, patchLayer, pushUndo, flash]
   );
 
-  // Fit mask to result: a still layer with `fit` carries the change map of its shown version as one image op,
-  // replaced whenever another version is shown (each version is fitted once per session; a failure is not retried).
+  // Each version keeps its own mask (SceneVersion.mask): showing one puts its mask back on the layer. A still layer
+  // with `fit` also carries the change map of its shown version as one image op ("Fit mask to result"), cached per
+  // version so going back to one is instant; it is never part of a version's mask or of what a generation is made
+  // with. One pass does both so neither works from shapes the other just replaced.
+  const shown = useRef(new Map<string, string>());
+  const fits = useRef(new Map<string, MaskOp | null>());
   const fitting = useRef(new Set<string>());
+  const [fitTick, setFitTick] = useState(0);
   useEffect(() => {
     doc.layers.forEach((l) => {
-      if (l.kind !== 'still') return;
-      const ops = l.shapes || [];
-      const fitted = ops.filter((op) => op.t === 'image' && op.fit);
-      const v = l.options?.fit ? l.versions[l.active] : undefined;
-      if (!v) {
-        if (fitted.length) patchLayer(l.id, { shapes: ops.filter((op) => !(op.t === 'image' && op.fit)) }, true);
-        return;
+      if (l.kind === 'paint') return;
+      const v = l.versions[l.active];
+      const was = shown.current.get(l.id);
+      shown.current.set(l.id, v?.path || '');
+      let drawn = drawnShapes(l.shapes);
+      let patch: Partial<SceneLayer> = {};
+      if (v && v.path !== was && v.mask && !sameMask(v.mask, maskOf(l))) {
+        drawn = v.mask.shapes || [];
+        patch = { maskOpts: v.mask.maskOpts, feather: v.mask.feather };
       }
-      if (fitted.length === 1 && fitted[0].fit === v.path) return;
-      const key = `${l.id}|${v.path}`;
-      if (fitting.current.has(key)) return;
-      fitting.current.add(key);
-      sceneApi
-        .changeMap(doc.id, l.id, l.active)
-        .then(async (m) => {
-          const op = await imageOp(m.dataUrl, m.region, 40);
-          const cur = docRef.current.layers.find((x) => x.id === l.id);
-          if (!cur || cur.versions[cur.active]?.path !== v.path) return;
-          const rest = (cur.shapes || []).filter((x) => !(x.t === 'image' && x.fit));
-          patchLayer(l.id, { shapes: op ? [...rest, { ...op, fit: v.path }] : rest }, true);
-        })
-        .catch((e) => flash('error', `Could not fit the mask to the result: ${e instanceof Error ? e.message : e}`));
+      let fit: MaskOp | null = null;
+      if (v && l.kind === 'still' && l.options?.fit) {
+        const cached = fits.current.get(v.path);
+        if (cached !== undefined) fit = cached;
+        else if (!fitting.current.has(v.path)) {
+          fitting.current.add(v.path);
+          const n = l.active;
+          sceneApi
+            .changeMap(doc.id, l.id, n)
+            .then(async (m) => {
+              const op = await imageOp(m.dataUrl, m.region, 40);
+              fits.current.set(v.path, op ? { ...op, fit: v.path } : null);
+            })
+            .catch((e) => {
+              fits.current.set(v.path, null);
+              flash('error', `Could not fit the mask to the result: ${e instanceof Error ? e.message : e}`);
+            })
+            .finally(() => setFitTick((t) => t + 1));
+        }
+      }
+      const shapes = fit ? [...drawn, fit] : drawn;
+      const cur = l.shapes || [];
+      const changed = shapes.length !== cur.length || shapes.some((op, i) => op !== cur[i]);
+      if (changed || 'feather' in patch) patchLayer(l.id, { ...patch, shapes }, true);
     });
-  }, [doc.layers, doc.id, patchLayer, flash]);
+  }, [doc.layers, doc.id, fitTick, patchLayer, flash]);
 
   // A voice reference: a native dialog in Electron, the server's file browser in the web build.
   const chooseVoice = useCallback(async (): Promise<string | null> => {
@@ -788,6 +850,55 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
 
   const picker = usePick(doc.id, useCallback((msg: string) => flash('error', `Could not select: ${msg}`), [flash]));
   const { pick } = picker;
+
+  // ---- the mannequin: presets and detected poses ------------------------------------------
+
+  /** Start a figure on the selected paint layer from the pose of the character in box (frame px): RTMPose on the server. */
+  const detectPose = useCallback(
+    async (box: Rect) => {
+      const l = selected;
+      if (!l || l.kind !== 'paint') return;
+      setBusy(true);
+      flash('info', 'Reading the pose…');
+      try {
+        await save();
+        const r = await sceneApi.pose(doc.id, l.id, box);
+        commitOp(fromDetection(r.joints, box));
+        setTool('pose');
+        flash('info', 'Placed a figure in the detected pose: drag its joints to change it.');
+      } catch (e) {
+        flash('error', `Could not read the pose: ${e instanceof Error ? e.message : e}`);
+      } finally {
+        setBusy(false);
+      }
+    },
+    [selected, save, doc.id, commitOp, flash]
+  );
+
+  /** "Detect pose": the character selected with Select object (Q), else how to select one. */
+  const detectPoseFromPick = useCallback(() => {
+    const obj = pick && pick.target.kind === 'picture' ? selectedObjects(pick)[0] : undefined;
+    if (!obj) {
+      flash('info', 'Select the character first: Select object (Q) and click them, or Ctrl+drag a box round them with the Mannequin tool (M).');
+      return;
+    }
+    picker.clear();
+    detectPose(obj.bbox);
+  }, [pick, picker, detectPose, flash]);
+
+  /** A preset pose: the layer's last figure takes it (keeping its place and size), or a new figure stands in the middle. */
+  const posePreset = useCallback(
+    (id: string) => {
+      const l = selected;
+      if (!l || l.kind !== 'paint') return;
+      const shapes = l.shapes || [];
+      const last = shapes.map((op) => op.t === 'pose' && !op.off).lastIndexOf(true);
+      if (last >= 0) setShapes(shapes.map((op, i) => (i === last && op.t === 'pose' ? applyPreset(op, id) : op)));
+      else commitOp(presetPose(id, doc.width / 2, doc.height * 0.275, doc.height * 0.45));
+      setTool('pose');
+    },
+    [selected, setShapes, commitOp, doc.width, doc.height]
+  );
   // A roto: picking on a motion version's clip, frame by frame, then tracking it.
   const [roto, setRoto] = useState<{ layerId: string; n: number; frame: number } | null>(null);
   const [rotoPrompts, setRotoPrompts] = useState<SegPrompt[]>([]);
@@ -1248,7 +1359,7 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
               className={tool === t.id ? 'on' : ''}
               title={`${t.label} (${t.key}) · ${t.title}`}
               onClick={() => setTool(t.id)}
-              disabled={t.id === 'protect' && selected?.kind === 'paint'}
+              disabled={(t.id === 'protect' && selected?.kind === 'paint') || (t.id === 'pose' && selected?.kind !== 'paint')}
             >
               <ToolIcon id={t.id} />
             </button>
@@ -1318,6 +1429,7 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
             pickArea={roto && rotoVersion ? rotoVersion.region : null}
             onPickClick={onPickClick}
             onPickBox={onPickBox}
+            onPoseBox={detectPose}
             roto={rotoView}
             compare={compare}
             playing={playing}
@@ -1401,6 +1513,12 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
                 rememberLayerDefaults('paint', next);
               }}
               onFinish={(mode) => finishPaint(selected, mode)}
+              poseTool={tool === 'pose'}
+              onPoseTool={() => setTool('pose')}
+              onMirrorPose={() => setShapes((selected.shapes || []).map((op) => (op.t === 'pose' ? mirrorPose(op) : op)))}
+              onPosePreset={posePreset}
+              onDetectPose={detectPoseFromPick}
+              hasPick={!!pick && pick.target.kind === 'picture' && selectedObjects(pick).length > 0}
               onSelectLayer={setSelectedId}
               onDelete={() => deleteLayer(selected.id)}
             />

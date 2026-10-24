@@ -1,5 +1,6 @@
 import { maskBounds, regionFor, rectContains, simplifyPath, maskSize, type MaskOp } from '../renderer/components/scene/mask';
-import { mergeServer, sceneBusy, type Scene, type SceneLayer } from '../renderer/components/scene/scene-api';
+import { composeFinish, FINISH_GROUNDING, mergeServer, sceneBusy, sketchWhere, type Scene, type SceneLayer } from '../renderer/components/scene/scene-api';
+import { applyPreset, fromDetection, mirrorPose, POSE_PRESETS, POSE_ROOT, poseHit, posed, poseSubtree, restPose, type PoseOp } from '../renderer/components/scene/pose';
 import { canStartScene } from '../renderer/components/scene/launch';
 
 const W = 2000;
@@ -81,6 +82,16 @@ describe('scene documents', () => {
     const local = scene([layer('a', { active: 0, versions: [v('1.png'), v('2.png')] })]);
     const server = scene([layer('a', { active: 1, versions: [v('1.png'), v('2.png')] })]);
     expect(mergeServer(local, server).layers[0].active).toBe(0);
+  });
+
+  it('merging keeps the editor’s version masks and takes a new version’s mask from the server', () => {
+    const edited = { shapes: [{ t: 'rect' as const, x: 1, y: 1, w: 5, h: 5 }], feather: 3 };
+    const made = { shapes: [{ t: 'rect' as const, x: 2, y: 2, w: 4, h: 4 }], feather: 0 };
+    const local = scene([layer('a', { active: 0, versions: [{ ...v('1.png'), mask: edited }] })]);
+    const server = scene([layer('a', { active: 1, versions: [{ ...v('1.png'), mask: made }, { ...v('2.png'), mask: made }] })]);
+    const m = mergeServer(local, server).layers[0];
+    expect(m.versions[0].mask).toBe(edited); // edited since the server last saw it
+    expect(m.versions[1].mask).toBe(made); // generated with this mask
   });
 
   it('a scene starts from an image or a video frame', () => {
@@ -260,5 +271,91 @@ describe('reference picker window', () => {
 
   it('a window that is not a picker has no open request to answer', () => {
     bridge.answerPick(['C:/x/b.png']); // ignored: nothing open here
+  });
+});
+
+describe('mannequin', () => {
+  const len = (op: PoseOp, a: number, b: number) => Math.hypot(op.kp[a * 2] - op.kp[b * 2], op.kp[a * 2 + 1] - op.kp[b * 2 + 1]);
+
+  it('places a standing figure head to feet', () => {
+    const op = restPose(500, 100, 600);
+    expect(op.kp).toHaveLength(36);
+    const ys = op.kp.filter((_, i) => i % 2);
+    expect(Math.max(...ys)).toBeCloseTo(700, 0); // ankles at the feet
+    expect(Math.min(...ys)).toBeGreaterThan(100); // eyes and ears below the head's top
+    expect(op.kp[2]).toBe(500); // the neck is centred
+    expect(maskBounds([op as MaskOp])?.h).toBeGreaterThan(550);
+  });
+
+  it('swinging a limb keeps its lengths and moves what hangs from it', () => {
+    const op = restPose(500, 100, 600);
+    const elbow = 3;
+    const out = posed(op, elbow, 300, 120, 'swing');
+    expect(len(out, 2, 3)).toBeCloseTo(len(op, 2, 3), 0); // upper arm
+    expect(len(out, 3, 4)).toBeCloseTo(len(op, 3, 4), 0); // forearm went with it
+    expect(out.kp.slice(10)).toEqual(op.kp.slice(10)); // the left arm, legs and head stayed
+    expect(poseSubtree(2).sort()).toEqual([2, 3, 4]);
+  });
+
+  it('the neck moves the figure, Alt moves one joint, Shift scales', () => {
+    const op = restPose(500, 100, 600);
+    const moved = posed(op, POSE_ROOT, op.kp[2] + 50, op.kp[3], 'move');
+    expect(moved.kp[0]).toBeCloseTo(op.kp[0] + 50, 1);
+    const free = posed(op, 4, 0, 0, 'free');
+    expect([free.kp[8], free.kp[9]]).toEqual([0, 0]);
+    expect(free.kp[6]).toBe(op.kp[6]);
+    const big = posed(op, 10, op.kp[2] + (op.kp[20] - op.kp[2]) * 2, op.kp[3] + (op.kp[21] - op.kp[3]) * 2, 'scale');
+    expect(len(big, 8, 9)).toBeCloseTo(len(op, 8, 9) * 2, 0);
+    expect(poseHit(op, op.kp[8] + 3, op.kp[9], 10)).toBe(4);
+    expect(poseHit(op, -100, -100, 10)).toBe(-1);
+  });
+
+  it('mirroring turns the figure round its neck', () => {
+    const op = posed(restPose(500, 100, 600), 4, 200, 300, 'free');
+    const m = mirrorPose(op);
+    expect(m.kp[8]).toBe(800);
+    expect(mirrorPose(m).kp).toEqual(op.kp);
+  });
+});
+
+describe('sketch finish prompt', () => {
+  it('says where the sketch is and points at the target', () => {
+    const region = { x: 100, y: 100, w: 900, h: 600 };
+    expect(sketchWhere({ x: 120, y: 550, w: 100, h: 100 }, region)).toBe(' at the bottom left');
+    expect(sketchWhere({ x: 500, y: 350, w: 100, h: 100 }, region)).toBe(' in the middle');
+    expect(sketchWhere({ x: 100, y: 100, w: 800, h: 500 }, region)).toBe('');
+    const full = composeFinish(FINISH_GROUNDING.sketch, 'a man', '<image2>', ' at the bottom left', '<image2>');
+    expect(full).toContain('the rough painted sketch at the bottom left stands in for a man');
+    expect(full).toContain('<image2> shows the sketch alone on black');
+    const bare = composeFinish(FINISH_GROUNDING.sketch, '', '<image2>');
+    expect(bare).not.toMatch(/[{}]|alone on black|looks like/);
+    expect(bare).toContain('in this picture. The sketch is');
+  });
+});
+
+describe('mannequin presets and detection', () => {
+  it('every preset is a whole rig, and applying one keeps the figure in place and its size', () => {
+    POSE_PRESETS.forEach((p) => expect(p.kp).toHaveLength(36));
+    const op = posed(restPose(500, 100, 600), 4, 900, 200, 'free');
+    const t = applyPreset(op, 'tpose');
+    expect([t.kp[2], t.kp[3]]).toEqual([op.kp[2], op.kp[3]]); // the neck stays
+    const torso = (o: PoseOp) => Math.hypot((o.kp[16] + o.kp[22]) / 2 - o.kp[2], (o.kp[17] + o.kp[23]) / 2 - o.kp[3]);
+    expect(torso(t)).toBeCloseTo(torso(op), 0);
+    expect(t.kp[9]).toBeCloseTo(t.kp[5], 0); // T-pose: the wrists level with the shoulders
+    expect(applyPreset(op, 'nope')).toBe(op);
+  });
+
+  it('a detected pose keeps the confident joints and hangs the rest off their parents', () => {
+    const truth = restPose(400, 50, 500);
+    const joints = Array.from({ length: 18 }, (_, j) => ({ x: truth.kp[j * 2] + 10, y: truth.kp[j * 2 + 1], score: 0.9 }));
+    joints[4] = { x: 0, y: 0, score: 0.1 }; // right wrist: a guess
+    const op = fromDetection(joints, { x: 300, y: 50, w: 200, h: 500 });
+    expect([op.kp[6], op.kp[7]]).toEqual([joints[3].x, joints[3].y]); // the elbow where it was found
+    // The wrist hangs below the found elbow the way a standing figure's does, at the figure's size.
+    expect(op.kp[8]).toBeCloseTo(joints[3].x + (truth.kp[8] - truth.kp[6]), 0);
+    expect(op.kp[9]).toBeCloseTo(joints[3].y + (truth.kp[9] - truth.kp[7]), 0);
+    // Nothing confident: a standing figure the box's height.
+    const none = fromDetection(Array.from({ length: 18 }, () => ({ x: 0, y: 0, score: 0 })), { x: 100, y: 100, w: 100, h: 400 });
+    expect(Math.max(...none.kp.filter((_, i) => i % 2)) - 100).toBeCloseTo(400, -1);
   });
 });

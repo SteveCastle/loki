@@ -23,7 +23,27 @@ export interface SceneVersion {
   inputs?: string[];
   /** motion: its roto (a matte tracked through the clip) */
   track?: SceneTrack | null;
+  /**
+   * Its own mask: the layer's when it was generated, then whatever is changed while it is shown. Showing the version
+   * puts it back on the layer. Editor-owned (the server keeps it by path); absent on versions from before.
+   */
+  mask?: VersionMask;
   created: string;
+}
+
+const roundRect = (r: Rect): Rect => ({ x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.w), h: Math.round(r.h) });
+
+/** A layer's mask as drawn (never a fit to a result: that is re-made from the version itself). */
+export interface VersionMask {
+  shapes?: MaskOp[];
+  maskOpts?: MaskOpts;
+  feather: number;
+}
+
+/** What a generation is made with: the mask without a fit to the shown result, its raster and the crop around it. */
+export interface GenMask extends VersionMask {
+  mask: string;
+  region: Rect;
 }
 
 /** A prompt for loki-segment, in the pixels of what is segmented (clip pixels for a roto). */
@@ -189,21 +209,22 @@ export type FinishMode = 'sketch' | 'colour' | 'repose';
  */
 export const FINISH_GROUNDING: Record<FinishMode, string> = {
   sketch:
-    'In <image1>, a rough painted sketch stands in for {what}: replace it with {what} as it would really appear in this picture. ' +
+    'In <image1>, the rough painted sketch{where} stands in for {what}: replace that sketch, and only it, with {what} as it would really appear in this picture. ' +
+    '{target} shows the sketch alone on black, in exactly the same place: it marks the only part of <image1> to change. ' +
     'The sketch is a crude placeholder that only marks where it goes, roughly how big it is and a hint of its colours, ' +
     'so do not copy its flat paint or hard outline: correct its shape and proportions, and give it the real look, light, texture and focus ' +
-    "it would have here, in the picture's own style. Leave everything that was not sketched as it is.",
+    "it would have here, in the picture's own style. Leave everything that was not sketched exactly as it is: " +
+    'do not change, move or replace any other figure or object, even one that looks like {what}.',
   colour:
     'Colour <image1> using the rough colours painted on {guide} as a guide: {what}. ' +
     'The paint is loose and only marks which colour goes where: give each whole object or area the colour painted mostly over it, ' +
     'following the shapes and edges of <image1> rather than the edges of the brush strokes. ' +
     'Keep every line and detail of <image1> as it is, and finish with clean, natural shading.',
   repose:
-    'Repose the character in <image1> so their body takes the pose drawn over the picture on {guide}: {what}. ' +
-    'The drawing is a rough gesture sketch that only shows the new pose, where the head, body, arms, hands and legs go, ' +
-    'so do not draw its lines or colours. Keep the character exactly as they are in <image1>: the same identity, face, hair, ' +
-    'clothing, colours, proportions and style; only their pose changes. Where the new pose uncovers what was behind the character, ' +
-    'fill it in to match its surroundings. Leave everything else as it is.',
+    'Make the person in <image1> do the exact same pose as shown in {guide}: {what}. ' +
+    'Match the positions of the head, arms, hands and legs. ' +
+    'Keep the person exactly as they are in <image1>: the same face, hair, clothing, body and style. ' +
+    'Keep the background, the lighting, the camera angle and the framing of <image1> unchanged, and fill in naturally whatever the new pose uncovers.',
 };
 
 /**
@@ -253,16 +274,49 @@ export function finishStrength(finish: FinishMode | undefined): number {
   return finish === 'sketch' || finish === 'repose' ? 0.9 : finish === 'colour' ? 0.8 : 1;
 }
 
-/** Fill a grounding's placeholders; with no words a "…: {what}." clause folds away, any other {what} reads "the real thing". Mirrors composeFinish. */
-export function composeFinish(grounding: string, what: string, guide: string): string {
+/**
+ * Fill a grounding's placeholders: {what} the words, {guide} the paint reference's token, {where} where the sketch is
+ * (sketchWhere), {target} the token of the sketch alone on black (Retouch sketch finishes; the server adds it as the
+ * last reference). With no words a "…: {what}." clause (or ", even one that looks like {what}.") folds away and any
+ * other {what} reads "the real thing"; with no target its sentence goes. Mirrors composeFinish.
+ */
+export function composeFinish(grounding: string, what: string, guide: string, where = '', target = ''): string {
   const w = what.trim().replace(/\.+$/, '');
   let out = grounding;
-  if (!w) out = out.split(': {what}.').join('.');
+  if (!w) out = out.split(': {what}.').join('.').split(', even one that looks like {what}.').join('.');
+  if (!target) out = out.replace(/[^.]*\{target\}[^.]*\./g, '');
   return out
     .split('{what}')
     .join(w || 'the real thing')
+    .split('{where}')
+    .join(where)
+    .split('{target}')
+    .join(target)
     .split('{guide}')
     .join(guide);
+}
+
+/**
+ * Where paint (its bounds) sits in a crop: " at the bottom left", " on the right", " in the middle"; '' when it fills
+ * most of it or misses it. Mirrors sketchWhere in media-server/tasks/scene_finish.go.
+ */
+export function sketchWhere(paint: Rect, region: Rect): string {
+  if (paint.w <= 0 || paint.h <= 0 || region.w <= 0 || region.h <= 0) return '';
+  if (paint.w * paint.h > 0.5 * region.w * region.h) return '';
+  const cx = paint.x + Math.floor(paint.w / 2);
+  const cy = paint.y + Math.floor(paint.h / 2);
+  if (cx < region.x || cy < region.y || cx > region.x + region.w || cy > region.y + region.h) return '';
+  const third = (c: number, start: number, size: number) => {
+    const f = (c - start) / size;
+    if (f < 1 / 3) return 0;
+    return f > 2 / 3 ? 2 : 1;
+  };
+  const v = ['top', '', 'bottom'][third(cy, region.y, region.h)];
+  const h = ['left', '', 'right'][third(cx, region.x, region.w)];
+  if (!v && !h) return ' in the middle';
+  if (!v) return ` on the ${h}`;
+  if (!h) return ` at the ${v}`;
+  return ` at the ${v} ${h}`;
 }
 
 export interface SceneLayer {
@@ -395,7 +449,7 @@ export const sceneApi = {
   get: (id: string) => call<Scene>('GET', `/api/scenes/${enc(id)}`),
   save: (scene: Scene) => call<Scene>('PUT', `/api/scenes/${enc(scene.id)}`, scene),
   remove: (id: string) => call<{ ok: boolean }>('DELETE', `/api/scenes/${enc(id)}`),
-  generate: (id: string, layer: string) => call<Scene>('POST', `/api/scenes/${enc(id)}/layers/${enc(layer)}/generate`, {}, 60000),
+  generate: (id: string, layer: string, mask?: GenMask) => call<Scene>('POST', `/api/scenes/${enc(id)}/layers/${enc(layer)}/generate`, { mask }, 60000),
   /** Cancel one generation (running or queued) by its job id, or all of the layer's when job is omitted. */
   cancel: (id: string, layer: string, job?: string) => call<Scene>('POST', `/api/scenes/${enc(id)}/layers/${enc(layer)}/cancel`, job ? { job } : {}),
   deleteVersion: (id: string, layer: string, n: number) => call<Scene>('DELETE', `/api/scenes/${enc(id)}/layers/${enc(layer)}/versions/${n}`),
@@ -413,6 +467,9 @@ export const sceneApi = {
     call<{ dataUrl: string; region: Rect }>('POST', `/api/scenes/${enc(id)}/layers/${enc(layer)}/versions/${n}/motion`, {}, 120000),
   render: (id: string, format: 'video' | 'still') => call<Scene>('POST', `/api/scenes/${enc(id)}/render`, { format }),
   // The first pick loads the model and encodes the picture: allow it longer.
+  /** The body pose of the person in box (frame px) of the picture under paint layer `layer`: OpenPose's 18 joints. */
+  pose: (id: string, layer: string, box: Rect) =>
+    call<{ joints: Array<{ x: number; y: number; score: number }> }>('POST', `/api/scenes/${enc(id)}/layers/${enc(layer)}/pose`, { box: roundRect(box) }, 60000),
   segment: (id: string, req: SegmentRequest) => call<SegmentResult>('POST', `/api/scenes/${enc(id)}/segment`, req, 120000),
   track: (id: string, layer: string, n: number, prompts: SegPrompt[]) =>
     call<Scene>('POST', `/api/scenes/${enc(id)}/layers/${enc(layer)}/versions/${n}/track`, { prompts }),
@@ -529,8 +586,8 @@ export function sceneBusy(s: Scene): boolean {
 
 /**
  * Fold the server's copy into the local one: versions, job, error and the export are the server's; everything the
- * editor owns (masks, prompts, names, order) stays local, so an autosave answer never undoes typing in flight. A
- * layer whose version list grew shows the new version (the server selected it).
+ * editor owns (masks, prompts, names, order, and each version's mask) stays local, so an autosave answer never undoes
+ * typing in flight. A layer whose version list grew shows the new version (the server selected it).
  */
 export function mergeServer(local: Scene, server: Scene): Scene {
   const byId = new Map(server.layers.map((l) => [l.id, l]));
@@ -542,7 +599,9 @@ export function mergeServer(local: Scene, server: Scene): Scene {
       const s = byId.get(l.id);
       if (!s) return l;
       const grew = s.versions.length !== l.versions.length;
-      return { ...l, versions: s.versions, job: s.job || null, queued: s.queued || [], error: s.error, active: grew ? s.active : l.active };
+      const masks = new Map(l.versions.filter((v) => v.mask).map((v) => [v.path, v.mask]));
+      const versions = masks.size ? s.versions.map((v) => (masks.has(v.path) ? { ...v, mask: masks.get(v.path) } : v)) : s.versions;
+      return { ...l, versions, job: s.job || null, queued: s.queued || [], error: s.error, active: grew ? s.active : l.active };
     }),
   };
 }

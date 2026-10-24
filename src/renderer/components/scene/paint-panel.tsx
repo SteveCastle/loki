@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { POSE_PRESETS } from './pose';
 import { FINISH_MODES, type FinishMode, type LayerOptions, type SceneLayer } from './scene-api';
 
 // The inspector of a Paint layer: the user's own colour painting. In the
@@ -18,6 +19,17 @@ export interface PaintPanelProps {
   onOptions: (patch: LayerOptions) => void;
   /** Add an Edit layer above that finishes this painting in a mode (masked to it, prompted for it). */
   onFinish: (mode: FinishMode) => void;
+  /** Whether the Mannequin tool is the current tool. */
+  poseTool: boolean;
+  onPoseTool: () => void;
+  /** Turn every figure on the layer to face the other way. */
+  onMirrorPose: () => void;
+  /** A ready pose (POSE_PRESETS id) for the last figure, or a new one. */
+  onPosePreset: (id: string) => void;
+  /** Start a figure from the selected character's detected pose. */
+  onDetectPose: () => void;
+  /** Whether a character is selected (Select object) to detect a pose from. */
+  hasPick: boolean;
   onSelectLayer: (id: string) => void;
   onDelete: () => void;
 }
@@ -25,6 +37,7 @@ export interface PaintPanelProps {
 export default function PaintPanel(props: PaintPanelProps) {
   const { layer: l, usedBy } = props;
   const guide = !!l.options?.guide;
+  const hasPose = (l.shapes || []).some((op) => op.t === 'pose' && !op.off);
   const [confirmDelete, setConfirmDelete] = useState(false);
   return (
     <section className="sc-section sc-inspector">
@@ -62,6 +75,49 @@ export default function PaintPanel(props: PaintPanelProps) {
           : 'Part of the picture: Edit and Motion layers above it are made from the picture with this paint on it.'}{' '}
         Paint loosely with the Brush, Box, Lasso or Pen: the AI corrects shapes and fills whole areas, so rough is fine.
       </p>
+
+      <div className="sc-pose-row">
+        <button
+          type="button"
+          className={`sc-btn${props.poseTool ? ' on' : ''}`}
+          onClick={props.onPoseTool}
+          title="Mannequin (M): place a figure and drag its joints into a pose. It is drawn as an OpenPose skeleton, the pose format image models read best; Finish → Repose gives it to the engine on black"
+        >
+          Mannequin
+        </button>
+        <button
+          type="button"
+          className={`sc-btn${props.hasPick ? ' on' : ''}`}
+          onClick={props.onDetectPose}
+          title="Start a figure from the pose of a character in the picture: select them first with Select object (Q), or Ctrl+drag a box round them with the Mannequin tool"
+        >
+          Detect pose
+        </button>
+        <select
+          className="sc-select"
+          value=""
+          onChange={(e) => e.target.value && props.onPosePreset(e.target.value)}
+          aria-label="Preset pose"
+          title={hasPose ? 'Put the figure in a ready pose (it keeps its place and size)' : 'Add a figure in a ready pose'}
+        >
+          <option value="">Preset…</option>
+          {POSE_PRESETS.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.label}
+            </option>
+          ))}
+        </select>
+        {hasPose && (
+          <button type="button" className="sc-btn sc-btn-quiet" onClick={props.onMirrorPose} title="Turn the figure to face the other way">
+            Mirror
+          </button>
+        )}
+        <span className="sc-faint">
+          {props.poseTool
+            ? 'Click or drag head to feet to add a figure, Ctrl+drag round a character to copy their pose; drag joints to pose it.'
+            : 'Pose a figure for Repose.'}
+        </span>
+      </div>
 
       {props.maskPanel}
 

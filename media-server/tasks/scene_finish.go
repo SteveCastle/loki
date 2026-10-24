@@ -1,6 +1,10 @@
 package tasks
 
-import "strings"
+import (
+	"fmt"
+	"regexp"
+	"strings"
+)
 
 // Finish layers: an Edit layer made by "Finish with AI" on a paint layer, in
 // one of three modes: make a sketch real (add what it stands for), recolour
@@ -9,7 +13,14 @@ import "strings"
 // grounding around it tells the engine how to read the paint, and is composed
 // in here so the prompt box stays the user's own words. The user may replace
 // the grounding (options.grounding). Placeholders: {what} = the prompt,
-// {guide} = the token of the paint layer when it is a reference.
+// {guide} = the token of the paint layer when it is a reference, {where} =
+// where the sketch is in the crop (" at the bottom left"), {target} = the
+// token of the sketch rendered alone on black (sceneFinishTarget). A sentence
+// naming {target} is dropped when there is none (Kromoss takes no images).
+//
+// Retouch takes no mask, so the words and the target image are all that say
+// which part of the crop to change: given a whole frame and "replace the
+// sketch with a man" it replaced the biggest figure in it, not the sketch.
 //
 // Both groundings are style-neutral ("this picture", never "photograph"): the
 // scene may be a photo or an artist's painting, and the result must match it.
@@ -32,25 +43,27 @@ func finishUsesGuide(mode string) bool {
 }
 
 var sceneFinishGrounding = map[string]string{
-	FinishSketch: "In <image1>, a rough painted sketch stands in for {what}: replace it with {what} as it would really appear in this picture. " +
+	FinishSketch: "In <image1>, the rough painted sketch{where} stands in for {what}: replace that sketch, and only it, with {what} as it would really appear in this picture. " +
+		"{target} shows the sketch alone on black, in exactly the same place: it marks the only part of <image1> to change. " +
 		"The sketch is a crude placeholder that only marks where it goes, roughly how big it is and a hint of its colours, " +
 		"so do not copy its flat paint or hard outline: correct its shape and proportions, and give it the real look, light, texture and focus " +
-		"it would have here, in the picture's own style. Leave everything that was not sketched as it is.",
+		"it would have here, in the picture's own style. Leave everything that was not sketched exactly as it is: " +
+		"do not change, move or replace any other figure or object, even one that looks like {what}.",
 	FinishColour: "Colour <image1> using the rough colours painted on {guide} as a guide: {what}. " +
 		"The paint is loose and only marks which colour goes where: give each whole object or area the colour painted mostly over it, " +
 		"following the shapes and edges of <image1> rather than the edges of the brush strokes. " +
 		"Keep every line and detail of <image1> as it is, and finish with clean, natural shading.",
-	FinishRepose: "Repose the character in <image1> so their body takes the pose drawn over the picture on {guide}: {what}. " +
-		"The drawing is a rough gesture sketch that only shows the new pose, where the head, body, arms, hands and legs go, " +
-		"so do not draw its lines or colours. Keep the character exactly as they are in <image1>: the same identity, face, hair, " +
-		"clothing, colours, proportions and style; only their pose changes. Where the new pose uncovers what was behind the character, " +
-		"fill it in to match its surroundings. Leave everything else as it is.",
+	FinishRepose: "Make the person in <image1> do the exact same pose as shown in {guide}: {what}. " +
+		"Match the positions of the head, arms, hands and legs. " +
+		"Keep the person exactly as they are in <image1>: the same face, hair, clothing, body and style. " +
+		"Keep the background, the lighting, the camera angle and the framing of <image1> unchanged, and fill in naturally whatever the new pose uncovers.",
 }
 
 // sceneFinishPrompt is what the engine is given for a still layer: its prompt
 // as it is, or for a finish layer the grounding around it. refs are the
-// layer's references (the guide's token is looked up among them).
-func sceneFinishPrompt(opts map[string]any, prompt string, refs []sceneRef) string {
+// layer's references (the guide's and the target's tokens are looked up among
+// them); where is sketchWhere's phrase, or "".
+func sceneFinishPrompt(opts map[string]any, prompt string, refs []sceneRef, where string) string {
 	mode := optString(opts, "finish")
 	grounding := strings.TrimSpace(optString(opts, "grounding"))
 	if grounding == "" {
@@ -59,26 +72,76 @@ func sceneFinishPrompt(opts map[string]any, prompt string, refs []sceneRef) stri
 	if grounding == "" {
 		return prompt
 	}
-	guide := "<image2>"
+	guide, target := "<image2>", ""
 	paint := optString(opts, "paint")
 	for i, t := range sceneRefTokens(SceneKindStill, refs, false) {
 		if refs[i].Layer != "" && refs[i].Layer == paint && t != "" {
 			guide = t
 		}
+		if refs[i].Target && t != "" {
+			target = t
+		}
 	}
-	return composeFinish(grounding, prompt, guide)
+	return composeFinish(grounding, prompt, guide, where, target)
 }
 
+// targetSentence is a sentence of a grounding that names {target}.
+var targetSentence = regexp.MustCompile(`[^.]*\{target\}[^.]*\.`)
+
 // composeFinish fills a grounding's placeholders. With no prompt a
-// "…: {what}." clause folds away instead of leaving a dangling colon, and any
-// other {what} reads "the real thing".
-func composeFinish(grounding, what, guide string) string {
+// "…: {what}." clause (or ", even one that looks like {what}.") folds away
+// instead of dangling, and any other {what} reads "the real thing"; with no
+// target its sentence goes.
+func composeFinish(grounding, what, guide, where, target string) string {
 	what = strings.TrimRight(strings.TrimSpace(what), ".")
 	out := grounding
 	if what == "" {
 		out = strings.ReplaceAll(out, ": {what}.", ".")
+		out = strings.ReplaceAll(out, ", even one that looks like {what}.", ".")
 		what = "the real thing"
 	}
+	if target == "" {
+		out = targetSentence.ReplaceAllString(out, "")
+	}
 	out = strings.ReplaceAll(out, "{what}", what)
+	out = strings.ReplaceAll(out, "{where}", where)
+	out = strings.ReplaceAll(out, "{target}", target)
 	return strings.ReplaceAll(out, "{guide}", guide)
+}
+
+// sketchWhere says where paint (its bounds) sits in a crop: " at the bottom
+// left", " on the right", " in the middle"; "" when it fills most of it or
+// misses it. Mirrors sketchWhere in the editor's scene-api.ts.
+func sketchWhere(paint, region SceneRect) string {
+	if paint.empty() || region.empty() {
+		return ""
+	}
+	if float64(paint.W*paint.H) > 0.5*float64(region.W*region.H) {
+		return ""
+	}
+	third := func(c, start, size int) int {
+		f := float64(c-start) / float64(size)
+		switch {
+		case f < 1.0/3:
+			return 0
+		case f > 2.0/3:
+			return 2
+		}
+		return 1
+	}
+	cx, cy := paint.X+paint.W/2, paint.Y+paint.H/2
+	if cx < region.X || cy < region.Y || cx > region.X+region.W || cy > region.Y+region.H {
+		return ""
+	}
+	v := []string{"top", "", "bottom"}[third(cy, region.Y, region.H)]
+	h := []string{"left", "", "right"}[third(cx, region.X, region.W)]
+	switch {
+	case v == "" && h == "":
+		return " in the middle"
+	case v == "":
+		return " on the " + h
+	case h == "":
+		return fmt.Sprintf(" at the %s", v)
+	}
+	return fmt.Sprintf(" at the %s %s", v, h)
 }

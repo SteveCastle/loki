@@ -146,8 +146,28 @@ func sceneLayerActionHandler(deps *Dependencies) http.HandlerFunc {
 		id, lid := r.PathValue("id"), r.PathValue("lid")
 		switch r.PathValue("action") {
 		case "generate":
-			s, err := tasks.GenerateLayer(r.Context(), deps.Queue, id, lid)
+			// The editor may send the mask to generate with (tasks.SceneGenMask).
+			var req struct {
+				Mask *tasks.SceneGenMask `json:"mask"`
+			}
+			_ = readJSONBody(r, &req)
+			s, err := tasks.GenerateLayerMask(r.Context(), deps.Queue, id, lid, req.Mask)
 			sceneReply(w, s, err)
+		case "pose":
+			// The mannequin from a character: its box, frame pixels (tasks.DetectScenePose).
+			var req struct {
+				Box tasks.SceneRect `json:"box"`
+			}
+			if err := readJSONBody(r, &req); err != nil {
+				sceneError(w, err)
+				return
+			}
+			p, err := tasks.DetectScenePose(r.Context(), id, lid, req.Box)
+			if err != nil {
+				sceneError(w, err)
+				return
+			}
+			writeJSON(w, p)
 		case "cancel":
 			var req struct {
 				Job string `json:"job"`

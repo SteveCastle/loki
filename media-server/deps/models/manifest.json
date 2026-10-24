@@ -86,6 +86,25 @@
       ]
     },
     {
+      "id": "rtmpose-body",
+      "name": "RTMPose body pose",
+      "feature": "Pose detection",
+      "description": "Read a person's body pose (17 keypoints) so the Scene editor's mannequin can start from the character you selected. RTMPose-m from OpenMMLab mmpose (Apache-2.0), top-down 256x192 SimCC model trained on seven body datasets; runs on the CPU in well under a second.",
+      "version": "m-body7-256x192-20230504",
+      "consumers": ["scene"],
+      "size_bytes": 50799818,
+      "files": [
+        {
+          "url": "https://download.openmmlab.com/mmpose/v1/projects/rtmposev1/onnx_sdk/rtmpose-m_simcc-body7_pt-body7_420e-256x192-e48f03d0_20230504.zip",
+          "rel_path": "model.onnx",
+          "sha256": "f7fbb6c5c11a1bb70f3d445e4ddec5d144ea89ad5649c081ef976f9b24a0b741",
+          "size_bytes": 50799818,
+          "archive": "zip",
+          "archive_member": "20230831/rtmpose_onnx/rtmpose-m_simcc-body7_pt-body7_420e-256x192-e48f03d0_20230504/end2end.onnx"
+        }
+      ]
+    },
+    {
       "id": "anime-head",
       "name": "Anime head detector",
       "feature": "Anime character detection",

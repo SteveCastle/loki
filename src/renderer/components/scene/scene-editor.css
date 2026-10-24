@@ -1438,6 +1438,21 @@ body.sc-body {
   pointer-events: none;
 }
 
+.sc-pose {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.sc-pose-joint {
+  stroke: #fff;
+  stroke-width: 1.5px;
+  vector-effect: non-scaling-stroke;
+}
+
 .sc-shape-line {
   fill: none;
   stroke: #fff;
@@ -1702,6 +1717,15 @@ body.sc-body {
   margin: 8px 0 0;
   font-size: 12px;
   line-height: 1.45;
+}
+
+.sc-pose-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin-top: 10px;
+  font-size: 12px;
 }
 
 .sc-finish {

@@ -3,15 +3,20 @@ import { mediaUrl } from '../../platform';
 import { mapOp, moveVertex, opBox, pointInRect, simplifyPath, type MaskOp, type Rect } from './mask';
 import { jobPhase, layerRate, layerTiming, type Scene, type SceneLayer, type SceneVersion } from './scene-api';
 import { selectedObjects, type PickState } from './pick';
+import { POSE_COLORS, POSE_JOINTS, POSE_LIMBS, POSE_ROOT, poseHit, posed, restPose, type PoseDrag, type PoseOp } from './pose';
 
 // The canvas of the Scene editor: the base frame with every generated layer
 // composited live the way the export will be (each result placed over the
 // region it was made for, seen through its feathered mask: CSS masks over the
 // same PNG the server composites with), plus the drawing tools for the
-// selected layer's mask and the Shape tool that moves, scales and reshapes
-// one of its shapes. Coordinates handed out are base-frame pixels.
+// selected layer's mask, the Shape tool that moves, scales and reshapes
+// one of its shapes, and the Pose tool that places and poses a mannequin on a
+// paint layer (pose.ts). Coordinates handed out are base-frame pixels.
 
-export type Tool = 'select' | 'pick' | 'box' | 'brush' | 'lasso' | 'pen' | 'erase' | 'protect' | 'shape' | 'hand';
+export type Tool = 'select' | 'pick' | 'box' | 'brush' | 'lasso' | 'pen' | 'erase' | 'protect' | 'shape' | 'pose' | 'hand';
+
+/** A Pose tool drag: joint j of pose op i (-1 = a new figure, dragged out from (x0, y0)) as the drag started. */
+type PoseDragState = { i: number; j: number; mode: PoseDrag; op: PoseOp; x0: number; y0: number };
 
 /**
  * Whether a key event goes to a field the user types in: text inputs, text areas, selects, editable content. Sliders,
@@ -87,6 +92,8 @@ export interface StageProps {
   /** The pending Select-tool pick, and where its pixels sit in the frame (a clip's region; null = frame pixels). */
   pick: PickState | null;
   pickArea: Rect | null;
+  /** Mannequin tool, Ctrl+drag: a box round a character to read its pose from (frame pixels). */
+  onPoseBox: (r: Rect) => void;
   /** Select tool: a click (keep = this, else not this) or a dragged box, in frame pixels. */
   onPickClick: (x: number, y: number, keep: boolean) => void;
   onPickBox: (r: Rect) => void;
@@ -219,11 +226,20 @@ export default function Stage(props: StageProps) {
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [cursor, setCursor] = useState<{ x: number; y: number } | null>(null);
   const [spaceDown, setSpaceDown] = useState(false);
-  const drag = useRef<{ kind: 'pan'; sx: number; sy: number; vx: number; vy: number } | { kind: 'draw' } | ({ kind: 'shape' } & ShapeDrag) | null>(null);
+  const drag = useRef<
+    | { kind: 'pan'; sx: number; sy: number; vx: number; vy: number }
+    | { kind: 'draw' }
+    | { kind: 'posebox' }
+    | ({ kind: 'shape' } & ShapeDrag)
+    | ({ kind: 'pose' } & PoseDragState)
+    | null
+  >(null);
   const draft = useRef<Draft>(null);
   const cursorRef = useRef<{ x: number; y: number } | null>(null);
   // The shape being edited as it is dragged (committed on release).
   const [shapeLive, setShapeLive] = useState<{ i: number; op: MaskOp } | null>(null);
+  // The figure being posed (i = -1: a new one), drawn live over the layer's last raster until release.
+  const [poseLive, setPoseLive] = useState<{ i: number; op: PoseOp } | null>(null);
 
   // Container size.
   useLayoutEffect(() => {
@@ -465,6 +481,16 @@ export default function Stage(props: StageProps) {
     return mapOp(d.op, b, { x: nx, y: ny, w, h });
   };
 
+  /** The figure a Pose tool drag to (x, y) leaves. A new one spans the drag from head to feet; a click makes one 45% of the frame tall. */
+  const posedTo = (d: PoseDragState, x: number, y: number): PoseOp => {
+    if (d.i >= 0) return posed(d.op, d.j, x, y, d.mode);
+    if (Math.abs(y - d.y0) * (view?.zoom || 1) < 12) {
+      const h = scene.height * 0.45;
+      return restPose(d.x0, d.y0 - h / 2, h);
+    }
+    return restPose(d.x0, Math.min(y, d.y0), Math.abs(y - d.y0));
+  };
+
   const onPointerDown = (e: React.PointerEvent) => {
     if (!view) return;
     (e.target as Element).setPointerCapture?.(e.pointerId);
@@ -501,6 +527,38 @@ export default function Stage(props: StageProps) {
       }
       return;
     }
+    if (tool === 'pose') {
+      if (selected.kind !== 'paint') return;
+      // Ctrl+drag: a box round a character, to start a figure from its detected pose.
+      if (e.ctrlKey || e.metaKey) {
+        drag.current = { kind: 'posebox' };
+        draft.current = { t: 'pick', x0: p.x, y0: p.y, x1: p.x, y1: p.y, erase: false };
+        paintDraft();
+        return;
+      }
+      // The topmost figure with a joint under the pointer: drag = swing that limb (lengths kept), Alt = move the joint
+      // alone, Shift = scale the figure, the neck = move it. Anywhere else: a new figure.
+      const shapes = selected.shapes || [];
+      for (let i = shapes.length - 1; i >= 0; i -= 1) {
+        const op = shapes[i];
+        if (op.t === 'pose' && !op.off) {
+          const j = poseHit(op, p.x, p.y, 10 / view.zoom);
+          if (j >= 0) {
+            let mode: PoseDrag = 'swing';
+            if (e.altKey) mode = 'free';
+            else if (e.shiftKey) mode = 'scale';
+            else if (j === POSE_ROOT) mode = 'move';
+            drag.current = { kind: 'pose', i, j, mode, op, x0: p.x, y0: p.y };
+            setPoseLive({ i, op });
+            return;
+          }
+        }
+      }
+      const d: PoseDragState = { i: -1, j: POSE_ROOT, mode: 'move', op: restPose(p.x, p.y, 1), x0: p.x, y0: p.y };
+      drag.current = { kind: 'pose', ...d };
+      setPoseLive({ i: -1, op: posedTo(d, p.x, p.y) });
+      return;
+    }
     if (!drawTool) return;
     if (tool === 'pen') {
       const d = draft.current;
@@ -531,6 +589,19 @@ export default function Stage(props: StageProps) {
     if (!d || !view) return;
     if (d.kind === 'shape') {
       setShapeLive({ i: d.i, op: dragged(d, p.x, p.y, e.shiftKey) });
+      return;
+    }
+    if (d.kind === 'pose') {
+      setPoseLive({ i: d.i, op: posedTo(d, p.x, p.y) });
+      return;
+    }
+    if (d.kind === 'posebox') {
+      const dr = draft.current;
+      if (dr && dr.t === 'pick') {
+        dr.x1 = p.x;
+        dr.y1 = p.y;
+        paintDraft();
+      }
       return;
     }
     if (d.kind === 'pan') {
@@ -571,6 +642,23 @@ export default function Stage(props: StageProps) {
       setShapeLive(null);
       // A click without a drag only selects.
       if (Math.abs(p.x - d.x0) * (view?.zoom || 1) >= 1 || Math.abs(p.y - d.y0) * (view?.zoom || 1) >= 1) props.onReplaceOp(d.i, dragged(d, p.x, p.y, e.shiftKey));
+      return;
+    }
+    if (d?.kind === 'posebox') {
+      const dr = draft.current;
+      draft.current = null;
+      paintDraft();
+      if (dr && dr.t === 'pick' && Math.abs(dr.x1 - dr.x0) * (view?.zoom || 1) > 5 && Math.abs(dr.y1 - dr.y0) * (view?.zoom || 1) > 5) {
+        props.onPoseBox({ x: Math.min(dr.x0, dr.x1), y: Math.min(dr.y0, dr.y1), w: Math.abs(dr.x1 - dr.x0), h: Math.abs(dr.y1 - dr.y0) });
+      }
+      return;
+    }
+    if (d?.kind === 'pose') {
+      const p = toImage(e.clientX, e.clientY);
+      setPoseLive(null);
+      const op = posedTo(d, p.x, p.y);
+      if (d.i < 0) onCommit(op);
+      else if (Math.hypot(p.x - d.x0, p.y - d.y0) * (view?.zoom || 1) >= 1) props.onReplaceOp(d.i, op);
       return;
     }
     // A pen shape lives across clicks.
@@ -629,6 +717,7 @@ export default function Stage(props: StageProps) {
   if (panning) cursorClass = drag.current?.kind === 'pan' ? 'grabbing' : 'grab';
   else if ((drawTool && selected) || tool === 'pick') cursorClass = 'crosshair';
   else if (tool === 'shape' && selected) cursorClass = 'move';
+  else if (tool === 'pose' && selected?.kind === 'paint') cursorClass = 'crosshair';
   const shown = shapeLive && shapeLive.i === selectedShape ? shapeLive.op : editOp;
   const sel = selected;
   const selVersion = sel ? sel.versions[sel.active] : undefined;
@@ -657,7 +746,18 @@ export default function Stage(props: StageProps) {
             if (l.kind === 'paint') {
               // A guide shows while you work (dimmed); it is never in the picture the engines or the export see.
               if (l.hidden || !l.mask) return null;
-              return <img key={l.id} className={`sc-paint${l.options?.guide ? ' guide' : ''}`} src={l.mask} alt="" draggable={false} />;
+              // While one of its figures is being posed the live pose is drawn on top, so its old raster fades back.
+              const posing = !!poseLive && sel?.id === l.id;
+              return (
+                <img
+                  key={l.id}
+                  className={`sc-paint${l.options?.guide ? ' guide' : ''}`}
+                  src={l.mask}
+                  alt=""
+                  draggable={false}
+                  style={posing ? { opacity: 0.2 } : undefined}
+                />
+              );
             }
             const v = l.versions[l.active];
             if (l.hidden || !v || !l.mask || (roto && roto.layerId === l.id)) return null;
@@ -712,6 +812,9 @@ export default function Stage(props: StageProps) {
             )
         )}
         {sel && shown && view && !compare && <ShapeOutline op={shown} scene={scene} zoom={view.zoom} handles={tool === 'shape'} />}
+        {sel && sel.kind === 'paint' && view && !compare && (tool === 'pose' || poseLive) && (
+          <PoseOverlay ops={sel.shapes || []} live={poseLive} scene={scene} zoom={view.zoom} />
+        )}
         {roto && !compare && <RotoClip roto={roto} scene={scene} mask={scene.layers.find((l) => l.id === roto.layerId)?.mask || ''} />}
         {pick && !compare && view && <PickPreview pick={pick} area={pickArea} scene={scene} zoom={view.zoom} />}
       </div>
@@ -833,6 +936,49 @@ function ShapeOutline({ op, scene, zoom, handles }: { op: MaskOp; scene: Scene; 
         op.t === 'lasso' &&
         // eslint-disable-next-line react/no-array-index-key
         pairs.map(([x, y], k) => <circle key={k} cx={x} cy={y} r={hs / 2.4} className="sc-shape-vertex" {...(ve as object)} />)}
+    </svg>
+  );
+}
+
+/**
+ * The Pose tool's view of a paint layer's figures: every joint as a handle in its OpenPose colour, and the figure being
+ * dragged drawn whole (the layer's raster only catches up when the drag ends).
+ */
+function PoseOverlay({ ops, live, scene, zoom }: { ops: MaskOp[]; live: { i: number; op: PoseOp } | null; scene: Scene; zoom: number }) {
+  const figures: Array<{ op: PoseOp; live: boolean }> = [];
+  ops.forEach((op, i) => {
+    if (op.t !== 'pose' || op.off) return;
+    figures.push(live && live.i === i ? { op: live.op, live: true } : { op, live: false });
+  });
+  if (live && live.i < 0) figures.push({ op: live.op, live: true });
+  const r = 5 / zoom;
+  return (
+    <svg className="sc-pose" viewBox={`0 0 ${scene.width} ${scene.height}`} preserveAspectRatio="none" aria-hidden>
+      {figures.map(({ op, live: moving }, f) => (
+        // eslint-disable-next-line react/no-array-index-key
+        <g key={f}>
+          {moving &&
+            POSE_LIMBS.map(([a, b], k) => (
+              <line
+                // eslint-disable-next-line react/no-array-index-key
+                key={k}
+                x1={op.kp[a * 2]}
+                y1={op.kp[a * 2 + 1]}
+                x2={op.kp[b * 2]}
+                y2={op.kp[b * 2 + 1]}
+                stroke={POSE_COLORS[k]}
+                strokeWidth={op.w * 2}
+                strokeLinecap="round"
+                opacity={0.8}
+              />
+            ))}
+          {POSE_JOINTS.map((name, j) => (
+            <circle key={name} cx={op.kp[j * 2]} cy={op.kp[j * 2 + 1]} r={j === POSE_ROOT ? r * 1.4 : r} fill={POSE_COLORS[j]} className="sc-pose-joint">
+              <title>{j === POSE_ROOT ? 'neck: drag to move the figure' : name}</title>
+            </circle>
+          ))}
+        </g>
+      ))}
     </svg>
   );
 }

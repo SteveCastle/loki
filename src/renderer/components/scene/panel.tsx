@@ -4,7 +4,7 @@ import { maskBounds, rectContains, type ContextSize } from './mask';
 import { PromptLibrary } from './prompt-library';
 import References from './references';
 import { refTokens, type RefKind } from './refs';
-import { composeFinish, FINISH_GROUNDING, FINISH_MODES, finishStrength, DIALOGUE_LANGUAGES, MAX_GENERATIONS, dialogueSeconds, generationsInFlight, jobPhase, layerTiming, type DialogueLine, type FinishMode, type LayerOptions, type LoopKind, type SceneLayer } from './scene-api';
+import { composeFinish, FINISH_GROUNDING, FINISH_MODES, finishStrength, sketchWhere, DIALOGUE_LANGUAGES, MAX_GENERATIONS, dialogueSeconds, generationsInFlight, jobPhase, layerTiming, type DialogueLine, type FinishMode, type LayerOptions, type LoopKind, type SceneLayer } from './scene-api';
 
 // Shortcut labels: ⌃/↵ have no glyph in Windows' UI fonts and render as junk.
 const IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
@@ -390,7 +390,14 @@ export function Inspector(props: InspectorProps) {
     const i = refs.findIndex((r) => r.layer && r.layer === o.paint);
     return (i >= 0 && refTokens('still', refs, false)[i]) || '<image2>';
   })();
-  const fullPrompt = finish ? composeFinish(grounding, l.prompt, guideToken) : '';
+  // A Retouch sketch finish is also shown its paint alone (the server adds it as the last image) and told where it is.
+  const sketchTarget = (() => {
+    if (finish !== 'sketch' || dream) return { where: '', target: '' };
+    const paint = (props.paintLayers || []).find((p) => p.id === o.paint);
+    const images = refTokens('still', o.refs || [], false).filter(Boolean).length;
+    return { where: paint ? sketchWhere(paint.region, l.region) : '', target: `<image${images + 2}>` };
+  })();
+  const fullPrompt = finish ? composeFinish(grounding, l.prompt, guideToken, sketchTarget.where, sketchTarget.target) : '';
   const outside = version && grown && !rectContains(version.region, grown);
   const ideas = motion ? MOTION_IDEAS : STILL_IDEAS;
   const promptRef = useRef<HTMLTextAreaElement>(null);
@@ -509,7 +516,8 @@ export function Inspector(props: InspectorProps) {
             aria-label="Grounding"
           />
           <div className="sc-faint sc-grounding-help">
-            {'{what}'} is replaced by your words above{FINISH_MODES[finish].guide ? `, {guide} by the paint layer’s token (${guideToken})` : ''}.
+            {'{what}'} is replaced by your words above{FINISH_MODES[finish].guide ? `, {guide} by the paint layer’s token (${guideToken})` : ''}
+            {finish === 'sketch' && !dream ? `, {where} by where the sketch is, {target} by the sketch shown alone (${sketchTarget.target})` : ''}.
           </div>
           <div className="sc-grounding-full">
             <span className="sc-label">Sent to the engine</span>
