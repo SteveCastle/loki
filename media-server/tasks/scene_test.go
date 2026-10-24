@@ -841,3 +841,46 @@ func TestSceneFinishPrompt(t *testing.T) {
 		t.Fatalf("plain layer: %s", got)
 	}
 }
+
+// An engine clip that fades to black (or white) over its end is cut where
+// the fade starts; steady clips, mid-clip dips and a whole clip darkening
+// (the content) are left alone.
+func TestEndFadeKeep(t *testing.T) {
+	flat := func(n int, v float64) []float64 {
+		y := make([]float64, n)
+		for i := range y {
+			y[i] = v + float64(i%3) // a little flicker
+		}
+		return y
+	}
+	ramp := func(y []float64, from int, to float64) []float64 {
+		start, n := y[from-1], len(y)-from
+		for i := 0; i < n; i++ {
+			y[from+i] = start + (to-start)*float64(i+1)/float64(n)
+		}
+		return y
+	}
+	// The measured case: 124 frames at ~116, the last 25 down to 22.
+	if k := endFadeKeep(ramp(flat(124, 116), 99, 22)); k < 99 || k > 102 {
+		t.Errorf("fade to black: keep %d, want ~100", k)
+	}
+	if k := endFadeKeep(ramp(flat(124, 120), 100, 250)); k < 100 || k > 103 {
+		t.Errorf("fade to white: keep %d, want ~101", k)
+	}
+	if k := endFadeKeep(flat(124, 116)); k != 124 {
+		t.Errorf("steady clip: keep %d", k)
+	}
+	if k := endFadeKeep(ramp(flat(124, 116), 115, 90)); k != 124 {
+		t.Errorf("slight dimming is not a fade: keep %d", k)
+	}
+	dip := flat(124, 116)
+	for i := 40; i < 60; i++ {
+		dip[i] = 30
+	}
+	if k := endFadeKeep(dip); k != 124 {
+		t.Errorf("mid-clip dip: keep %d", k)
+	}
+	if k := endFadeKeep(ramp(flat(124, 116), 20, 15)); k != 124 {
+		t.Errorf("night falling over the whole clip: keep %d", k)
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"image"
 	"image/draw"
@@ -13,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -45,6 +47,9 @@ import (
 //     reads as a static ghost of the picture over the motion (measured: the
 //     first version added it to moving areas at up to full strength).
 //
+//   - end fade: an engine clip that fades to black (or white) over its last
+//     second is cut where the fade starts, sound included (see endFadeKeep).
+//
 // It also writes the video's motion map (<out>_motion.png: alpha = how much
 // each pixel moves), which the editor shows and can grow a mask to. Runs as
 // its own CPU job chained after the reshoot job, so the GPU is free the
@@ -63,11 +68,14 @@ var sceneLockOptions = []TaskOption{
 	{Name: "detail", Label: "Match Still Detail", Type: "bool", Default: false, Description: "Output at the region's size with the still's fine detail added back into the motion"},
 	{Name: "out", Label: "Output", Type: "string", Default: "", Description: "Output file (beside the still); empty = <still>_locked.mp4"},
 	{Name: "size", Label: "Region Size", Type: "string", Default: "", Description: "WxH of the region the video fills (with detail: the output size, capped)"},
+	{Name: "trimfade", Label: "Trim End Fade", Type: "bool", Default: true, Description: "Cut a fade to black or white at the end of the video"},
 }
 
 type finishOptions struct {
 	Freeze bool
 	Detail bool
+	// TrimFade cuts a fade to black/white off the end (endFadeKeep).
+	TrimFade bool
 	// RegionW/H: the size the video is shown at (0 = the video's own).
 	RegionW, RegionH int
 }
@@ -91,7 +99,7 @@ func sceneLockTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 	if still == "" {
 		return fail("needs the still frame (--still)", nil)
 	}
-	fo := finishOptions{Freeze: optBool(opts, "freeze"), Detail: optBool(opts, "detail")}
+	fo := finishOptions{Freeze: optBool(opts, "freeze"), Detail: optBool(opts, "detail"), TrimFade: optBool(opts, "trimfade")}
 	if w, h, ok := parseWxH(optString(opts, "size")); ok {
 		fo.RegionW, fo.RegionH = w, h
 	}
@@ -120,6 +128,9 @@ func sceneLockTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 			return fail("task canceled", ctx.Err())
 		}
 		return fail(err.Error(), err)
+	}
+	if stats.Trimmed > 0 {
+		q.PushJobStdout(j.ID, fmt.Sprintf("%s: the video faded out over its last %d frames: cut where the fade starts", tag, stats.Trimmed))
 	}
 	if stats.Misaligned {
 		q.PushJobStdout(j.ID, fmt.Sprintf("%s: the video's first frame doesn't line up with the still (match %.2f): the engine reframed it, so it was left unlocked", tag, stats.Match))
@@ -153,6 +164,8 @@ type lockStats struct {
 	// engine reframed it and nothing was frozen or detailed (Misaligned).
 	Match      float64
 	Misaligned bool
+	// Trimmed: frames of an end fade cut off the video (endFadeKeep).
+	Trimmed int
 }
 
 // lockMinMatch: when fewer than this share of the still's textured tiles line
@@ -247,6 +260,9 @@ func probeVideoInfo(ctx context.Context, path string) (videoInfo, error) {
 	return videoInfo{W: w, H: h, FPS: parts[2], Audio: probeHasAudio(path)}, nil
 }
 
+// errDecodeDone, returned by a decode callback, stops decoding without error.
+var errDecodeDone = errors.New("decode done")
+
 // decodeFrames streams the video's frames, scaled to w×h (Lanczos), as packed
 // RGB24 to fn.
 func decodeFrames(ctx context.Context, path string, w, h int, fn func(i int, rgb []byte) error) (int, error) {
@@ -285,6 +301,9 @@ func decodeFramesVF(ctx context.Context, path string, w, h int, extra string, fn
 	if ferr != nil {
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
+		if ferr == errDecodeDone {
+			return n, nil
+		}
 		return n, ferr
 	}
 	if err := cmd.Wait(); err != nil {
@@ -378,12 +397,16 @@ func luma(p []byte, i int) float32 {
 
 // measureMotion decodes the video at w×h and returns frame 0 (RGB) and each
 // pixel's motion energy: its largest luma change from frame 0, blurred so
-// moving things keep a margin of motion around them.
-func measureMotion(ctx context.Context, video string, w, h int) (f0, motion []float32, frames int, err error) {
+// moving things keep a margin of motion around them. limit > 0 reads only
+// that many frames.
+func measureMotion(ctx context.Context, video string, w, h, limit int) (f0, motion []float32, frames int, err error) {
 	f0 = make([]float32, w*h*3)
 	motion = make([]float32, w*h)
 	var l0 []float32
 	frames, err = decodeFrames(ctx, video, w, h, func(n int, rgb []byte) error {
+		if limit > 0 && n >= limit {
+			return errDecodeDone
+		}
 		if n == 0 {
 			l0 = make([]float32, w*h)
 			for i := range f0 {
@@ -472,7 +495,7 @@ func MotionMapDataURL(ctx context.Context, video string) (string, error) {
 		if long := max(w, h); long > sceneMotionMapLong {
 			w, h = max(2, w*sceneMotionMapLong/long), max(2, h*sceneMotionMapLong/long)
 		}
-		_, motion, _, err := measureMotion(ctx, video, w, h)
+		_, motion, _, err := measureMotion(ctx, video, w, h, 0)
 		if err != nil {
 			return "", err
 		}
@@ -500,8 +523,21 @@ func finishMotion(ctx context.Context, video, still, out string, o finishOptions
 		return lockStats{}, err
 	}
 
+	// An end fade is cut before anything is measured: fading frames change
+	// everywhere, so they would read as motion over the whole picture.
+	keep, trimmed := 0, 0
+	if o.TrimFade {
+		k, total, err := detectEndFade(ctx, video)
+		if err != nil {
+			return lockStats{}, err
+		}
+		if k < total {
+			keep, trimmed = k, total-k
+		}
+	}
+
 	// Pass 1: frame 0 and the motion energy.
-	f0, motion, frames, err := measureMotion(ctx, video, w, h)
+	f0, motion, frames, err := measureMotion(ctx, video, w, h, keep)
 	if err != nil {
 		return lockStats{}, err
 	}
@@ -565,6 +601,11 @@ func finishMotion(ctx context.Context, video, still, out string, o finishOptions
 		"-f", "rawvideo", "-pix_fmt", "rgb24", "-s", fmt.Sprintf("%dx%d", w, h), "-r", info.FPS, "-i", "-"}
 	if info.Audio {
 		args = append(args, "-i", video, "-map", "0:v", "-map", "1:a", "-c:a", "copy")
+		if keep > 0 {
+			if fps := parseRate(info.FPS); fps > 0 {
+				args = append(args, "-t", formatFloatArg(float64(keep)/fps))
+			}
+		}
 	}
 	args = append(args, "-c:v", "libx264", "-preset", "medium", "-crf", "16", "-pix_fmt", "yuv420p", "-movflags", "+faststart", out)
 	enc := exec.CommandContext(ctx, deps.MustBundled("ffmpeg"), args...)
@@ -585,6 +626,9 @@ func finishMotion(ctx context.Context, video, still, out string, o finishOptions
 		sharpen = detailSharpen
 	}
 	_, derr := decodeFramesVF(ctx, video, w, h, sharpen, func(n int, rgb []byte) error {
+		if keep > 0 && n >= keep {
+			return errDecodeDone
+		}
 		for i := 0; i < w*h; i++ {
 			e := E[i]
 			for c := 0; c < 3; c++ {
@@ -620,10 +664,82 @@ func finishMotion(ctx context.Context, video, still, out string, o finishOptions
 		return lockStats{}, fmt.Errorf("encoding: %v %v: %s", ferr, werr, strings.TrimSpace(encErr.String()))
 	}
 	onPass(2)
-	return lockStats{Frames: frames, W: w, H: h, Locked: float64(locked) / float64(w*h), Match: match, Misaligned: misaligned}, nil
+	return lockStats{Frames: frames, W: w, H: h, Locked: float64(locked) / float64(w*h), Match: match, Misaligned: misaligned, Trimmed: trimmed}, nil
+}
+
+// detectEndFade reads the video's per-frame mean luma (at a thumbnail size)
+// and returns how many frames to keep (endFadeKeep) of total.
+func detectEndFade(ctx context.Context, video string) (keep, total int, err error) {
+	const side = 64
+	var lumas []float64
+	total, err = decodeFrames(ctx, video, side, side, func(n int, rgb []byte) error {
+		var sum float64
+		for i := 0; i < side*side; i++ {
+			sum += float64(luma(rgb, i))
+		}
+		lumas = append(lumas, sum/(side*side))
+		return nil
+	})
+	if err != nil {
+		return 0, 0, err
+	}
+	return endFadeKeep(lumas), total, nil
+}
+
+// endFadeKeep is how many frames to keep of a clip whose per-frame mean luma
+// is y: all of them, unless the clip ends in a fade to black or white, which
+// the engine adds on its own (measured: a spin faded from luma 116 to 22 over
+// its last second). A fade is a run at the end that drifts steadily away
+// from the clip's usual brightness and ends far from it; the cut is at the
+// last frame still near it. A clip that darkens for most of its length
+// (night falling) is the content, not a fade.
+func endFadeKeep(y []float64) int {
+	n := len(y)
+	if n < 24 {
+		return n
+	}
+	if k := fadeOutKeep(y); k < n {
+		return k
+	}
+	inv := make([]float64, n)
+	for i, v := range y {
+		inv[i] = 255 - v
+	}
+	return fadeOutKeep(inv)
+}
+
+// fadeOutKeep is endFadeKeep for a fade to black only.
+func fadeOutKeep(y []float64) int {
+	n := len(y)
+	head := append([]float64(nil), y[:n*3/5]...)
+	sort.Float64s(head)
+	base := head[len(head)/2]
+	// Too dark to fade any further: nothing to tell.
+	if base < 20 || y[n-1] > base*0.6 {
+		return n
+	}
+	k := n - 1
+	for k > 0 && y[k] < base*0.95 {
+		k--
+	}
+	keep := k + 1
+	if keep < n/2 {
+		return n
+	}
+	// Steady: nearly every step of the tail goes darker (or holds).
+	down := 0
+	for j := keep; j < n; j++ {
+		if y[j] <= y[j-1]+1 {
+			down++
+		}
+	}
+	if float64(down) < 0.85*float64(n-keep) {
+		return n
+	}
+	return keep
 }
 
 // lockMotionEdges is finishMotion with only the freeze (the original pass).
 func lockMotionEdges(ctx context.Context, video, still, out string, onPass func(int)) (lockStats, error) {
-	return finishMotion(ctx, video, still, out, finishOptions{Freeze: true}, onPass)
+	return finishMotion(ctx, video, still, out, finishOptions{Freeze: true, TrimFade: true}, onPass)
 }

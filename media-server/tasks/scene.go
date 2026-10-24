@@ -1882,9 +1882,10 @@ func GenerateLayer(ctx context.Context, q *jobqueue.Queue, id, lid string) (*Sce
 	// Motion: lock the static parts to the still (scene_lock.go) unless the
 	// layer opts out; that is what keeps the region's edges static.
 	// Detail (default on) brings it out at the region's own size with the
-	// still's fine detail (scene_lock.go).
+	// still's fine detail (scene_lock.go). It runs with both off too: it
+	// also cuts the fade to black the engine sometimes ends a clip with.
 	freeze, detail := l.Options["lock"] != false, l.Options["detail"] != false
-	if l.Kind == SceneKindMotion && (freeze || detail) {
+	if l.Kind == SceneKindMotion {
 		steps = append(steps, jobqueue.WorkflowTask{ID: uuid.NewString(), Command: "scene-lock",
 			Arguments: []string{"--still=" + input, "--freeze=" + strconv.FormatBool(freeze), "--detail=" + strconv.FormatBool(detail),
 				fmt.Sprintf("--size=%dx%d", region.W, region.H)}, Dependencies: []string{gen.ID}})
