@@ -67,6 +67,11 @@ struct Cli {
     /// Extra reference image added to every job as <image2>, <image3>, ... (repeatable).
     #[arg(short, long = "ref", value_name = "FILE")]
     refs: Vec<PathBuf>,
+    /// Batch file of jobs, one JSON object per line: {"input": FILE, "prompt": TEXT, "refs": [FILE, ...], "seed": N, "out": FILE,
+    /// "sizes": [N, ...]} (sizes: --ref-resolution per image, <image1> first).
+    /// Every key but "input" is optional and falls back to the flags. Models are loaded once for all jobs (instead of INPUT).
+    #[arg(long, value_name = "FILE")]
+    jobs: Option<PathBuf>,
 
     /// Preset: 4kify, 4kify-phone, upscale, restore, or `none`. See --list-presets.
     #[arg(long, value_name = "NAME")]
@@ -163,6 +168,19 @@ pub fn main(prog: &'static str, default_preset: Option<&'static str>) {
         }
         std::process::exit(1);
     }
+}
+
+/// One line of a --jobs file.
+#[derive(serde::Deserialize, Debug)]
+#[serde(deny_unknown_fields)]
+struct Job {
+    input: PathBuf,
+    prompt: Option<String>,
+    refs: Option<Vec<PathBuf>>,
+    seed: Option<u64>,
+    out: Option<PathBuf>,
+    /// Size parameter per image as --ref-resolution reads it, <image1> first (0 = automatic).
+    sizes: Option<Vec<usize>>,
 }
 
 enum Source {
@@ -377,7 +395,23 @@ fn run(prog: &'static str, default_preset: Option<&'static str>) -> Result<()> {
         (None, Some(f)) => Some(std::fs::read_to_string(f).with_context(|| format!("reading {f}"))?),
         (None, None) => None,
     };
-    ensure!(explicit_prompt.is_some() || preset.is_some(), "give an edit instruction with --prompt / --prompt-file, or choose a --preset (see --list-presets)");
+    let jobs: Vec<Job> = match &cli.jobs {
+        Some(f) => {
+            ensure!(cli.inputs.is_empty(), "give inputs as INPUT or in --jobs, not both");
+            let text = std::fs::read_to_string(f).with_context(|| format!("reading {}", f.display()))?;
+            let jobs = text
+                .lines()
+                .enumerate()
+                .filter(|(_, l)| !l.trim().is_empty())
+                .map(|(n, l)| serde_json::from_str(l).with_context(|| format!("{} line {}", f.display(), n + 1)))
+                .collect::<Result<Vec<Job>>>()?;
+            ensure!(!jobs.is_empty(), "{} has no jobs", f.display());
+            jobs
+        }
+        None => Vec::new(),
+    };
+    let jobs_prompted = !jobs.is_empty() && jobs.iter().all(|j| j.prompt.is_some());
+    ensure!(explicit_prompt.is_some() || preset.is_some() || jobs_prompted, "give an edit instruction with --prompt / --prompt-file, or choose a --preset (see --list-presets)");
     let make_prompt = |w: usize, h: usize| -> String {
         let mut p = match (&explicit_prompt, &preset) {
             (Some(t), _) => t.trim().to_string(),
@@ -396,19 +430,28 @@ fn run(prog: &'static str, default_preset: Option<&'static str>) -> Result<()> {
         println!("{}", make_prompt(w, h));
         return Ok(());
     }
-    ensure!(!cli.inputs.is_empty(), "no input image (give files, a directory, a glob, or `-` for stdin)");
-    let sources = expand_inputs(&cli.inputs)?;
+    ensure!(!cli.inputs.is_empty() || !jobs.is_empty(), "no input image (give files, a directory, a glob, or `-` for stdin)");
+    let sources = if jobs.is_empty() { expand_inputs(&cli.inputs)? } else { jobs.iter().map(|j| Source::Path(j.input.clone())).collect() };
     let first_dims = sources[0].dims()?;
     if cli.show_prompt {
         let ((w, h), _) = target_size(&cli, preset.as_ref(), first_dims)?;
         println!("{}", make_prompt(w, h));
         return Ok(());
     }
-    for r in &cli.refs {
+    // each job's references: its own (--jobs), else the flags'
+    let job_refs: Vec<&[PathBuf]> = (0..sources.len()).map(|i| jobs.get(i).and_then(|j| j.refs.as_deref()).unwrap_or(&cli.refs)).collect();
+    for r in job_refs.iter().flat_map(|rs| rs.iter()) {
         ensure!(r.is_file(), "reference image {} not found", r.display());
     }
     let suffix = preset.as_ref().map(|p| p.suffix()).unwrap_or("_edit");
-    let dests: Vec<Dest> = sources.iter().map(|s| destination(&cli.out, s, sources.len(), suffix)).collect::<Result<_>>()?;
+    let dests: Vec<Dest> = sources
+        .iter()
+        .enumerate()
+        .map(|(i, s)| match jobs.get(i).and_then(|j| j.out.clone()) {
+            Some(p) => Ok(Dest::File(p)),
+            None => destination(&cli.out, s, sources.len(), suffix),
+        })
+        .collect::<Result<_>>()?;
     let fixed_seed = preset.as_ref().map(|p| p.seq).unwrap_or(false);
     let policy = preset.as_ref().map(|p| p.ref_policy()).unwrap_or(crate::pipeline::RefPolicy::Native);
 
@@ -423,7 +466,12 @@ fn run(prog: &'static str, default_preset: Option<&'static str>) -> Result<()> {
     let base = Settings { target_w: 0, target_h: 0, out_w: 0, out_h: 0, steps: cli.steps, shift: cli.shift, seed: cli.seed, ref_resolution: cli.ref_resolution, ref_policy: policy, prompt: String::new() };
     let _init = Pipeline::new(dev.clone(), base.clone())?; // initializes the GEMM/attention/VAE kernels
     let t_all = std::time::Instant::now();
-    let ref_imgs: Vec<Rgb8> = cli.refs.iter().map(|p| Rgb8::load(p)).collect::<Result<_>>()?;
+    let mut ref_imgs: std::collections::HashMap<PathBuf, Rgb8> = std::collections::HashMap::new();
+    for r in job_refs.iter().flat_map(|rs| rs.iter()) {
+        if !ref_imgs.contains_key(r) {
+            ref_imgs.insert(r.clone(), Rgb8::load(r)?);
+        }
+    }
 
     // ---- phase 1: load the VAE and text encoder; encode every input
     let vae = Vae::load(dev.clone(), &vae_path)?;
@@ -441,20 +489,27 @@ fn run(prog: &'static str, default_preset: Option<&'static str>) -> Result<()> {
             s.target_h = h;
             s.out_w = ow;
             s.out_h = oh;
-            s.prompt = make_prompt(w, h);
-            s.seed = if fixed_seed { cli.seed } else { cli.seed.wrapping_add(i as u64) };
+            s.prompt = match jobs.get(i).and_then(|j| j.prompt.as_ref()) {
+                Some(p) => p.trim().to_string(),
+                None => make_prompt(w, h),
+            };
+            s.seed = match jobs.get(i).and_then(|j| j.seed) {
+                Some(seed) => seed,
+                None if fixed_seed => cli.seed,
+                None => cli.seed.wrapping_add(i as u64),
+            };
             let p = Pipeline { dev: dev.clone(), settings: s.clone() };
             let mut imgs = vec![img];
-            imgs.extend(ref_imgs.iter().cloned());
+            imgs.extend(job_refs[i].iter().map(|r| ref_imgs[r].clone()));
             let inputs: Vec<serde_json::Value> = imgs
                 .iter()
                 .enumerate()
                 .map(|(k, im)| {
-                    let path = if k == 0 { match src { Source::Path(p) => p.display().to_string(), Source::Stdin(_) => "-".to_string() } } else { cli.refs[k - 1].display().to_string() };
+                    let path = if k == 0 { match src { Source::Path(p) => p.display().to_string(), Source::Stdin(_) => "-".to_string() } } else { job_refs[i][k - 1].display().to_string() };
                     serde_json::json!({ "tag": format!("<image{}>", k + 1), "path": path, "width": im.w, "height": im.h })
                 })
                 .collect();
-            let enc = p.encode(&te, &vae, &imgs)?;
+            let enc = p.encode_sized(&te, &vae, &imgs, jobs.get(i).and_then(|j| j.sizes.as_deref()).unwrap_or(&[]))?;
             Ok((s, enc, inputs))
         })();
         match res {

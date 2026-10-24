@@ -89,7 +89,12 @@ impl Pipeline {
     /// reference tokens are attended by every target token at every step), or falls below MIN_REFERENCE
     /// pixels per side, in which case it is upscaled to that.
     pub fn prepare_reference(&self, img: &Rgb8) -> Rgb8 {
-        let mut res = self.settings.ref_resolution;
+        self.prepare_reference_at(img, self.settings.ref_resolution)
+    }
+
+    /// `prepare_reference` at size parameter `res` (0 = automatic) instead of the settings' one.
+    pub fn prepare_reference_at(&self, img: &Rgb8, res: usize) -> Rgb8 {
+        let mut res = res;
         if res == 0 {
             let target = self.settings.target_w * self.settings.target_h;
             match self.settings.ref_policy {
@@ -116,9 +121,21 @@ impl Pipeline {
 
     /// Encode one job: `imgs[0]` is `<image1>`, further images `<image2>`, ... (all sent to the text encoder and VAE).
     pub fn encode(&self, te: &TextEncoder, vae: &Vae, imgs: &[Rgb8]) -> Result<Encoded> {
+        self.encode_sized(te, vae, imgs, &[])
+    }
+
+    /// `encode` with a size parameter per image (`sizes[k]` for `imgs[k]`; missing or 0 = the settings' rule).
+    pub fn encode_sized(&self, te: &TextEncoder, vae: &Vae, imgs: &[Rgb8], sizes: &[usize]) -> Result<Encoded> {
         let dev = &self.dev;
         ensure!(!imgs.is_empty(), "at least one input image is needed");
-        let rs: Vec<Rgb8> = imgs.iter().map(|i| self.prepare_reference(i)).collect();
+        let rs: Vec<Rgb8> = imgs
+            .iter()
+            .enumerate()
+            .map(|(k, i)| match sizes.get(k) {
+                Some(&r) if r > 0 => self.prepare_reference_at(i, r),
+                _ => self.prepare_reference(i),
+            })
+            .collect();
         let t0 = std::time::Instant::now();
         let cond = te.encode(&self.settings.prompt, &rs).context("text encoder")?;
         dev.sync()?;
