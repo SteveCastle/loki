@@ -30,6 +30,20 @@ func verifyCredential(deps *Dependencies, token string) (*auth.Claims, error) {
 	return deps.Auth.VerifyToken(token)
 }
 
+// isAPIRequest reports whether a request that fails auth should get a
+// status code rather than a redirect to the login page: JSON clients, any
+// client presenting a credential (Bearer / X-API-Key — a browser navigation
+// never does), and everything under /api/. Before, a stale key without an
+// Accept header got a 302 to /login, which fetch(redirect:'error') reports as
+// a network failure ("cannot reach the media server") — and API keys go
+// stale whenever the server switches library databases, since they live in
+// the library DB.
+func isAPIRequest(r *http.Request) bool {
+	return r.Header.Get("Accept") == "application/json" ||
+		requestAuthToken(r) != "" ||
+		strings.HasPrefix(r.URL.Path, "/api/")
+}
+
 // requestUsername resolves the authenticated user for a request that already
 // passed the auth middleware (header credential first, then cookie).
 func requestUsername(deps *Dependencies, r *http.Request) string {

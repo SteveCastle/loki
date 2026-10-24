@@ -28,6 +28,7 @@ import (
 	"unicode/utf16"
 
 	depspkg "github.com/stevecastle/shrike/deps"
+	"github.com/stevecastle/shrike/platform"
 )
 
 const genTextMax = 64 << 20
@@ -387,6 +388,7 @@ func readVideoText(path string) map[string]string {
 		}
 	}
 	cmd := exec.Command(ffprobe, "-v", "error", "-show_entries", "format_tags", "-of", "json", path)
+	platform.HideSubprocessWindow(cmd)
 	stdout, err := cmd.Output()
 	if err != nil {
 		return nil

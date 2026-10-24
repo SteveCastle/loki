@@ -7,6 +7,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { DndProvider } from 'react-dnd';
 import { HTML5Backend } from 'react-dnd-html5-backend';
 import { SetupWizard } from './components/controls/setup-wizard';
+import { Welcome } from './components/controls/welcome';
+import { useServerAuthSync } from './hooks/useServerAuthSync';
 import { Panels } from './components/layout/panels';
 import './App.css';
 import { Loader } from './components/layout/loader';
@@ -54,6 +56,7 @@ export default function App(): JSX.Element {
   // two = context palette), and the browser never zooms the page itself.
   useLongPressContextMenu();
   useBlockBrowserPinchZoom();
+  useServerAuthSync();
 
   const isLoadingState = useMemo(() => {
     return (
@@ -66,6 +69,7 @@ export default function App(): JSX.Element {
   const isScanningFolder = state.matches({ library: 'loadingFromFS' });
   console.log('state', state);
   if (state.matches({ library: 'manualSetup' })) return <SetupWizard />;
+  if (state.matches({ library: 'welcome' })) return <Welcome />;
 
   console.log('rendering app');
   return (

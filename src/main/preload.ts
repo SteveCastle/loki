@@ -103,6 +103,8 @@ export type Channels =
   | 'server-start'
   | 'server-install-progress'
   | 'server-browser-login'
+  | 'server-setup'
+  | 'server-autostart-set'
   | 'server-browser-login-cancel'
   | 'open-config-dir';
 

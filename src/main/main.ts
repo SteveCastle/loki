@@ -29,7 +29,10 @@ import { registerStudioProtocol, openStudioWindow } from './studio-window';
 import { openSceneWindow, registerScenePickRelay } from './scene-window';
 import { registerPickWindows } from './pick-window';
 import { registerWallpaperHandlers } from './wallpaper';
-import { registerServerInstallHandlers } from './server-install';
+import {
+  autoStartServer,
+  registerServerInstallHandlers,
+} from './server-install';
 import { registerServerLoginHandlers } from './server-login';
 import { heicDisplayFile, isHeicPath } from './heic';
 import {
@@ -958,6 +961,12 @@ const createWindow = async (options?: { launchFile?: string }) => {
       setTimeout(() => {
         checkForUpdatesInBackground();
       }, 1500);
+      // Same for the media server ("Start media server with the viewer"):
+      // its boot opens the shared SQLite library, so let the viewer's own
+      // load-db get there first.
+      setTimeout(() => {
+        autoStartServer(store);
+      }, 4000);
     }
   });
 

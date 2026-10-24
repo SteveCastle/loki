@@ -578,6 +578,7 @@ func healthHandler(deps *Dependencies) http.HandlerFunc {
 
 		health := map[string]interface{}{
 			"status":    "healthy",
+			"version":   Version,
 			"timestamp": time.Now().Unix(),
 			"stream":    streamStats,
 			"jobs":      jobStats,
@@ -2130,7 +2131,7 @@ func authMiddleware(deps *Dependencies, next http.Handler, requiredRole renderer
 				if claims.Username == auth.DefaultAdminUsername {
 					setupRequired, _ := deps.Auth.IsSetupRequired()
 					if setupRequired {
-						if r.Header.Get("Accept") == "application/json" {
+						if isAPIRequest(r) {
 							w.Header().Set("Content-Type", "application/json")
 							w.WriteHeader(http.StatusForbidden)
 							w.Write([]byte(`{"error":"setup_required","message":"Please create a new user account"}`))
@@ -2148,7 +2149,7 @@ func authMiddleware(deps *Dependencies, next http.Handler, requiredRole renderer
 		// Check cookie
 		cookie, err := r.Cookie("auth_token")
 		if err != nil {
-			if r.Header.Get("Accept") == "application/json" {
+			if isAPIRequest(r) {
 				http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			} else {
 				http.Redirect(w, r, loginRedirectTarget("/login?redirect="+url.QueryEscape(r.URL.RequestURI())), http.StatusFound)
@@ -2159,7 +2160,7 @@ func authMiddleware(deps *Dependencies, next http.Handler, requiredRole renderer
 		// Verify token
 		claims, err := deps.Auth.VerifyToken(cookie.Value)
 		if err != nil {
-			if r.Header.Get("Accept") == "application/json" {
+			if isAPIRequest(r) {
 				http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			} else {
 				http.Redirect(w, r, loginRedirectTarget("/login?redirect="+url.QueryEscape(r.URL.RequestURI())), http.StatusFound)
@@ -2171,7 +2172,7 @@ func authMiddleware(deps *Dependencies, next http.Handler, requiredRole renderer
 		if claims.Username == auth.DefaultAdminUsername {
 			setupRequired, _ := deps.Auth.IsSetupRequired()
 			if setupRequired {
-				if r.Header.Get("Accept") == "application/json" {
+				if isAPIRequest(r) {
 					w.Header().Set("Content-Type", "application/json")
 					w.WriteHeader(http.StatusForbidden)
 					w.Write([]byte(`{"error":"setup_required","message":"Please create a new user account"}`))
@@ -2257,7 +2258,7 @@ func loginAPIHandler(deps *Dependencies) http.HandlerFunc {
 			Path:     "/",
 			HttpOnly: true,
 			SameSite: http.SameSiteLaxMode,
-			Expires:  time.Now().Add(24 * time.Hour),
+			Expires:  time.Now().Add(auth.SessionLifetime),
 		})
 
 		// Check if setup is required (logged in as default admin)
@@ -2448,6 +2449,9 @@ func userManagementHandler(deps *Dependencies) http.HandlerFunc {
 // -----------------------------------------------------------------------------
 
 func main() {
+	// A server already serving this port takes over (see launch.go).
+	exitIfAlreadyRunning()
+
 	// â€“â€“â€“ initialize database â€“â€“â€“
 	db, err := initDB()
 	if err != nil {

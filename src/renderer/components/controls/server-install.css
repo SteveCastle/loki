@@ -36,6 +36,19 @@
   background: rgba(0, 150, 136, 0.5);
 }
 
+.ServerInstallWidget .server-install-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.ServerInstallWidget .server-install-toggle input {
+  margin: 0;
+  accent-color: #00c896;
+}
+
 .ServerInstallWidget button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
@@ -63,18 +76,18 @@
   line-height: 1.5;
 }
 
-.server-install-modal h3 {
+.server-offer h3 {
   margin: 0 0 8px;
   font-size: 15px;
   font-weight: 500;
 }
 
-.server-install-modal p {
+.server-offer p {
   margin: 0 0 10px;
   opacity: 0.85;
 }
 
-.server-install-modal p.error {
+.server-offer p.error {
   color: #ff6b6b;
   opacity: 1;
 }

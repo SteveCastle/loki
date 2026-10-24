@@ -1,7 +1,8 @@
 // The Scene editor's media-server API (media-server/scene_api.go). Types mirror
 // tasks/scene.go's JSON. Electron authenticates with the viewer's bearer token;
 // the web build rides the session cookie.
-import { isElectron, mediaServerBase, store } from '../../platform';
+import { isElectron, mediaServerBase } from '../../platform';
+import { serverAuthHeaders } from '../../server-auth';
 import type { MaskOp, MaskOpts, Rect } from './mask';
 import type { SceneRefItem } from './refs';
 
@@ -287,14 +288,13 @@ export class SceneApiError extends Error {
   }
 }
 
-function authHeaders(): Record<string, string> {
-  if (!isElectron) return {};
-  const token = store.get('authToken', null) as string | null;
-  return token ? { Authorization: `Bearer ${token}` } : {};
-}
+const NOT_SIGNED_IN =
+  'Not signed in to the media server for this library. Sign in from the database tab of the viewer’s command palette, then try again.';
 
 async function call<T>(method: string, path: string, body?: unknown, timeoutMs = 20000): Promise<T> {
-  const headers: Record<string, string> = { ...authHeaders() };
+  // The viewer's own credential, read fresh per call (server-auth.ts): a
+  // sign-in in the viewer applies here without reopening the window.
+  const headers: Record<string, string> = { ...serverAuthHeaders() };
   if (body !== undefined) headers['Content-Type'] = 'application/json';
   let res: Response;
   try {
@@ -305,11 +305,16 @@ async function call<T>(method: string, path: string, body?: unknown, timeoutMs =
       credentials: isElectron ? 'omit' : 'include',
       // Every server call is bounded: a hung request must never pin the socket pool.
       signal: AbortSignal.timeout(timeoutMs),
-      redirect: 'error',
+      // A redirect is the server sending a signed-out client to its login
+      // page — an auth failure, not a dead server (see below).
+      redirect: 'manual',
     });
   } catch (e) {
     const msg = e instanceof Error && e.name === 'TimeoutError' ? 'the media server did not answer in time' : 'cannot reach the media server';
     throw new SceneApiError(msg, 0);
+  }
+  if (res.type === 'opaqueredirect' || (res.status >= 300 && res.status < 400)) {
+    throw new SceneApiError(NOT_SIGNED_IN, 401);
   }
   const text = await res.text();
   if (!res.ok) {
@@ -320,7 +325,7 @@ async function call<T>(method: string, path: string, body?: unknown, timeoutMs =
     } catch {
       // plain-text error
     }
-    if (res.status === 401 || res.status === 403) msg = 'Not signed in to the media server. Sign in from the viewer, then reopen this window.';
+    if (res.status === 401 || res.status === 403) msg = NOT_SIGNED_IN;
     throw new SceneApiError(msg || `HTTP ${res.status}`, res.status);
   }
   return (text ? JSON.parse(text) : undefined) as T;

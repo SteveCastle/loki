@@ -578,6 +578,10 @@ const setDB = assign<LibraryState, AnyEventObject>({
 
 const hasInitialFile = (context: LibraryState) => !!context.initialFile;
 const missingDb = (context: LibraryState) => !context.dbPath;
+// Desktop only, once: the web build is served by the server and has its own
+// onboarding (OnboardingGate).
+const showWelcome = (): boolean =>
+  isElectron && !store.get('welcomeShown', false);
 
 // initialFile is whatever the user opened: a media file, a directory, or an
 // archive. Only a media file is itself a library item — a directory/archive is
@@ -1904,6 +1908,7 @@ export const libraryMachine = createMachine(
               { target: 'loadingFromFS', cond: hasInitialFile },
               { target: 'loadingFromPersisted', cond: hasPersistedLibrary },
               { target: 'restoringWebSession', cond: () => !isElectron },
+              { target: 'welcome', cond: showWelcome },
               { target: 'selecting' },
             ],
             entry: assign<LibraryState, AnyEventObject>({
@@ -1974,6 +1979,19 @@ export const libraryMachine = createMachine(
               },
               { target: 'selectingDirectory' },
             ],
+          },
+          // First launch ever: a welcome screen (open a folder or files, and
+          // the one-time media server offer) instead of dropping a brand-new
+          // user straight into a native file picker.
+          welcome: {
+            entry: () => {
+              markStartup('waiting-on-welcome');
+              store.set('welcomeShown', true);
+            },
+            on: {
+              SELECT_FILE: { target: 'selecting' },
+              SELECT_DIRECTORY: { target: 'selectingDirectory' },
+            },
           },
           selecting: {
             // A native dialog means the clock is now measuring the USER, not

@@ -4,6 +4,7 @@ import './login-widget.css';
 import { useSelector } from '@xstate/react';
 import { mediaServerBase, isElectron, invoke } from '../../platform';
 import { initAccess } from '../../access';
+import { forgetServerToken } from '../../server-auth';
 
 export default function LoginWidget() {
   const { libraryService } = useContext(GlobalStateContext);
@@ -115,6 +116,8 @@ export default function LoginWidget() {
   };
 
   const handleLogout = async () => {
+    // A deliberate sign-out: don't swap this library's key back in later.
+    forgetServerToken(libraryService.getSnapshot().context.dbPath);
     libraryService.send({ type: 'SET_AUTH_TOKEN', token: null });
     if (!isElectron) {
       // Clear the auth cookie too, then re-derive access: on a

@@ -268,7 +268,8 @@
             "**/*"
           ]
         }
-      ]
+      ],
+      "artifactName": "Lowkey.Media.Viewer-${version}-${arch}-mac.${ext}"
     },
     "fileAssociations": [
       {
@@ -379,7 +380,8 @@
           "type": "link",
           "path": "/Applications"
         }
-      ]
+      ],
+      "artifactName": "Lowkey.Media.Viewer-${version}-${arch}.${ext}"
     },
     "win": {
       "target": [
@@ -424,6 +426,12 @@
       "provider": "github",
       "owner": "stevecastle",
       "repo": "loki"
+    },
+    "nsis": {
+      "artifactName": "Lowkey.Media.Viewer.Setup.${version}.${ext}"
+    },
+    "appImage": {
+      "artifactName": "Lowkey.Media.Viewer-${version}.${ext}"
     }
   },
   "electronmon": {

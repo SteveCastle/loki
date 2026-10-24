@@ -197,6 +197,29 @@ func TestAuthMiddleware_APIKey(t *testing.T) {
 	if got := send(func(r *http.Request) { r.Header.Set("X-API-Key", created.Key) }); got != http.StatusUnauthorized {
 		t.Errorf("revoked key: status = %d, want 401", got)
 	}
+
+	// A client that presents a credential is an API client whatever its
+	// Accept header: a stale key (keys live in the library DB, so switching
+	// databases strands the viewer's) must 401, never 302 to the login page.
+	// fetch(redirect:'error') reports that redirect as a network failure —
+	// the Scene window said "cannot reach the media server".
+	for _, path := range []string{"/media/api", "/api/scenes"} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Header.Set("Authorization", "Bearer lk_stale")
+		rr := httptest.NewRecorder()
+		protected.ServeHTTP(rr, req)
+		if rr.Code != http.StatusUnauthorized {
+			t.Errorf("%s stale key, no Accept: status = %d (Location %q), want 401",
+				path, rr.Code, rr.Header().Get("Location"))
+		}
+	}
+	// Same for any /api/ route with no credential at all.
+	req := httptest.NewRequest(http.MethodGet, "/api/scenes", nil)
+	rr := httptest.NewRecorder()
+	protected.ServeHTTP(rr, req)
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("/api/ no credentials: status = %d, want 401", rr.Code)
+	}
 }
 
 func TestRequestAuthToken(t *testing.T) {

@@ -25,7 +25,17 @@ export interface ServerInstallStatus {
   running: boolean;
   installedPath: string | null;
   prompted: boolean;
+  serverVersion: string | null;
+  appVersion: string;
+  updateAvailable: boolean;
+  autoStart: boolean;
   progress: ServerInstallProgress;
+}
+
+export interface ServerSetupResult {
+  token?: string;
+  username?: string;
+  error?: string;
 }
 
 export const isServerInstallBusy = (p: ServerInstallProgress) =>
@@ -97,6 +107,28 @@ export function useServerInstall(enabled = true) {
     () => invoke('server-install-dismiss-prompt'),
     []
   );
+  const setAutoStart = useCallback(
+    async (on: boolean) => {
+      await invoke('server-autostart-set', [on]);
+      await refresh();
+    },
+    [refresh]
+  );
+  // The server's setup wizard + sign-in in a window of the viewer's own
+  // (main/server-login.ts); resolves with the viewer's API key.
+  const runSetup = useCallback(
+    () => invoke('server-setup') as Promise<ServerSetupResult>,
+    []
+  );
 
-  return { status, progress, refresh, install, start, dismissPrompt };
+  return {
+    status,
+    progress,
+    refresh,
+    install,
+    start,
+    dismissPrompt,
+    setAutoStart,
+    runSetup,
+  };
 }

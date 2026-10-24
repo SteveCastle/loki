@@ -5,7 +5,7 @@
 // bounces through /login when there is no session), receive a one-time code
 // on the loopback callback and exchange it, with the verifier, for an lk_ API
 // key. The key is what the renderer keeps as its bearer token.
-import { ipcMain, net, shell } from 'electron';
+import { BrowserWindow, ipcMain, net, shell } from 'electron';
 import crypto from 'crypto';
 import fs from 'fs';
 import http from 'http';
@@ -72,7 +72,9 @@ function waitForCode(server: http.Server, state: string): Promise<string> {
   });
 }
 
-async function browserLogin(): Promise<BrowserLoginResult> {
+async function browserLogin(
+  open: (url: string) => Promise<unknown> = (url) => shell.openExternal(url)
+): Promise<BrowserLoginResult> {
   cancelInFlight?.();
   const base = detectMediaServerBase();
   const state = b64url(crypto.randomBytes(16));
@@ -91,7 +93,7 @@ async function browserLogin(): Promise<BrowserLoginResult> {
       `${base}/auth/cli/authorize?port=${port}&state=${encodeURIComponent(state)}` +
       `&code_challenge=${encodeURIComponent(challenge)}&name=${encodeURIComponent(keyName)}`;
     const codeP = waitForCode(server, state);
-    await shell.openExternal(authURL);
+    await open(authURL);
     const code = await codeP;
 
     const res = await net.fetch(`${base}/auth/cli/token`, {
@@ -110,8 +112,93 @@ async function browserLogin(): Promise<BrowserLoginResult> {
   }
 }
 
+// First-run setup without leaving the app: the server's own setup wizard
+// (account, library, storage, models) in a window of ours, then the same
+// sign-in as browserLogin in that window — the wizard has just logged it in,
+// so the approve page is one click and the viewer gets its API key. When
+// setup was already finished it goes straight to sign-in (the server's login
+// page first, if this window's session has expired).
+const SETUP_PARTITION = 'persist:lowkey-media-server';
+
+async function setupComplete(base: string): Promise<boolean> {
+  try {
+    const res = await net.fetch(`${base}/setup/api/state`, {
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) return true; // wizard closed to us: setup is done
+    const data = (await res.json()) as { setupComplete?: boolean };
+    return !!data.setupComplete;
+  } catch {
+    return false;
+  }
+}
+
+async function setupInWindow(parent: BrowserWindow | null): Promise<BrowserLoginResult> {
+  const base = detectMediaServerBase();
+  const origin = new URL(base).origin;
+  const win = new BrowserWindow({
+    parent: parent ?? undefined,
+    width: 980,
+    height: 800,
+    minWidth: 640,
+    minHeight: 560,
+    title: 'Set up Lowkey Media Server',
+    backgroundColor: '#0f0f0f',
+    autoHideMenuBar: true,
+    webPreferences: {
+      partition: SETUP_PARTITION,
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+  // Links out of the wizard (docs, Ollama…) belong in the real browser.
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    shell.openExternal(url);
+    return { action: 'deny' };
+  });
+  let closed = false;
+  const closedP = new Promise<BrowserLoginResult>((resolve) => {
+    win.once('closed', () => {
+      closed = true;
+      cancelInFlight?.();
+      resolve({ error: 'Setup window closed' });
+    });
+  });
+
+  // The wizard ends on "Open your library →", a navigation to the server's
+  // own UI. Hold it there and move on to sign-in instead.
+  const runWizard = () =>
+    new Promise<void>((resolve, reject) => {
+      const onNavigate = (e: Electron.Event, url: string) => {
+        const u = new URL(url);
+        if (u.origin === origin && u.pathname === '/') {
+          e.preventDefault();
+          win.webContents.off('will-navigate', onNavigate);
+          resolve();
+        }
+      };
+      win.webContents.on('will-navigate', onNavigate);
+      win.loadURL(`${base}/setup`).catch(reject);
+    });
+
+  const flow = async (): Promise<BrowserLoginResult> => {
+    if (!(await setupComplete(base))) await runWizard();
+    if (closed) return { error: 'Setup window closed' };
+    const result = await browserLogin((url) => win.loadURL(url));
+    // Leave the "signed in" page up for a beat, then get out of the way.
+    if (result.token) setTimeout(() => !win.isDestroyed() && win.close(), 1200);
+    return result;
+  };
+
+  return Promise.race([flow(), closedP]);
+}
+
 export function registerServerLoginHandlers(): void {
   ipcMain.handle('server-browser-login', () => browserLogin());
+  ipcMain.handle('server-setup', (event) =>
+    setupInWindow(BrowserWindow.fromWebContents(event.sender))
+  );
   ipcMain.handle('server-browser-login-cancel', () => cancelInFlight?.());
   // The folder holding config.json (shared by the server and the viewer).
   ipcMain.handle('open-config-dir', () => {
