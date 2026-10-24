@@ -6,8 +6,9 @@ import { Readable } from 'stream';
 import { pipeline } from 'stream/promises';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
-import { app, BrowserWindow, net, protocol, shell } from 'electron';
+import { app, BrowserWindow, net, protocol } from 'electron';
 import { detectMediaServerBase } from './media-server-base';
+import { openExternalLink } from './open-external';
 
 const execFileP = promisify(execFile);
 
@@ -481,7 +482,7 @@ export function openStudioWindow(mediaPaths: string[]) {
     studioWindow = null;
   });
   studioWindow.webContents.setWindowOpenHandler((edata) => {
-    shell.openExternal(edata.url);
+    openExternalLink(edata.url);
     return { action: 'deny' };
   });
 }

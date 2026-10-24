@@ -15,6 +15,7 @@ import invariant from 'tiny-invariant';
 import Store from 'electron-store';
 import MenuBuilder from './menu';
 import { resolveHtmlPath } from './util';
+import { openExternalLink } from './open-external';
 import {
   registerSessionStoreHandlers,
   setupSessionStoreLifecycle,
@@ -1002,7 +1003,7 @@ const createWindow = async (options?: { launchFile?: string }) => {
 
   // Open urls in the user's browser
   win.webContents.setWindowOpenHandler((edata) => {
-    shell.openExternal(edata.url);
+    openExternalLink(edata.url);
     return { action: 'deny' };
   });
 

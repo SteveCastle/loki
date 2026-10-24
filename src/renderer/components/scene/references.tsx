@@ -28,8 +28,8 @@ export interface ReferencesProps {
 
 function Thumb({ path }: { path: string }) {
   const k = refKind(path);
-  if (k === 'image') return <img className="sc-ref-thumb" src={mediaUrl(path)} alt="" loading="lazy" />;
-  if (k === 'video') return <video className="sc-ref-thumb" src={mediaUrl(path)} muted preload="metadata" />;
+  if (k === 'image') return <img className="sc-ref-thumb" src={mediaUrl(path)} alt="" loading="lazy" draggable={false} />;
+  if (k === 'video') return <video className="sc-ref-thumb" src={mediaUrl(path)} muted preload="metadata" draggable={false} />;
   return (
     <span className="sc-ref-thumb sc-ref-audio" aria-hidden>
       ♪
@@ -47,7 +47,7 @@ function PaintThumb({ layer }: { layer: SceneLayer | undefined }) {
       </span>
     );
   }
-  return <img className="sc-ref-thumb sc-ref-paint" src={layer.mask} alt="" />;
+  return <img className="sc-ref-thumb sc-ref-paint" src={layer.mask} alt="" draggable={false} />;
 }
 
 export default function References({ layer: l, onInsert, onChange, onPickLibrary, onPickFiles, paintLayers }: ReferencesProps) {
@@ -178,7 +178,14 @@ export default function References({ layer: l, onInsert, onChange, onPickLibrary
         )}
         {refs.map((r, i) => (
           <li key={r.id} className={`sc-ref${tokens[i] ? '' : ' unusable'}`}>
-            {r.layer ? <PaintThumb layer={paintLayers.find((x) => x.id === r.layer)} /> : <Thumb path={r.path} />}
+            {/* The thumbnail is part of the token: clicking it inserts too (never opens the file). */}
+            <span
+              className={`sc-ref-thumb-hit${tokens[i] ? '' : ' off'}`}
+              onClick={() => tokens[i] && onInsert(tokens[i] as string)}
+              title={tokens[i] ? 'Insert in the prompt' : undefined}
+            >
+              {r.layer ? <PaintThumb layer={paintLayers.find((x) => x.id === r.layer)} /> : <Thumb path={r.path} />}
+            </span>
             {tokens[i] ? (
               <button type="button" className="sc-token" onClick={() => onInsert(tokens[i] as string)} title={`Insert in the prompt · ${r.layer ? `paint layer “${paintName(r.layer)}”, over the picture` : r.path}`}>
                 {tokens[i]}

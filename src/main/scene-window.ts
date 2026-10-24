@@ -1,5 +1,6 @@
 import path from 'path';
-import { BrowserWindow, dialog, ipcMain, shell } from 'electron';
+import { BrowserWindow, dialog, ipcMain } from 'electron';
+import { openExternalLink } from './open-external';
 import { resolveHtmlPath } from './util';
 
 // The Scene editor (src/renderer/components/scene/) is the viewer's own
@@ -75,7 +76,7 @@ export function openSceneWindow(mediaPath: string, time: number, opts: SceneWind
     if (sceneWindows.get(key) === win) sceneWindows.delete(key);
   });
   win.webContents.setWindowOpenHandler((edata) => {
-    shell.openExternal(edata.url);
+    openExternalLink(edata.url);
     return { action: 'deny' };
   });
 }

@@ -976,6 +976,23 @@ body.sc-body {
   border-radius: 4px;
 }
 
+.sc-ref-thumb-hit {
+  display: flex;
+  cursor: pointer;
+}
+
+.sc-ref-thumb-hit:hover .sc-ref-thumb {
+  border-color: var(--sc-accent);
+}
+
+.sc-ref-thumb-hit.off {
+  cursor: default;
+}
+
+.sc-ref-thumb-hit.off:hover .sc-ref-thumb {
+  border-color: var(--sc-hairline);
+}
+
 .sc-ref-audio,
 .sc-ref-self {
   display: inline-flex;

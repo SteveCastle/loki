@@ -392,17 +392,28 @@ export function Inspector(props: InspectorProps) {
   const outside = version && grown && !rectContains(version.region, grown);
   const ideas = motion ? MOTION_IDEAS : STILL_IDEAS;
   const promptRef = useRef<HTMLTextAreaElement>(null);
+  // Where the cursor was last in the prompt. Clicking a token or thumbnail moves
+  // focus off the textarea first, so its live selection can't be trusted then.
+  const promptCaret = useRef<number | null>(null);
+  useEffect(() => {
+    promptCaret.current = null;
+  }, [l.id]);
+  const rememberCaret = () => {
+    const el = promptRef.current;
+    if (el) promptCaret.current = el.selectionStart;
+  };
   // A reference token goes in at the prompt's cursor (or the end), spaced from its neighbours.
   const insertToken = (token: string) => {
     const el = promptRef.current;
     const text = l.prompt;
-    const at = el && document.activeElement === el ? el.selectionStart : text.length;
+    const at = Math.min(promptCaret.current ?? text.length, text.length);
     const before = text.slice(0, at);
     const after = text.slice(at);
     const pre = before && !/\s$/.test(before) ? ' ' : '';
     const post = after && !/^\s/.test(after) ? ' ' : '';
     props.onPatch({ prompt: before + pre + token + post + after });
     const caret = (before + pre + token).length;
+    promptCaret.current = caret;
     window.setTimeout(() => {
       el?.focus();
       el?.setSelectionRange(caret, caret);
@@ -467,7 +478,12 @@ export function Inspector(props: InspectorProps) {
             ? 'e.g. a stormy sunset sky with towering clouds (describe it, don’t instruct)'
             : 'e.g. replace the sky with a stormy sunset'
         }
-        onChange={(e) => props.onPatch({ prompt: e.target.value })}
+        onChange={(e) => {
+          promptCaret.current = e.target.selectionStart;
+          props.onPatch({ prompt: e.target.value });
+        }}
+        onSelect={rememberCaret}
+        onBlur={rememberCaret}
       />
       {finish && !dream && (
         <details className="sc-grounding">

@@ -1,4 +1,5 @@
-import { BrowserWindow, ipcMain, shell, webContents } from 'electron';
+import { BrowserWindow, ipcMain, webContents } from 'electron';
+import { openExternalLink } from './open-external';
 import { resolveHtmlPath } from './util';
 
 // Reference picker windows (see src/renderer/components/scene/pick-bridge.ts).
@@ -94,7 +95,7 @@ export function registerPickWindows(opts: PickWindowOptions) {
     // Closed without an answer: the requester's pick is cancelled.
     win.on('closed', () => finish(pick.id, null));
     win.webContents.setWindowOpenHandler((edata) => {
-      shell.openExternal(edata.url);
+      openExternalLink(edata.url);
       return { action: 'deny' };
     });
   });
