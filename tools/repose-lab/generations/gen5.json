@@ -1,0 +1,12 @@
+{"gen": "gen5", "steps": 8, "seeds": 2,
+ "why": "Wording plateaued (top 6 within 0.013). Measure seed noise (v2lead, fresh seeds) and move to other axes on x1: steps 4/12, flow shift 0.5/1.0 (default 0.69), reference resolution 384/1024 (default auto = input size), and a new rep: OpenPose figure over coloured capsule mass.",
+ "strategies": [
+   {"name": "v2lead", "tag": "@seeds3", "seed0": 3000},
+   {"name": "x1", "tag": "@4steps", "steps": 4},
+   {"name": "x1", "tag": "@12steps", "steps": 12},
+   {"name": "x1", "tag": "@shift0.5", "extra": ["--shift", "0.5"]},
+   {"name": "x1", "tag": "@shift1.0", "extra": ["--shift", "1.0"]},
+   {"name": "x1", "tag": "@ref384", "extra": ["--ref-resolution", "384"]},
+   {"name": "x1", "tag": "@ref1024", "extra": ["--ref-resolution", "1024"]},
+   "x1-ocapsule"
+ ]}

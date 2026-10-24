@@ -1,0 +1,3 @@
+{"gen": "gen7", "steps": 4, "seeds": 4,
+ "why": "Steps 4 = 8 = 12, so 4 steps from now; seed noise is large per metric, so 4 seeds. Cross the fidelity winners: x1idref (picture again as <image3>) x xd-lead (delta words leading) = xdl-idref; new idea: a tight crop of the person as the identity ref (x1-idcrop, xdl-idcrop). Re-run the leaders x1idref, xd-lead, v2lead and the base control under the same 4 steps / 4 seeds.",
+ "strategies": ["base", "v2lead", "xd-lead", "x1idref", "xdl-idref", "x1-idcrop", "xdl-idcrop"]}

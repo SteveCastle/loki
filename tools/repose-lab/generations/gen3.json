@@ -1,0 +1,3 @@
+{"gen": "gen3", "steps": 8, "seeds": 2,
+ "why": "Parents v2auto (best app-feasible) + base control on the full 41-case set; children: v4 (crossover with v3 body list), v2lead (word order), v2only (unmoved limbs stay), v2auto-thick (rep), v2words-noref (does the figure help?).",
+ "strategies": ["base", "v2auto", "v4", "v2lead", "v2only", "v2auto-thick", "v2words-noref"]}
