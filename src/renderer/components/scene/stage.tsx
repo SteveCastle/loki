@@ -746,6 +746,10 @@ export default function Stage(props: StageProps) {
             if (l.kind === 'paint') {
               // A guide shows while you work (dimmed); it is never in the picture the engines or the export see.
               if (l.hidden || !l.mask) return null;
+              // Once a finish layer shows a result made from it, the guide is spent: drawn over the picture it read
+              // as part of the result wherever that layer's mask is cut away. It shows again while it is selected.
+              const spent = sel?.id !== l.id && scene.layers.some((x) => x.options?.paint === l.id && x.options?.finish && x.versions[x.active]);
+              if (l.options?.guide && spent) return null;
               // While one of its figures is being posed the live pose is drawn on top, so its old raster fades back.
               const posing = !!poseLive && sel?.id === l.id;
               return (

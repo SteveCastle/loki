@@ -3,6 +3,7 @@ import { invoke, isElectron, mediaUrl, send } from '../../platform';
 import { clampRect, imageOp, motionRegion, pickedOp, maskImagesReady, opsDeep, preloadMaskImages, rasterizeLayerMask, rasterizeProtect, regionAround, type MaskLookup, type MaskOp, type MaskOpts, type Rect } from './mask';
 import {
   FINISH_MODES,
+  finishShapes,
   generationsInFlight,
   layerRate,
   MAX_GENERATIONS,
@@ -394,6 +395,19 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
     [touch]
   );
 
+  /** An image piece of shapes still decoding kept layer id's old raster: redo it once the piece is ready. */
+  const reraster = useCallback(
+    (id: string, shapes: MaskOp[]) => {
+      const deep = opsDeep(shapes, lookupIn(docRef.current));
+      if (maskImagesReady(deep)) return;
+      preloadMaskImages(deep).then(() => {
+        const l = docRef.current.layers.find((x) => x.id === id);
+        if (l && l.shapes === shapes) mutate((d) => remask(d, id));
+      });
+    },
+    [mutate]
+  );
+
   const patchLayer = useCallback(
     (id: string, patch: Partial<SceneLayer>, again = false): void => {
       mutate((s) => {
@@ -401,17 +415,9 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
         const next = { ...s, layers: s.layers.map((l) => (l.id === id ? (masked ? syncVersionMask({ ...l, ...patch }) : { ...l, ...patch }) : l)) };
         return again ? remask(next, id) : next;
       });
-      // An image piece still decoding kept the old raster: redo it once the piece is ready.
-      const shapes = patch.shapes;
-      const deep = shapes ? opsDeep(shapes, lookupIn(docRef.current)) : [];
-      if (again && shapes && !maskImagesReady(deep)) {
-        preloadMaskImages(deep).then(() => {
-          const l = docRef.current.layers.find((x) => x.id === id);
-          if (l && l.shapes === shapes) patchLayer(id, {}, true);
-        });
-      }
+      if (again && patch.shapes) reraster(id, patch.shapes);
     },
-    [mutate]
+    [mutate, reraster]
   );
 
   // Decode every image piece of every mask up front, so later edits re-rasterize synchronously.
@@ -550,7 +556,7 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
         kind: 'still',
         region: { x: 0, y: 0, w: 0, h: 0 },
         mask: '',
-        shapes: [{ t: 'layer', id: paint.id }],
+        shapes: finishShapes(paint, mode, [{ t: 'layer', id: paint.id }]),
         maskOpts: setup.maskOpts,
         feather: defaultFeather(s),
         prompt: '',
@@ -564,29 +570,33 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
         layers.splice(at > 0 ? at : layers.length, 0, layer);
         return remask({ ...d, layers }, layer.id);
       });
+      reraster(layer.id, layer.shapes || []);
       setSelectedId(layer.id);
       setTool('select');
       flash('info', FINISH_MODES[mode].added);
       window.setTimeout(() => document.getElementById('sc-prompt')?.focus(), 50);
     },
-    [mutate, flash]
+    [mutate, flash, reraster]
   );
 
-  /** Switch a finish layer to another mode: its grounding, guide reference and mask reach, and how its paint is read. */
+  /** Switch a finish layer to another mode: its grounding, guide reference, mask cover and reach, and how its paint is read. */
   const changeFinish = useCallback(
     (id: string, mode: FinishMode) => {
+      const cur = docRef.current;
+      const l = cur.layers.find((x) => x.id === id);
+      const paint = l && cur.layers.find((x) => x.id === l.options?.paint && x.kind === 'paint');
+      if (!l || !paint) return;
+      const shapes = finishShapes(paint, mode, l.shapes || []);
       mutate((d) => {
-        const l = d.layers.find((x) => x.id === id);
-        const paint = l && d.layers.find((x) => x.id === l.options?.paint && x.kind === 'paint');
-        if (!l || !paint) return d;
         const setup = finishSetup(d, paint, mode, l.options || {}, l.maskOpts);
         const layers = d.layers.map((x) =>
-          x.id === id ? syncVersionMask({ ...x, options: setup.options, maskOpts: setup.maskOpts }) : x.id === paint.id ? paintFor(x, mode) : x
+          x.id === id ? syncVersionMask({ ...x, shapes, options: setup.options, maskOpts: setup.maskOpts }) : x.id === paint.id ? paintFor(x, mode) : x
         );
         return remask({ ...d, layers }, id);
       });
+      reraster(id, shapes);
     },
-    [mutate]
+    [mutate, reraster]
   );
 
   /** Replace the selected layer's shapes (the mask panel, the Shape tool): one undo step. */
@@ -806,7 +816,9 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
             .finally(() => setFitTick((t) => t + 1));
         }
       }
-      const shapes = fit ? [...drawn, fit] : drawn;
+      // The fit goes first: it adds where the result changed, and the layer's own erases must still cut it (drawn
+      // after them, it filled back every erase over a changed area, e.g. the top of a reposed body).
+      const shapes = fit ? [fit, ...drawn] : drawn;
       const cur = l.shapes || [];
       const changed = shapes.length !== cur.length || shapes.some((op, i) => op !== cur[i]);
       if (changed || 'feather' in patch) patchLayer(l.id, { ...patch, shapes }, true);
@@ -853,9 +865,12 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
 
   // ---- the mannequin: presets and detected poses ------------------------------------------
 
-  /** Start a figure on the selected paint layer from the pose of the character in box (frame px): RTMPose on the server. */
+  /**
+   * Start a figure on the selected paint layer from the pose of the character in box (frame px): RTMPose on the
+   * server. The character (subject: their selection, else the box) is kept on the layer for a Repose finish to cover.
+   */
   const detectPose = useCallback(
-    async (box: Rect) => {
+    async (box: Rect, subject?: MaskOp[]) => {
       const l = selected;
       if (!l || l.kind !== 'paint') return;
       setBusy(true);
@@ -864,6 +879,8 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
         await save();
         const r = await sceneApi.pose(doc.id, l.id, box);
         commitOp(fromDetection(r.joints, box));
+        const cover = subject?.length ? subject : [{ t: 'rect', ...box } as MaskOp];
+        mutate((d) => ({ ...d, layers: d.layers.map((x) => (x.id === l.id ? { ...x, options: { ...(x.options || {}), subject: cover } } : x)) }));
         setTool('pose');
         flash('info', 'Placed a figure in the detected pose: drag its joints to change it.');
       } catch (e) {
@@ -872,19 +889,20 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
         setBusy(false);
       }
     },
-    [selected, save, doc.id, commitOp, flash]
+    [selected, save, doc.id, commitOp, mutate, flash]
   );
 
   /** "Detect pose": the character selected with Select object (Q), else how to select one. */
   const detectPoseFromPick = useCallback(() => {
     const obj = pick && pick.target.kind === 'picture' ? selectedObjects(pick)[0] : undefined;
-    if (!obj) {
+    if (!obj || !pick) {
       flash('info', 'Select the character first: Select object (Q) and click them, or Ctrl+drag a box round them with the Mannequin tool (M).');
       return;
     }
+    const subject = pickOps(pick, false, doc.width, doc.height);
     picker.clear();
-    detectPose(obj.bbox);
-  }, [pick, picker, detectPose, flash]);
+    detectPose(obj.bbox, subject);
+  }, [pick, picker, detectPose, flash, doc.width, doc.height]);
 
   /** A preset pose: the layer's last figure takes it (keeping its place and size), or a new figure stands in the middle. */
   const posePreset = useCallback(

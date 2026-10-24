@@ -15,8 +15,11 @@ import (
 // the grounding (options.grounding). Placeholders: {what} = the prompt,
 // {guide} = the token of the paint layer when it is a reference, {where} =
 // where the sketch is in the crop (" at the bottom left"), {target} = the
-// token of the sketch rendered alone on black (sceneFinishTarget). A sentence
-// naming {target} is dropped when there is none (Kromoss takes no images).
+// token of the sketch rendered alone on black (sceneFinishTarget), {pose} =
+// the mannequin's pose in words (describePose), {self} = the token of the
+// picture given again as an identity reference (Repose). A sentence naming
+// {target}, {pose} or {self} is dropped when it is empty (Kromoss takes no
+// images; a hand-drawn figure has no words).
 //
 // Retouch takes no mask, so the words and the target image are all that say
 // which part of the crop to change: given a whole frame and "replace the
@@ -53,17 +56,28 @@ var sceneFinishGrounding = map[string]string{
 		"The paint is loose and only marks which colour goes where: give each whole object or area the colour painted mostly over it, " +
 		"following the shapes and edges of <image1> rather than the edges of the brush strokes. " +
 		"Keep every line and detail of <image1> as it is, and finish with clean, natural shading.",
-	FinishRepose: "Make the person in <image1> do the exact same pose as shown in {guide}: {what}. " +
-		"Match the positions of the head, arms, hands and legs. " +
-		"Keep the person exactly as they are in <image1>: the same face, hair, clothing, body and style. " +
-		"Keep the background, the lighting, the camera angle and the framing of <image1> unchanged, and fill in naturally whatever the new pose uncovers.",
+	// Evolved in tools/repose-lab (FAVORITE.md, strategy x1idref): limbs follow
+	// the figure's directions, not its lengths (a mannequin's shin read from
+	// an ankle off the frame is short); "keep the person exactly as they are"
+	// kept the old arms too (third arms); the words and the picture again as
+	// <image3> hold the pose and the person's face and body type.
+	FinishRepose: "New pose for the person in <image1>: {pose}. " +
+		"Make the person in <image1> do the exact same pose as shown in {guide}: {what}. " +
+		"{guide} only shows the pose: where the head, shoulders, elbows, hands, hips, knees and feet go. " +
+		"Follow the direction each part of the body points in {guide}, but keep this person's own body: the same proportions, limb lengths, build and size in the frame as in <image1>, so it is clearly the same body, only moved. " +
+		"Only the arms and legs that are placed differently in {guide} move; the rest of the body stays exactly where it is. " +
+		"They have exactly two arms, two hands and two legs, each joined naturally to the body; an arm or leg that moves leaves its old place, which then shows the background or their clothing instead. " +
+		"{self} is the same picture again, for their face and body. " +
+		"Keep their identity exactly: the same face, hair, skin and figure, and the same clothing, which drapes and folds naturally with the new pose. " +
+		"Keep the background, the lighting, the camera angle and the framing of <image1> unchanged.",
 }
 
 // sceneFinishPrompt is what the engine is given for a still layer: its prompt
 // as it is, or for a finish layer the grounding around it. refs are the
 // layer's references (the guide's and the target's tokens are looked up among
-// them); where is sketchWhere's phrase, or "".
-func sceneFinishPrompt(opts map[string]any, prompt string, refs []sceneRef, where string) string {
+// them); where is sketchWhere's phrase, or ""; pose is the mannequin's pose
+// in words (paintPoseWords), or "".
+func sceneFinishPrompt(opts map[string]any, prompt string, refs []sceneRef, where, pose string) string {
 	mode := optString(opts, "finish")
 	grounding := strings.TrimSpace(optString(opts, "grounding"))
 	if grounding == "" {
@@ -72,7 +86,7 @@ func sceneFinishPrompt(opts map[string]any, prompt string, refs []sceneRef, wher
 	if grounding == "" {
 		return prompt
 	}
-	guide, target := "<image2>", ""
+	guide, target, self := "<image2>", "", ""
 	paint := optString(opts, "paint")
 	for i, t := range sceneRefTokens(SceneKindStill, refs, false) {
 		if refs[i].Layer != "" && refs[i].Layer == paint && t != "" {
@@ -81,12 +95,21 @@ func sceneFinishPrompt(opts map[string]any, prompt string, refs []sceneRef, wher
 		if refs[i].Target && t != "" {
 			target = t
 		}
+		if refs[i].Identity && t != "" {
+			self = t
+		}
 	}
-	return composeFinish(grounding, prompt, guide, where, target)
+	return composeFinish(fillOrDrop(fillOrDrop(grounding, "{pose}", pose), "{self}", self), prompt, guide, where, target)
 }
 
-// targetSentence is a sentence of a grounding that names {target}.
-var targetSentence = regexp.MustCompile(`[^.]*\{target\}[^.]*\.`)
+// fillOrDrop puts val in for key, or drops the sentences naming key when val
+// is empty. The sentence ends at a full stop, so val must hold none.
+func fillOrDrop(s, key, val string) string {
+	if val == "" {
+		return strings.TrimSpace(regexp.MustCompile(`[^.]*`+regexp.QuoteMeta(key)+`[^.]*\.`).ReplaceAllString(s, ""))
+	}
+	return strings.ReplaceAll(s, key, val)
+}
 
 // composeFinish fills a grounding's placeholders. With no prompt a
 // "…: {what}." clause (or ", even one that looks like {what}.") folds away
@@ -100,12 +123,9 @@ func composeFinish(grounding, what, guide, where, target string) string {
 		out = strings.ReplaceAll(out, ", even one that looks like {what}.", ".")
 		what = "the real thing"
 	}
-	if target == "" {
-		out = targetSentence.ReplaceAllString(out, "")
-	}
+	out = fillOrDrop(out, "{target}", target)
 	out = strings.ReplaceAll(out, "{what}", what)
 	out = strings.ReplaceAll(out, "{where}", where)
-	out = strings.ReplaceAll(out, "{target}", target)
 	return strings.ReplaceAll(out, "{guide}", guide)
 }
 

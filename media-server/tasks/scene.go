@@ -1503,6 +1503,9 @@ type sceneRef struct {
 	// Target: a finish's paint alone on black (sceneFinishTarget), added at
 	// generation time, never stored.
 	Target bool
+	// Identity: the generation's own crop again (Repose: who to keep), added
+	// at generation time, never stored.
+	Identity bool
 }
 
 // promptRef is a reference as the prompt template sees it.
@@ -1953,7 +1956,21 @@ func GenerateLayerMask(ctx context.Context, q *jobqueue.Queue, id, lid string, g
 				where = wh
 			}
 		}
-		opt("prompt", sceneFinishPrompt(l.Options, prompt, refs, where))
+		// Repose: the mannequin's pose in words too, and the crop again so the
+		// engine keeps the person's face and body (tools/repose-lab).
+		pose := ""
+		if optString(l.Options, "finish") == FinishRepose {
+			for _, pl := range s.Layers {
+				if pl.ID == optString(l.Options, "paint") && pl.Kind == SceneKindPaint {
+					pose = paintPoseWords(pl, region)
+				}
+			}
+			// Only when there is room: a layer at the reference limit keeps working, without it.
+			if len(refs) < sceneMaxStillRefs {
+				refs = append(refs, sceneRef{Kind: "image", Path: input, Note: "the same picture again", Identity: true})
+			}
+		}
+		opt("prompt", sceneFinishPrompt(l.Options, prompt, refs, where, pose))
 		if len(refs) > 0 {
 			if err := checkSceneRefs(SceneKindStill, refs, false); err != nil {
 				os.Remove(input)

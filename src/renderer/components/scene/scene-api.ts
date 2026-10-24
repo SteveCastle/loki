@@ -3,7 +3,7 @@
 // the web build rides the session cookie.
 import { isElectron, mediaServerBase } from '../../platform';
 import { serverAuthHeaders } from '../../server-auth';
-import type { MaskOp, MaskOpts, Rect } from './mask';
+import { maskBounds, type MaskOp, type MaskOpts, type Rect } from './mask';
 import type { SceneRefItem } from './refs';
 
 /** still = an edited area, motion = an animated one, paint = the user's own colour painting (never generated). */
@@ -183,6 +183,8 @@ export interface LayerOptions {
   refs?: SceneRefItem[];
   /** paint: a guide only (used as a reference, never in the picture) */
   guide?: boolean;
+  /** paint: the character "Detect pose" read the figure from (mask pieces, frame px), for finishShapes */
+  subject?: MaskOp[];
   /**
    * still: fit the mask to the shown version, adding wherever it changed the picture near the mask, so a result
    * that corrects a rough sketch's shape (or casts a shadow) is not cut off at the sketch's edge.
@@ -221,10 +223,15 @@ export const FINISH_GROUNDING: Record<FinishMode, string> = {
     'following the shapes and edges of <image1> rather than the edges of the brush strokes. ' +
     'Keep every line and detail of <image1> as it is, and finish with clean, natural shading.',
   repose:
+    'New pose for the person in <image1>: {pose}. ' +
     'Make the person in <image1> do the exact same pose as shown in {guide}: {what}. ' +
-    'Match the positions of the head, arms, hands and legs. ' +
-    'Keep the person exactly as they are in <image1>: the same face, hair, clothing, body and style. ' +
-    'Keep the background, the lighting, the camera angle and the framing of <image1> unchanged, and fill in naturally whatever the new pose uncovers.',
+    '{guide} only shows the pose: where the head, shoulders, elbows, hands, hips, knees and feet go. ' +
+    "Follow the direction each part of the body points in {guide}, but keep this person's own body: the same proportions, limb lengths, build and size in the frame as in <image1>, so it is clearly the same body, only moved. " +
+    'Only the arms and legs that are placed differently in {guide} move; the rest of the body stays exactly where it is. ' +
+    'They have exactly two arms, two hands and two legs, each joined naturally to the body; an arm or leg that moves leaves its old place, which then shows the background or their clothing instead. ' +
+    '{self} is the same picture again, for their face and body. ' +
+    'Keep their identity exactly: the same face, hair, skin and figure, and the same clothing, which drapes and folds naturally with the new pose. ' +
+    'Keep the background, the lighting, the camera angle and the framing of <image1> unchanged.',
 };
 
 /**
@@ -265,9 +272,26 @@ export const FINISH_MODES: Record<
     refNote: 'the pose drawing',
     ask: 'Anything about the pose?',
     placeholder: 'e.g. waving hello · sitting on the step (optional)',
-    added: 'Added an Edit layer that reposes the character: widen its mask over the whole character if needed, then generate.',
+    added: 'Added an Edit layer that reposes the character, masked over them and the new pose: add any notes, then generate.',
   },
 };
+
+/**
+ * A finish layer's mask shapes for mode over paint, keeping the user's own (prev, less any earlier cover). Repose
+ * also covers the character as they stand now: the engine redraws the whole person, and a mask of only the drawing
+ * left the old body showing round the new one (ghost hips, a second arm). The cover is the character Detect pose read
+ * (paint.options.subject), else the drawing's box padded out to a body's width (joints sit inside the body).
+ */
+export function finishShapes(paint: SceneLayer, mode: FinishMode, prev: MaskOp[]): MaskOp[] {
+  const own = prev.filter((op) => !op.subject);
+  if (mode !== 'repose') return own;
+  const known = paint.options?.subject;
+  if (known?.length) return [...own, ...known.map((op): MaskOp => ({ ...op, erase: undefined, subject: true }))];
+  const b = maskBounds(paint.shapes || []);
+  if (!b) return own;
+  const pad = 0.15 * Math.max(b.w, b.h);
+  return [...own, { t: 'rect', x: b.x - pad, y: b.y - pad, w: b.w + 2 * pad, h: b.h + 2 * pad, subject: true }];
+}
 
 /** The Kromoss strength a finish starts at when the layer sets none. Mirrors sceneDreamArgs. */
 export function finishStrength(finish: FinishMode | undefined): number {
@@ -278,13 +302,15 @@ export function finishStrength(finish: FinishMode | undefined): number {
  * Fill a grounding's placeholders: {what} the words, {guide} the paint reference's token, {where} where the sketch is
  * (sketchWhere), {target} the token of the sketch alone on black (Retouch sketch finishes; the server adds it as the
  * last reference). With no words a "…: {what}." clause (or ", even one that looks like {what}.") folds away and any
- * other {what} reads "the real thing"; with no target its sentence goes. Mirrors composeFinish.
+ * other {what} reads "the real thing"; with no target its sentence goes. {pose} (Repose: the mannequin's pose in words)
+ * and {self} (Repose: the token of the picture given again for identity) likewise go with their sentence when empty.
+ * Mirrors composeFinish / sceneFinishPrompt.
  */
-export function composeFinish(grounding: string, what: string, guide: string, where = '', target = ''): string {
+export function composeFinish(grounding: string, what: string, guide: string, where = '', target = '', pose = '', self = ''): string {
   const w = what.trim().replace(/\.+$/, '');
-  let out = grounding;
+  let out = fillOrDrop(fillOrDrop(grounding, '{pose}', pose), '{self}', self);
   if (!w) out = out.split(': {what}.').join('.').split(', even one that looks like {what}.').join('.');
-  if (!target) out = out.replace(/[^.]*\{target\}[^.]*\./g, '');
+  out = fillOrDrop(out, '{target}', target);
   return out
     .split('{what}')
     .join(w || 'the real thing')
@@ -294,6 +320,13 @@ export function composeFinish(grounding: string, what: string, guide: string, wh
     .join(target)
     .split('{guide}')
     .join(guide);
+}
+
+/** key filled with val, or the sentences naming key dropped when val is empty. Mirrors fillOrDrop in scene_finish.go. */
+function fillOrDrop(s: string, key: string, val: string): string {
+  if (val) return s.split(key).join(val);
+  const k = key.replace(/[{}]/g, '\\$&');
+  return s.replace(new RegExp('[^.]*' + k + '[^.]*\\.', 'g'), '').trim();
 }
 
 /**

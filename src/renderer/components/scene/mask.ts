@@ -25,6 +25,8 @@ import { drawPose, poseBox, type PoseOp } from './pose';
 // image op with `fit` is the "Fit mask to result" piece: where version `fit`
 // (its path) changed the picture, kept in step with the shown version. A `pose`
 // op is the mannequin (pose.ts): on a paint layer it draws in OpenPose's colours.
+// An op with `subject` is a Repose finish's cover of the character as they
+// stand now (finishShapes adds it and takes it away with the mode).
 export type MaskOp = (
   | { t: 'rect'; x: number; y: number; w: number; h: number }
   | { t: 'lasso'; pts: number[] }
@@ -33,7 +35,7 @@ export type MaskOp = (
   | { t: 'image'; src: string; x: number; y: number; w: number; h: number; bx: number; by: number; bw: number; bh: number }
   | { t: 'layer'; id: string }
   | PoseOp
-) & { erase?: boolean; keep?: boolean; off?: boolean; c?: string; a?: number; fit?: string; label?: string };
+) & { erase?: boolean; keep?: boolean; off?: boolean; c?: string; a?: number; fit?: string; label?: string; subject?: boolean };
 
 /** Whole-mask settings, applied after the ops in this order: expand (px; < 0 chokes), invert, feather, opacity. */
 export interface MaskOpts {
@@ -370,7 +372,13 @@ function coverage(
     cache.set(id, c);
     return c;
   }, colored);
-  if (opts?.expand) morphCoverage(hard, opts.expand * scale);
+  if (opts?.expand) {
+    morphCoverage(hard, opts.expand * scale);
+    // Expand grows what was drawn, never into what was erased: the cuts (and whatever is drawn after the first one)
+    // are replayed as drawn, so an erased area keeps its exact shape instead of filling back in from its edges.
+    const firstCut = ops.findIndex((op) => op.erase || op.keep);
+    if (firstCut >= 0) drawOps(ctx, ops.slice(firstCut), scale, false, (id) => cache.get(id) || null, colored);
+  }
   if (!opts?.invert) return hard;
   const inv = canvas(w, h);
   const ictx = inv.getContext('2d', { willReadFrequently: true });

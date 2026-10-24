@@ -397,7 +397,15 @@ export function Inspector(props: InspectorProps) {
     const images = refTokens('still', o.refs || [], false).filter(Boolean).length;
     return { where: paint ? sketchWhere(paint.region, l.region) : '', target: `<image${images + 2}>` };
   })();
-  const fullPrompt = finish ? composeFinish(grounding, l.prompt, guideToken, sketchTarget.where, sketchTarget.target) : '';
+  // A Retouch Repose is also given the crop again (the server adds it last) and, for a mannequin, its pose in words.
+  const repose = (() => {
+    if (finish !== 'repose' || dream) return { pose: '', self: '' };
+    const paint = (props.paintLayers || []).find((p) => p.id === o.paint);
+    const images = refTokens('still', o.refs || [], false).filter(Boolean).length;
+    const mannequin = (paint?.shapes || []).some((op) => op.t === 'pose' && !op.off);
+    return { pose: mannequin ? '[the mannequin’s pose, in words]' : '', self: `<image${images + 2}>` };
+  })();
+  const fullPrompt = finish ? composeFinish(grounding, l.prompt, guideToken, sketchTarget.where, sketchTarget.target, repose.pose, repose.self) : '';
   const outside = version && grown && !rectContains(version.region, grown);
   const ideas = motion ? MOTION_IDEAS : STILL_IDEAS;
   const promptRef = useRef<HTMLTextAreaElement>(null);

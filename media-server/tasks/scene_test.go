@@ -825,28 +825,36 @@ func TestScenePaintLayerWithFFmpeg(t *testing.T) {
 
 func TestSceneFinishPrompt(t *testing.T) {
 	refs := []sceneRef{{Path: "a.png", Kind: "image"}, {Kind: "image", Layer: "p1"}}
-	got := sceneFinishPrompt(map[string]any{"finish": FinishColour, "paint": "p1"}, "warm autumn tones.", refs, "")
+	got := sceneFinishPrompt(map[string]any{"finish": FinishColour, "paint": "p1"}, "warm autumn tones.", refs, "", "")
 	if !strings.Contains(got, "painted on <image3> as a guide: warm autumn tones. The paint") {
 		t.Fatalf("colour: %s", got)
 	}
-	got = sceneFinishPrompt(map[string]any{"finish": FinishRepose, "paint": "p1"}, "waving hello", refs, "")
-	if !strings.Contains(got, "exact same pose as shown in <image3>: waving hello. Match the positions") {
+	// Repose with its pose words and the crop again as the identity reference.
+	withSelf := append(append([]sceneRef{}, refs...), sceneRef{Kind: "image", Path: "in.png", Identity: true})
+	got = sceneFinishPrompt(map[string]any{"finish": FinishRepose, "paint": "p1"}, "waving hello", withSelf, "", "both arms raised above the head")
+	if !strings.HasPrefix(got, "New pose for the person in <image1>: both arms raised above the head. Make the person") ||
+		!strings.Contains(got, "exact same pose as shown in <image3>: waving hello. <image3> only shows the pose") ||
+		!strings.Contains(got, "placed differently in <image3> move") ||
+		!strings.Contains(got, "body, only moved. Only the arms") ||
+		!strings.Contains(got, "instead. <image4> is the same picture again, for their face and body. Keep their identity") {
 		t.Fatalf("repose: %s", got)
 	}
-	got = sceneFinishPrompt(map[string]any{"finish": FinishRepose, "paint": "p1"}, "", refs, "")
-	if !strings.Contains(got, "shown in <image3>. Match the positions") || strings.Contains(got, "{") {
+	// No mannequin words, no identity reference: their sentences go.
+	got = sceneFinishPrompt(map[string]any{"finish": FinishRepose, "paint": "p1"}, "", refs, "", "")
+	if !strings.HasPrefix(got, "Make the person in <image1> do the exact same pose as shown in <image3>. <image3> only shows") ||
+		strings.Contains(got, "{") || strings.Contains(got, "same picture again") || !strings.Contains(got, "instead. Keep their identity") {
 		t.Fatalf("repose, no words: %s", got)
 	}
-	got = sceneFinishPrompt(map[string]any{"finish": FinishSketch}, "", nil, "")
+	got = sceneFinishPrompt(map[string]any{"finish": FinishSketch}, "", nil, "", "")
 	if !strings.Contains(got, "stands in for the real thing: replace that sketch, and only it, with the real thing as") || strings.Contains(got, "{") ||
 		!strings.Contains(got, "in this picture. The sketch is") || !strings.HasSuffix(got, "any other figure or object.") {
 		t.Fatalf("sketch, no words: %s", got)
 	}
-	got = sceneFinishPrompt(map[string]any{"finish": FinishSketch, "grounding": "Paint {what} in <image1>."}, "a sun", nil, "")
+	got = sceneFinishPrompt(map[string]any{"finish": FinishSketch, "grounding": "Paint {what} in <image1>."}, "a sun", nil, "", "")
 	if got != "Paint a sun in <image1>." {
 		t.Fatalf("custom grounding: %s", got)
 	}
-	if got := sceneFinishPrompt(map[string]any{}, "make it night", nil, ""); got != "make it night" {
+	if got := sceneFinishPrompt(map[string]any{}, "make it night", nil, "", ""); got != "make it night" {
 		t.Fatalf("plain layer: %s", got)
 	}
 }
@@ -891,5 +899,34 @@ func TestEndFadeKeep(t *testing.T) {
 	}
 	if k := endFadeKeep(ramp(flat(124, 116), 20, 15)); k != 124 {
 		t.Errorf("night falling over the whole clip: keep %d", k)
+	}
+}
+
+// The mannequin in words, as tools/repose-lab measured it: sides are the
+// picture's, folded arms read as one phrase, and limbs off the crop go.
+func TestDescribePose(t *testing.T) {
+	// The user's window mannequin (frame px, crop = whole 1080x1350 frame).
+	kp := []float64{433, 364, 526, 527, 490, 520, 326, 687, 383, 673, 562, 534, 331, 695, 350, 646, 518, 994, 518, 1348, 520, 1488, 540, 991, 216, 1137, 232, 1279, 441, 336, 457, 336, 463, 355, 526, 361}
+	pts := make([]posePt, 18)
+	for i := range pts {
+		pts[i] = posePt{kp[2*i], kp[2*i+1]}
+	}
+	got := describePose(pts, 1080, 1350)
+	want := "both arms folded across the chest; the leg on the left of the picture lifted, the knee raised high toward the left of the picture and the foot off the ground; the leg on the right of the picture standing straight"
+	if got != want {
+		t.Fatalf("got  %s\nwant %s", got, want)
+	}
+	// A crop that cuts the legs off at the hip: only the arms are said.
+	if got := describePose(pts, 1080, 900); strings.Contains(got, "leg") || !strings.Contains(got, "folded") {
+		t.Fatalf("cropped: %s", got)
+	}
+	// Through a paint layer: one live mannequin, joints taken into the crop.
+	shapes, _ := json.Marshal([]map[string]any{{"t": "pose", "kp": kp, "w": 17}})
+	l := &SceneLayer{Kind: SceneKindPaint, Shapes: shapes}
+	if got := paintPoseWords(l, SceneRect{X: 0, Y: 0, W: 1080, H: 1350}); got != want {
+		t.Fatalf("paint layer: %s", got)
+	}
+	if got := paintPoseWords(&SceneLayer{Kind: SceneKindPaint, Shapes: json.RawMessage(`[{"t":"stroke","pts":[1,2,3,4],"r":3}]`)}, SceneRect{W: 10, H: 10}); got != "" {
+		t.Fatalf("no mannequin: %q", got)
 	}
 }

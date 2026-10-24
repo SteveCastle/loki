@@ -1,5 +1,5 @@
 import { maskBounds, regionFor, rectContains, simplifyPath, maskSize, type MaskOp } from '../renderer/components/scene/mask';
-import { composeFinish, FINISH_GROUNDING, mergeServer, sceneBusy, sketchWhere, type Scene, type SceneLayer } from '../renderer/components/scene/scene-api';
+import { composeFinish, FINISH_GROUNDING, finishShapes, mergeServer, sceneBusy, sketchWhere, type Scene, type SceneLayer } from '../renderer/components/scene/scene-api';
 import { applyPreset, fromDetection, mirrorPose, POSE_PRESETS, POSE_ROOT, poseHit, posed, poseSubtree, restPose, type PoseOp } from '../renderer/components/scene/pose';
 import { canStartScene } from '../renderer/components/scene/launch';
 
@@ -330,6 +330,45 @@ describe('sketch finish prompt', () => {
     const bare = composeFinish(FINISH_GROUNDING.sketch, '', '<image2>');
     expect(bare).not.toMatch(/[{}]|alone on black|looks like/);
     expect(bare).toContain('in this picture. The sketch is');
+  });
+});
+
+describe('repose finish prompt', () => {
+  it('leads with the pose words, names the identity picture, and drops both when absent', () => {
+    const full = composeFinish(FINISH_GROUNDING.repose, 'waving', '<image2>', '', '', 'both arms raised above the head', '<image3>');
+    expect(full.startsWith('New pose for the person in <image1>: both arms raised above the head. Make the person')).toBe(true);
+    expect(full).toContain('exact same pose as shown in <image2>: waving. <image2> only shows the pose');
+    expect(full).toContain('instead. <image3> is the same picture again, for their face and body. Keep their identity');
+    const bare = composeFinish(FINISH_GROUNDING.repose, '', '<image2>');
+    expect(bare.startsWith('Make the person in <image1> do the exact same pose as shown in <image2>. <image2> only shows')).toBe(true);
+    expect(bare).not.toMatch(/[{}]|same picture again|New pose/);
+    expect(bare).toContain('instead. Keep their identity');
+  });
+});
+
+describe('repose finish mask', () => {
+  const link: MaskOp = { t: 'layer', id: 'p' };
+  const stick: MaskOp = { t: 'stroke', pts: [40, 20, 40, 80], r: 2 };
+
+  it('covers the character the pose was detected from, and only for Repose', () => {
+    const picked: MaskOp = { t: 'image', src: 'data:x', x: 0, y: 0, w: 100, h: 100, bx: 30, by: 10, bw: 30, bh: 80, label: 'person' };
+    const paint = layer('p', { kind: 'paint', shapes: [stick], options: { subject: [picked] } });
+    const repose = finishShapes(paint, 'repose', [link]);
+    expect(repose).toEqual([link, { ...picked, subject: true }]);
+    // Switching away drops the cover and keeps the user's own shapes; switching back does not stack it.
+    expect(finishShapes(paint, 'colour', repose)).toEqual([link]);
+    expect(finishShapes(paint, 'repose', repose)).toHaveLength(2);
+  });
+
+  it('falls back to the drawing padded out to a body', () => {
+    const paint = layer('p', { kind: 'paint', shapes: [stick] });
+    const [, cover] = finishShapes(paint, 'repose', [link]);
+    // The stroke spans 38..42 × 18..82: padded by 15% of its 64 px long side.
+    expect(cover).toMatchObject({ t: 'rect', subject: true });
+    const b = maskBounds([cover])!;
+    expect(b.x).toBeCloseTo(38 - 9.6);
+    expect(b.w).toBeCloseTo(4 + 19.2);
+    expect(b.h).toBeCloseTo(64 + 19.2);
   });
 });
 
