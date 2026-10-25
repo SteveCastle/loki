@@ -28,6 +28,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/stevecastle/shrike/features"
 	"github.com/stevecastle/shrike/renderer"
 	"github.com/stevecastle/shrike/tasks"
 )
@@ -37,8 +38,10 @@ func RegisterSceneRoutes(mux *http.ServeMux, deps *Dependencies) {
 	mux.HandleFunc("/api/scenes/{id}", renderer.ApplyMiddlewares(sceneHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/scenes/{id}/render", renderer.ApplyMiddlewares(sceneRenderHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/scenes/{id}/segment", renderer.ApplyMiddlewares(sceneSegmentHandler(), renderer.RoleAdmin))
-	mux.HandleFunc("/api/scene-dream", renderer.ApplyMiddlewares(sceneDreamHandler(deps), renderer.RoleAdmin))
-	mux.HandleFunc("/api/scene-dream/{job}", renderer.ApplyMiddlewares(sceneDreamStatusHandler(deps), renderer.RoleAdmin))
+	if features.Dream {
+		mux.HandleFunc("/api/scene-dream", renderer.ApplyMiddlewares(sceneDreamHandler(deps), renderer.RoleAdmin))
+		mux.HandleFunc("/api/scene-dream/{job}", renderer.ApplyMiddlewares(sceneDreamStatusHandler(deps), renderer.RoleAdmin))
+	}
 	mux.HandleFunc("/api/scenes/{id}/layers/{lid}/{action}", renderer.ApplyMiddlewares(sceneLayerActionHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/scenes/{id}/layers/{lid}/versions", renderer.ApplyMiddlewares(sceneKeepOnlyHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/scenes/{id}/layers/{lid}/versions/{n}", renderer.ApplyMiddlewares(sceneVersionHandler(deps), renderer.RoleAdmin))

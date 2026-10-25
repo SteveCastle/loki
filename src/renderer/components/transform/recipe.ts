@@ -9,6 +9,7 @@
 //
 // Either way the run's other inputs become pinned references, so a prompt naming <image2> or <Audio 1> still finds
 // them when the saved task runs on a new image (which takes the first input's place). No React in here.
+import { DREAM_ENABLED } from '../../features';
 import {
   BASE_SETTINGS,
   DREAM_ASPECTS,
@@ -218,7 +219,7 @@ export function taskFromRecord(rec: Json): RebuiltTask | null {
   const args: string[] = Array.isArray(rec.args) ? rec.args.filter((a: unknown) => typeof a === 'string') : [];
   if (rec.tool === 'loki-retouch') return fromRetouch(rec, args);
   if (rec.tool === 'loki-reshoot') return fromReshoot(rec, args);
-  if (rec.tool === 'loki-dream') return fromDream(rec, args);
+  if (rec.tool === 'loki-dream') return DREAM_ENABLED ? fromDream(rec, args) : null;
   return null;
 }
 

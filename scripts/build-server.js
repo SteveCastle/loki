@@ -47,7 +47,10 @@ const ext = process.platform === 'win32' ? '.exe' : '';
 // tray icon — and every child process must go through
 // platform.HideSubprocessWindow or it pops its own console window there.
 const ldflags = '';
-run(`go build${ldflags} -o media-server${ext} .`, { cwd: SERVER_DIR });
+// LOKI_DREAM=1 builds the text-to-image features in (Go `dream` tag; the
+// renderer reads the same variable at webpack time, see webpack.config.base).
+const tags = process.env.LOKI_DREAM === '1' ? ' -tags dream' : '';
+run(`go build${tags}${ldflags} -o media-server${ext} .`, { cwd: SERVER_DIR });
 
 console.log(`\n✓ Server built: media-server/media-server${ext}`);
 

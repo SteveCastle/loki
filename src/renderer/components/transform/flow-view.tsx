@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { DREAM_ENABLED } from '../../features';
 import {
   DREAM_ASPECTS,
   FAST_STEPS,
@@ -755,12 +756,18 @@ function ChooseView(props: FlowViewProps & { inputs: ReturnType<typeof classify>
     { id: 'video', title: 'Video', sub: 'loki-reshoot · MiniMax H3, with sound' },
   ];
   // With nothing selected, making something new is all there is to do: it comes first.
-  if (props.paths.length === 0) groups.unshift(create);
+  if (!DREAM_ENABLED) {
+    // No loki-dream in this build: nothing to make from a description.
+  } else if (props.paths.length === 0) groups.unshift(create);
   else groups.push(create);
   return (
     <div className="ts-choose">
       <p className="ts-lead">
-        {props.paths.length === 0 ? 'Nothing is selected: make a new picture from a description.' : `What do you want to do with ${summarizeInputs(props.paths)}?`}
+        {props.paths.length > 0
+          ? `What do you want to do with ${summarizeInputs(props.paths)}?`
+          : DREAM_ENABLED
+            ? 'Nothing is selected: make a new picture from a description.'
+            : 'Nothing is selected: select images or video to transform.'}
       </p>
       <p className="ts-legend">
         <span>

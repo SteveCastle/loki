@@ -3,6 +3,7 @@ package tasks
 import (
 	"sync"
 
+	"github.com/stevecastle/shrike/features"
 	"github.com/stevecastle/shrike/jobqueue"
 	"github.com/stevecastle/shrike/media"
 	"github.com/stevecastle/shrike/storage"
@@ -150,7 +151,10 @@ func init() {
 	RegisterTask("ffmpeg-rotate", "FFmpeg Rotate", ffmpegRotateOptions, ffmpegRotateTask)
 	RegisterTask("retouch", "Retouch (AI image edit)", retouchOptions, retouchTask)
 	RegisterTask("reshoot", "Reshoot (AI video)", reshootOptions, reshootTask)
-	RegisterTask("dream", "Dream (AI image from a prompt)", dreamOptions, dreamTask)
+	// Text-to-image ships only in builds made with `-tags dream` (features.Dream).
+	if features.Dream {
+		RegisterTask("dream", "Dream (AI image from a prompt)", dreamOptions, dreamTask)
+	}
 	RegisterTask("splat", "Gaussian Splat (3D scene)", splatOptions, splatTask)
 	RegisterTask("scene-render", "Render Scene", sceneRenderOptions, sceneRenderTask)
 	RegisterTask("scene-lock", "Lock Scene Motion Edges", sceneLockOptions, sceneLockTask)

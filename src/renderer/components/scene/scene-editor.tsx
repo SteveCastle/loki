@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { DREAM_ENABLED } from '../../features';
 import { invoke, isElectron, mediaUrl, send } from '../../platform';
 import { clampRect, imageOp, motionRegion, pickedOp, maskImagesReady, opsDeep, preloadMaskImages, rasterizeLayerMask, rasterizeProtect, regionAround, type MaskLookup, type MaskOp, type MaskOpts, type Rect } from './mask';
 import {
@@ -1290,7 +1291,7 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
               </option>
             ))}
             <option value="__new">＋ New scene from this file</option>
-            <option value="__dream">＋ New scene from a prompt…</option>
+            {DREAM_ENABLED && <option value="__dream">＋ New scene from a prompt…</option>}
           </select>
         </div>
         <div className="sc-header-mid">
@@ -1597,7 +1598,7 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
         </aside>
       </div>
 
-      {dreamOpen && (
+      {DREAM_ENABLED && dreamOpen && (
         <DreamDialog
           onClose={() => setDreamOpen(false)}
           onScene={async (next) => {

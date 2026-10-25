@@ -30,6 +30,13 @@ permissions:
   contents: write
   pull-requests: write
 
+# Text-to-image (loki-dream / Kromoss) is left out of released builds unless
+# the repository variable LOKI_DREAM is "1": webpack bakes it into the
+# renderer (Electron app and the SPA the server embeds) and the server is
+# built with `-tags dream`. Image and video editing ship either way.
+env:
+  LOKI_DREAM: ${{ vars.LOKI_DREAM }}
+
 jobs:
   test-electron:
     name: Test Electron App
@@ -362,7 +369,7 @@ jobs:
           CGO_ENABLED: ${{ matrix.server_cgo }}
         # main.Version feeds /health, which the desktop viewer compares
         # against its own version to offer a server upgrade.
-        run: go build -ldflags="${{ matrix.ldflags }} -X main.Version=${{ needs.version-and-tag.outputs.version }}" -o lowkeymediaserver${{ matrix.ext }} .
+        run: go build -tags "${{ vars.LOKI_DREAM == '1' && 'dream' || '' }}" -ldflags="${{ matrix.ldflags }} -X main.Version=${{ needs.version-and-tag.outputs.version }}" -o lowkeymediaserver${{ matrix.ext }} .
 
       - name: Build lokictl
         working-directory: ./media-server

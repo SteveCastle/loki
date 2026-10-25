@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { DREAM_ENABLED } from '../../features';
 import { mediaUrl } from '../../platform';
 import { maskBounds, rectContains, type ContextSize } from './mask';
 import { PromptLibrary } from './prompt-library';
@@ -381,7 +382,7 @@ export function Inspector(props: InspectorProps) {
   const full = generationsInFlight(l) >= MAX_GENERATIONS;
   const finish = !motion ? o.finish : undefined;
   // Kromoss redraws from a description: no instruction grounding, no reference images.
-  const dream = !motion && o.engine === 'dream';
+  const dream = DREAM_ENABLED && !motion && o.engine === 'dream';
   const needPrompt = !motion && !finish && !l.prompt.trim();
   // A finish layer: the grounding its words are wrapped in, and what the engine will be given.
   const grounding = finish ? o.grounding || FINISH_GROUNDING[finish] : '';
@@ -726,17 +727,21 @@ export function Inspector(props: InspectorProps) {
           </>
         ) : (
           <>
-            <span className="sc-label" title="Which engine draws the area">
-              Engine
-            </span>
-            <Seg
-              value={o.engine || 'retouch'}
-              onChange={(engine) => props.onOptions({ engine })}
-              options={[
-                { value: 'retouch', label: 'Retouch', title: 'Qwen Image: edits the area by instruction (“make it night”), can use reference images' },
-                { value: 'dream', label: 'Kromoss', title: 'MOSS-Image (Kromoss): redraws the masked area from a description of what should be there, in the picture’s context' },
-              ]}
-            />
+            {DREAM_ENABLED && (
+              <>
+                <span className="sc-label" title="Which engine draws the area">
+                  Engine
+                </span>
+                <Seg
+                  value={o.engine || 'retouch'}
+                  onChange={(engine) => props.onOptions({ engine })}
+                  options={[
+                    { value: 'retouch', label: 'Retouch', title: 'Qwen Image: edits the area by instruction (“make it night”), can use reference images' },
+                    { value: 'dream', label: 'Kromoss', title: 'MOSS-Image (Kromoss): redraws the masked area from a description of what should be there, in the picture’s context' },
+                  ]}
+                />
+              </>
+            )}
             {dream && (
               <>
                 <span className="sc-label" title="How much of the area is redrawn: low keeps its shapes and colours (a sketch), 100% draws it anew">

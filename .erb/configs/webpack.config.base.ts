@@ -57,6 +57,10 @@ const configuration: webpack.Configuration = {
       // (the command palette's badge) can't drift out of date the way a
       // hand-maintained constant does.
       PACKAGE_VERSION: appVersion,
+      // LOKI_DREAM=1 at build time exposes the loki-dream (Kromoss /
+      // MOSS-Image) text-to-image UI; off by default so releases ship
+      // without it. Read through src/renderer/features.ts.
+      LOKI_DREAM: '',
     }),
   ],
 };

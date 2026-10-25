@@ -26,6 +26,7 @@ import (
 	"github.com/stevecastle/shrike/appconfig"
 	"github.com/stevecastle/shrike/deps/models"
 	"github.com/stevecastle/shrike/deps/status"
+	"github.com/stevecastle/shrike/features"
 	"github.com/stevecastle/shrike/platform"
 	"github.com/stevecastle/shrike/renderer"
 	"github.com/stevecastle/shrike/storage"
@@ -205,10 +206,12 @@ func setupModelGroups() []setupModelGroup {
 			setupModelGroup{ID: "ai-select", Title: "Object selection and roto (NVIDIA GPU)",
 				Desc:   "Select people and objects by clicking or naming them in the Scene editor, and track them through video for clean, frame-by-frame masks (SAM 3.1).",
 				Models: []string{"loki-segment", "sam3.1"}},
-			setupModelGroup{ID: "ai-generate", Title: "AI image generation (NVIDIA GPU)",
-				Desc:   "Make new pictures from a prompt, reimagine images and paint into scenes, fully on this machine (Kromoss). Needs an RTX 40-series or newer GPU; a 26 GB download.",
-				Models: []string{"loki-dream", "kromoss"}},
 		)
+		if features.Dream {
+			groups = append(groups, setupModelGroup{ID: "ai-generate", Title: "AI image generation (NVIDIA GPU)",
+				Desc:   "Make new pictures from a prompt, reimagine images and paint into scenes, fully on this machine (Kromoss). Needs an RTX 40-series or newer GPU; a 26 GB download.",
+				Models: []string{"loki-dream", "kromoss"}})
+		}
 	}
 	// Splat training (Lowkey Studio's "3D scene from video / photos"): COLMAP
 	// ships a Windows CUDA build only; on Linux it comes from PATH.

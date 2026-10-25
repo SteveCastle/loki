@@ -88,7 +88,8 @@
       "\\.(css|less|sass|scss)$": "identity-obj-proxy"
     },
     "setupFiles": [
-      "./.erb/scripts/check-build-exists.ts"
+      "./.erb/scripts/check-build-exists.ts",
+      "./.erb/scripts/jest-features.ts"
     ],
     "testEnvironment": "jsdom",
     "testEnvironmentOptions": {

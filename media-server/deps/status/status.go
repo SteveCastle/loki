@@ -12,6 +12,7 @@ import (
 	"github.com/stevecastle/shrike/deps/bundled"
 	"github.com/stevecastle/shrike/deps/models"
 	"github.com/stevecastle/shrike/deps/optional"
+	"github.com/stevecastle/shrike/features"
 )
 
 type Item struct {
@@ -95,6 +96,9 @@ func Snapshot() []Item {
 	}
 	cached := models.Cached()
 	for _, m := range models.Manifest {
+		if !features.Dream && m.DreamOnly() {
+			continue
+		}
 		state := string(cached[m.ID])
 		if state == "" {
 			state = string(models.StatusMissing)

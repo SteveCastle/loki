@@ -5,6 +5,8 @@
 // `dream` (loki-dream, text -> image) tasks. No React in here: it is
 // unit-tested and shared by the palette's one-click chips and the Transform flow.
 
+import { DREAM_ENABLED } from '../../features';
+
 export type EngineId = 'retouch' | 'reshoot' | 'dream';
 export type IntentId =
   | 'restore'
@@ -197,7 +199,7 @@ export const BASE_SETTINGS: TransformSettings = {
   strength: 0.8,
 };
 
-export const INTENTS: IntentDef[] = [
+const ALL_INTENTS: IntentDef[] = [
   {
     id: 'restore',
     engine: 'retouch',
@@ -343,8 +345,14 @@ export const INTENTS: IntentDef[] = [
   },
 ];
 
+/**
+ * The intents this build offers: the loki-dream ones (Generate, Reimagine) only with DREAM_ENABLED. intentById still
+ * knows them all, so a remembered run or saved task naming one resolves; availability() keeps it from running.
+ */
+export const INTENTS: IntentDef[] = ALL_INTENTS.filter((i) => i.engine !== 'dream' || DREAM_ENABLED);
+
 export function intentById(id: IntentId): IntentDef {
-  return INTENTS.find((i) => i.id === id) as IntentDef;
+  return ALL_INTENTS.find((i) => i.id === id) as IntentDef;
 }
 
 /**
@@ -415,6 +423,7 @@ export interface Availability {
 
 /** Whether an intent can run on this selection. */
 export function availability(id: IntentId, inputs: Inputs): Availability {
+  if (!INTENTS.some((i) => i.id === id)) return { ok: false, reason: 'Not available in this version' };
   const { images, videos, audios } = inputs;
   const stills = images.length;
   switch (id) {

@@ -22,6 +22,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stevecastle/shrike/deps"
+	"github.com/stevecastle/shrike/features"
 	"github.com/stevecastle/shrike/heic"
 	"github.com/stevecastle/shrike/jobqueue"
 	"github.com/stevecastle/shrike/mediaext"
@@ -1934,7 +1935,9 @@ func GenerateLayerMask(ctx context.Context, q *jobqueue.Queue, id, lid string, g
 	}
 	switch l.Kind {
 	case SceneKindStill:
-		if optString(l.Options, "engine") == SceneEngineDream {
+		// Without features.Dream a Kromoss layer (a scene from a build that
+		// had it) is drawn by Retouch: there is no dream task to run it.
+		if features.Dream && optString(l.Options, "engine") == SceneEngineDream {
 			command = "dream"
 			if err := sceneDreamArgs(ctx, s, genL, dir, region, input, prompt, refs, opt); err != nil {
 				os.Remove(input)

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stevecastle/shrike/features"
 	"github.com/stevecastle/shrike/jobqueue"
 )
 
@@ -32,6 +33,9 @@ func TestSceneDreamSize(t *testing.T) {
 // An Edit layer on Kromoss: a dream job that inpaints the crop through the
 // layer's mask (cropped to the region, white = redraw) at ~1 MP.
 func TestSceneGenerateWithDream(t *testing.T) {
+	if !features.Dream {
+		t.Skip("built without -tags dream: Kromoss layers run as Retouch")
+	}
 	ffmpegTest(t)
 	withSceneRoot(t)
 	q := jobqueue.NewQueue()

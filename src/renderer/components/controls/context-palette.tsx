@@ -47,6 +47,7 @@ import {
   depsApiBase,
   fmtSize,
 } from '../../onboarding/requirements';
+import { DREAM_ENABLED } from '../../features';
 import TransformSection from '../transform/transform-section';
 import { mediaKind, type IntentId } from '../transform/intents';
 import { openTransformFlow, templateSettings, type PromptTemplate } from '../transform/store';
@@ -1101,8 +1102,9 @@ export default function ContextPalette() {
   const canTransform =
     !!serverAvailable && !!authToken && transformPaths.length > 0;
   // Generate (loki-dream) makes a new picture from a prompt and needs no
-  // selection, so the Transform row is offered whenever the server is.
-  const canGenerate = !!serverAvailable && !!authToken;
+  // selection, so (in builds that have it) the Transform row is offered
+  // whenever the server is.
+  const canGenerate = !!serverAvailable && !!authToken && (DREAM_ENABLED || transformPaths.length > 0);
   // Playback position (seconds) of the video on screen — only meaningful when
   // the ONE targeted file is that video; a retouch job samples that frame.
   const getTransformVideoTime = (): number | undefined => {

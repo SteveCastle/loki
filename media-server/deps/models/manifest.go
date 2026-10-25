@@ -97,6 +97,22 @@ func init() {
 	Manifest = doc.Models
 }
 
+// DreamOnly reports whether only the loki-dream task uses this entry
+// (loki-dream itself and the Kromoss weights): the entries hidden from the
+// dependency lists when the server is built without image generation
+// (features.Dream).
+func (m Model) DreamOnly() bool {
+	if len(m.Consumers) == 0 {
+		return false
+	}
+	for _, c := range m.Consumers {
+		if c != "dream" {
+			return false
+		}
+	}
+	return true
+}
+
 // Lookup returns the model with the given id.
 func Lookup(id string) (Model, bool) {
 	for _, m := range Manifest {
