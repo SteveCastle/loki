@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React from 'react';
+import { DeleteLayerButton } from './panel';
 import { POSE_PRESETS } from './pose';
 import { FINISH_MODES, type FinishMode, type LayerOptions, type SceneLayer } from './scene-api';
 
@@ -38,11 +39,11 @@ export default function PaintPanel(props: PaintPanelProps) {
   const { layer: l, usedBy } = props;
   const guide = !!l.options?.guide;
   const hasPose = (l.shapes || []).some((op) => op.t === 'pose' && !op.off);
-  const [confirmDelete, setConfirmDelete] = useState(false);
   return (
     <section className="sc-section sc-inspector">
       <div className="sc-field-row">
         <input className="sc-name" value={l.name} placeholder="Paint" onChange={(e) => props.onPatch({ name: e.target.value })} aria-label="Layer name" />
+        <DeleteLayerButton versions={0} onDelete={props.onDelete} />
       </div>
       <div className="sc-grid">
         <span className="sc-label">Use</span>
@@ -156,25 +157,6 @@ export default function PaintPanel(props: PaintPanelProps) {
           ))}
         </div>
       )}
-
-      <div className="sc-layer-foot">
-        <span />
-        {confirmDelete ? (
-          <span className="sc-confirm">
-            Delete layer?
-            <button type="button" className="sc-btn sc-btn-danger" onClick={props.onDelete}>
-              Delete
-            </button>
-            <button type="button" className="sc-btn sc-btn-quiet" onClick={() => setConfirmDelete(false)}>
-              Keep
-            </button>
-          </span>
-        ) : (
-          <button type="button" className="sc-btn sc-btn-quiet" onClick={() => setConfirmDelete(true)}>
-            Delete layer
-          </button>
-        )}
-      </div>
     </section>
   );
 }

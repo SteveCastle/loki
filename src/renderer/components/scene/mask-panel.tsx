@@ -20,6 +20,10 @@ export interface MaskPanelProps {
   /** Change whole-mask settings (a slider drag is one undo step). */
   onMaskOpts: (patch: MaskOpts) => void;
   onFeather: (px: number) => void;
+  /** Remove every shape but the protect ones. */
+  onClear: () => void;
+  /** Remove the protect shapes. */
+  onClearProtect: () => void;
   /** A paint layer: strokes are paint (each in its colour) or erase; no links, expand or invert. */
   paint?: boolean;
 }
@@ -107,6 +111,22 @@ export default function MaskPanel(props: MaskPanelProps) {
       <div className="sc-maskpanel-head">
         <span className="sc-label">{paint ? 'Strokes' : 'Mask'}</span>
         <span className="sc-faint">{ops.length ? `${ops.length} ${paint ? 'stroke' : 'shape'}${ops.length === 1 ? '' : 's'}` : 'nothing drawn yet'}</span>
+        <span className="sc-maskpanel-actions">
+          {ops.some((op) => op.keep) && (
+            <button type="button" className="sc-btn sc-btn-quiet sc-btn-tiny" onClick={props.onClearProtect} title="Remove the protect shapes">
+              Clear protect
+            </button>
+          )}
+          <button
+            type="button"
+            className="sc-btn sc-btn-quiet sc-btn-tiny"
+            disabled={!ops.some((op) => !op.keep)}
+            onClick={props.onClear}
+            title={paint ? 'Remove every stroke' : 'Remove every shape (protect shapes stay)'}
+          >
+            {paint ? 'Clear' : 'Clear mask'}
+          </button>
+        </span>
       </div>
 
       {rows.length > 0 && (

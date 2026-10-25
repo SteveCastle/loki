@@ -1,4 +1,4 @@
-import { maskBounds, regionFor, rectContains, simplifyPath, maskSize, type MaskOp } from '../renderer/components/scene/mask';
+import { maskBounds, motionRegion, regionFor, rectContains, simplifyPath, maskSize, type MaskOp } from '../renderer/components/scene/mask';
 import { composeFinish, FINISH_GROUNDING, finishShapes, mergeServer, sceneBusy, sketchWhere, type Scene, type SceneLayer } from '../renderer/components/scene/scene-api';
 import { applyPreset, fromDetection, mirrorPose, POSE_PRESETS, POSE_ROOT, poseHit, posed, poseSubtree, restPose, type PoseOp } from '../renderer/components/scene/pose';
 import { canStartScene } from '../renderer/components/scene/launch';
@@ -396,5 +396,21 @@ describe('mannequin presets and detection', () => {
     // Nothing confident: a standing figure the box's height.
     const none = fromDetection(Array.from({ length: 18 }, () => ({ x: 0, y: 0, score: 0 })), { x: 100, y: 100, w: 100, h: 400 });
     expect(Math.max(...none.kp.filter((_, i) => i % 2)) - 100).toBeCloseTo(400, -1);
+  });
+});
+
+describe('motionRegion', () => {
+  test('context too wide for any trained shape gives way, never the mask (a full-height dancer)', () => {
+    const keep = { x: 445, y: 0, w: 1184, h: 2447 };
+    const r = motionRegion({ x: 113, y: 0, w: 1594, h: 2455 }, 1707, 2455, keep);
+    expect(r.w / r.h).toBeCloseTo(9 / 16, 2);
+    expect(rectContains({ x: 0, y: 0, w: 1707, h: 2455 }, r)).toBe(true);
+    expect(rectContains(r, keep)).toBe(true);
+  });
+
+  test('a region that grows to a trained shape is unchanged by the fallback', () => {
+    expect(motionRegion({ x: 100, y: 0, w: 300, h: 768 }, 1344, 768, { x: 150, y: 50, w: 200, h: 600 })).toEqual(
+      motionRegion({ x: 100, y: 0, w: 300, h: 768 }, 1344, 768)
+    );
   });
 });

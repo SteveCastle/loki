@@ -226,7 +226,6 @@ export interface InspectorProps {
   /** Cancel one generation (its job id), or all of the layer's when omitted. */
   onCancel: (job?: string) => void;
   onDelete: () => void;
-  onClearMask: () => void;
   onDeleteVersion: (n: number) => void;
   /** Discard every version but n. */
   onKeepOnly: (n: number) => void;
@@ -239,7 +238,6 @@ export interface InspectorProps {
   motionShown: boolean;
   onShowMotion: () => void;
   onGrowToMotion: () => void;
-  onClearProtect: () => void;
   /** The active version's PTS multiplier in the scene (layerRate: 1 = as generated, 2 = half speed). */
   loopSpeed: number;
   /** Pick an audio or video file whose voice the first speaker uses; resolves to its path, or null. */
@@ -343,6 +341,29 @@ function DialogueEditor({ o, onOptions, onChooseVoice }: { o: LayerOptions; onOp
 }
 
 /** A version chip's discard button: the first click arms it, the second (within 3 s) discards. */
+/** Delete the layer, at the end of its name row: asks first, saying how many versions go with it. */
+export function DeleteLayerButton({ versions, onDelete }: { versions: number; onDelete: () => void }) {
+  const [confirm, setConfirm] = useState(false);
+  if (!confirm) {
+    return (
+      <button type="button" className="sc-btn sc-btn-quiet" onClick={() => setConfirm(true)} title="Delete this layer">
+        Delete
+      </button>
+    );
+  }
+  return (
+    <span className="sc-confirm">
+      Delete{versions ? ` with ${versions} version${versions > 1 ? 's' : ''}` : ''}?
+      <button type="button" className="sc-btn sc-btn-danger" onClick={onDelete}>
+        Delete
+      </button>
+      <button type="button" className="sc-btn sc-btn-quiet" onClick={() => setConfirm(false)}>
+        Keep
+      </button>
+    </span>
+  );
+}
+
 function DiscardButton({ label, onDiscard }: { label: string; onDiscard: () => void }) {
   const [armed, setArmed] = useState(false);
   useEffect(() => {
@@ -369,7 +390,6 @@ function DiscardButton({ label, onDiscard }: { label: string; onDiscard: () => v
 export function Inspector(props: InspectorProps) {
   const { layer: l, busy } = props;
   const o = l.options || {};
-  const [confirmDelete, setConfirmDelete] = useState(false);
   const motion = l.kind === 'motion';
   const painted = !!l.mask;
   // Whether the shapes reach past the version's area (only measurable for plain shapes: no links, no invert).
@@ -458,6 +478,7 @@ export function Inspector(props: InspectorProps) {
             { value: 'motion', label: 'Motion', title: 'Animate the area (a short looping video)' },
           ]}
         />
+        <DeleteLayerButton versions={l.versions.length} onDelete={props.onDelete} />
       </div>
 
       {finish && (
@@ -1001,34 +1022,6 @@ export function Inspector(props: InspectorProps) {
           )}
         </div>
       )}
-
-      <div className="sc-layer-foot">
-        <span>
-          <button type="button" className="sc-btn sc-btn-quiet" disabled={!painted} onClick={props.onClearMask}>
-            Clear mask
-          </button>
-          {(l.shapes || []).some((op) => op.keep) && (
-            <button type="button" className="sc-btn sc-btn-quiet" onClick={props.onClearProtect}>
-              Clear protect
-            </button>
-          )}
-        </span>
-        {confirmDelete ? (
-          <span className="sc-confirm">
-            Delete layer{l.versions.length ? ` and ${l.versions.length} version${l.versions.length > 1 ? 's' : ''}` : ''}?
-            <button type="button" className="sc-btn sc-btn-danger" onClick={props.onDelete}>
-              Delete
-            </button>
-            <button type="button" className="sc-btn sc-btn-quiet" onClick={() => setConfirmDelete(false)}>
-              Keep
-            </button>
-          </span>
-        ) : (
-          <button type="button" className="sc-btn sc-btn-quiet" onClick={() => setConfirmDelete(true)}>
-            Delete layer
-          </button>
-        )}
-      </div>
     </section>
   );
 }

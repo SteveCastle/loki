@@ -1417,11 +1417,39 @@ func sceneCanvasOrder(r SceneRect) []int {
 	return order
 }
 
-// sceneMotionRegion grows r (never shrinks it: it holds the whole mask) to
-// the nearest canvas shape that fits in the fw×fh frame, keeping it centred
-// where it can and sliding it inside the frame where it can't. The growth is
-// only context around the mask. Mirrors motionRegion in the editor's mask.ts.
-func sceneMotionRegion(r SceneRect, fw, fh int) SceneRect {
+// sceneMotionRegion grows r (the mask's bounds plus context) to the nearest
+// canvas shape that fits in the fw×fh frame, keeping it centred where it can
+// and sliding it inside the frame where it can't. When no canvas grown from r
+// fits (context reaching across most of a frame that is no canvas shape),
+// the context gives way: the largest canvas that fits the frame and still
+// holds keep (the mask's own bounds; empty = no constraint), centred on r.
+// Handing the engine any other shape makes it reframe the shot, so its first
+// frame no longer matches the still. Mirrors motionRegion in the editor's
+// mask.ts.
+func sceneMotionRegion(r, keep SceneRect, fw, fh int) SceneRect {
+	if c, ok := sceneMotionGrow(r, fw, fh); ok {
+		return c
+	}
+	for _, i := range sceneCanvasOrder(r) {
+		a := sceneCanvases[i].aspect
+		W := min(fw, int(math.Floor(float64(fh)*a)))
+		H := min(fh, int(math.Round(float64(W)/a)))
+		if !keep.empty() && (W < keep.W || H < keep.H) {
+			continue
+		}
+		x := min(max(0, r.X+r.W/2-W/2), fw-W)
+		y := min(max(0, r.Y+r.H/2-H/2), fh-H)
+		if !keep.empty() {
+			x = min(max(x, keep.X+keep.W-W), keep.X)
+			y = min(max(y, keep.Y+keep.H-H), keep.Y)
+		}
+		return SceneRect{X: x, Y: y, W: W, H: H}
+	}
+	return r
+}
+
+// sceneMotionGrow grows r to the nearest canvas shape that fits the frame.
+func sceneMotionGrow(r SceneRect, fw, fh int) (SceneRect, bool) {
 	for _, i := range sceneCanvasOrder(r) {
 		a := sceneCanvases[i].aspect
 		w, h := float64(r.W), float64(r.H)
@@ -1436,9 +1464,33 @@ func sceneMotionRegion(r SceneRect, fw, fh int) SceneRect {
 		}
 		x := min(max(0, r.X-(W-r.W)/2), fw-W)
 		y := min(max(0, r.Y-(H-r.H)/2), fh-H)
-		return SceneRect{X: x, Y: y, W: W, H: H}
+		return SceneRect{X: x, Y: y, W: W, H: H}, true
 	}
-	return r
+	return r, false
+}
+
+// sceneMaskBounds is the frame rect a layer's mask (a full-frame PNG data URL
+// at any raster size) covers, or an empty rect when it can't be read.
+func sceneMaskBounds(mask string, fw, fh int) SceneRect {
+	img, err := decodeMaskDataURL(mask)
+	if err != nil {
+		return SceneRect{}
+	}
+	b := img.Bounds()
+	x0, y0, x1, y1 := b.Max.X, b.Max.Y, b.Min.X-1, b.Min.Y-1
+	for y := b.Min.Y; y < b.Max.Y; y++ {
+		for x := b.Min.X; x < b.Max.X; x++ {
+			if _, _, _, a := img.At(x, y).RGBA(); a >= 0x1000 {
+				x0, y0, x1, y1 = min(x0, x), min(y0, y), max(x1, x), max(y1, y)
+			}
+		}
+	}
+	if x1 < x0 {
+		return SceneRect{}
+	}
+	sx, sy := float64(fw)/float64(b.Dx()), float64(fh)/float64(b.Dy())
+	X, Y := int(math.Floor(float64(x0-b.Min.X)*sx)), int(math.Floor(float64(y0-b.Min.Y)*sy))
+	return SceneRect{X: X, Y: Y, W: int(math.Ceil(float64(x1-b.Min.X+1)*sx)) - X, H: int(math.Ceil(float64(y1-b.Min.Y+1)*sy)) - Y}.clamp(fw, fh)
 }
 
 // sceneMotionSize picks loki-reshoot's --size for a region: the canvas
@@ -1899,7 +1951,7 @@ func GenerateLayerMask(ctx context.Context, q *jobqueue.Queue, id, lid string, g
 		return nil, fmt.Errorf("draw the area to change first")
 	}
 	if l.Kind == SceneKindMotion {
-		region = sceneMotionRegion(region, s.Width, s.Height)
+		region = sceneMotionRegion(region, sceneMaskBounds(genL.Mask, s.Width, s.Height), s.Width, s.Height)
 	}
 	dir, _ := sceneDir(id)
 

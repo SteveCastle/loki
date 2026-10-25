@@ -651,10 +651,12 @@ export function opLabel(op: MaskOp, layerName?: (id: string) => string | null): 
 const MOTION_ASPECTS = [1, 4 / 3, 3 / 4, 16 / 9, 9 / 16];
 
 /**
- * A motion layer's region grown (never shrunk) to the nearest trained shape that fits the frame, centred where it
- * can be and slid inside the frame where it can't. Mirrors sceneMotionRegion in media-server/tasks/scene.go.
+ * A motion layer's region (the mask's bounds plus context) grown to the nearest trained shape that fits the frame,
+ * centred where it can be and slid inside the frame where it can't. When none grown from r fits, the context gives
+ * way: the largest trained shape that fits the frame and still holds keep (the mask's own bounds), centred on r. Any
+ * other shape makes the engine reframe the shot. Mirrors sceneMotionRegion in media-server/tasks/scene.go.
  */
-export function motionRegion(r: Rect, frameW: number, frameH: number): Rect {
+export function motionRegion(r: Rect, frameW: number, frameH: number, keep?: Rect | null): Rect {
   const a0 = Math.max(1, r.w) / Math.max(1, r.h);
   const order = [...MOTION_ASPECTS].sort((p, q) => Math.abs(Math.log(a0 / p)) - Math.abs(Math.log(a0 / q)));
   for (const a of order) {
@@ -669,6 +671,19 @@ export function motionRegion(r: Rect, frameW: number, frameH: number): Rect {
       const y = Math.min(Math.max(0, r.y - Math.trunc((H - r.h) / 2)), frameH - H);
       return { x, y, w: W, h: H };
     }
+  }
+  const k = keep && keep.w > 0 && keep.h > 0 ? keep : null;
+  for (const a of order) {
+    const W = Math.min(frameW, Math.floor(frameH * a));
+    const H = Math.min(frameH, Math.round(W / a));
+    if (k && (W < k.w || H < k.h)) continue;
+    let x = Math.min(Math.max(0, r.x + Math.trunc(r.w / 2) - Math.trunc(W / 2)), frameW - W);
+    let y = Math.min(Math.max(0, r.y + Math.trunc(r.h / 2) - Math.trunc(H / 2)), frameH - H);
+    if (k) {
+      x = Math.min(Math.max(x, k.x + k.w - W), k.x);
+      y = Math.min(Math.max(y, k.y + k.h - H), k.y);
+    }
+    return { x, y, w: W, h: H };
   }
   return r;
 }

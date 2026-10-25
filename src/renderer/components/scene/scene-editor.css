@@ -1343,15 +1343,6 @@ body.sc-body {
   text-overflow: ellipsis;
 }
 
-.sc-layer-foot {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-top: 8px;
-  padding-top: 8px;
-  border-top: 1px solid var(--sc-hairline);
-}
-
 .sc-confirm {
   display: flex;
   align-items: center;
@@ -1510,8 +1501,14 @@ body.sc-body {
 .sc-maskpanel-head {
   display: flex;
   align-items: baseline;
-  justify-content: space-between;
+  gap: 8px;
   margin-bottom: 6px;
+}
+
+.sc-maskpanel-actions {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
 }
 
 .sc-shapes {

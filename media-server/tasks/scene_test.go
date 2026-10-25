@@ -81,7 +81,7 @@ func TestSceneMotionRegion(t *testing.T) {
 		{SceneRect{X: 100, Y: 0, W: 300, H: 768}},   // full height: 3:4 would be too tall, so wider
 	}
 	for _, c := range cases {
-		r := sceneMotionRegion(c.in, 1344, 768)
+		r := sceneMotionRegion(c.in, SceneRect{}, 1344, 768)
 		if r.X < 0 || r.Y < 0 || r.X+r.W > 1344 || r.Y+r.H > 768 {
 			t.Fatalf("%+v -> %+v leaves the frame", c.in, r)
 		}
@@ -96,6 +96,23 @@ func TestSceneMotionRegion(t *testing.T) {
 		if !trained {
 			t.Fatalf("%+v -> %+v aspect %.3f is not trained", c.in, r, a)
 		}
+	}
+}
+
+// A context region too wide for any canvas in a tall frame (a full-height
+// dancer: 1594x2455 in 1707x2455) gives up context, never the mask, and stays
+// a trained shape: anything else makes the engine reframe the shot.
+func TestSceneMotionRegionTrimsContext(t *testing.T) {
+	in, keep := SceneRect{X: 113, Y: 0, W: 1594, H: 2455}, SceneRect{X: 445, Y: 0, W: 1184, H: 2447}
+	r := sceneMotionRegion(in, keep, 1707, 2455)
+	if math.Abs(float64(r.W)/float64(r.H)-9.0/16) > 0.01 {
+		t.Fatalf("%+v: aspect %.3f, want 9:16", r, float64(r.W)/float64(r.H))
+	}
+	if r.X < 0 || r.Y < 0 || r.X+r.W > 1707 || r.Y+r.H > 2455 {
+		t.Fatalf("%+v leaves the frame", r)
+	}
+	if r.X > keep.X || r.Y > keep.Y || r.X+r.W < keep.X+keep.W || r.Y+r.H < keep.Y+keep.H {
+		t.Fatalf("%+v doesn't hold the mask %+v", r, keep)
 	}
 }
 

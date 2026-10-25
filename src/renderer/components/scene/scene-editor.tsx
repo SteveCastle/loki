@@ -173,7 +173,8 @@ function withMask(s: Scene, l: SceneLayer): SceneLayer {
     minSide: l.kind === 'motion' ? 320 : 96,
   });
   // Motion: the trained shape the server grows it to, so the box shows what the engine really sees.
-  const shaped = region && l.kind === 'motion' ? motionRegion(clampRect(region, s.width, s.height), s.width, s.height) : region;
+  const shaped =
+    region && l.kind === 'motion' ? motionRegion(clampRect(region, s.width, s.height), s.width, s.height, r.bounds && clampRect(r.bounds, s.width, s.height)) : region;
   return { ...l, mask: r.mask, region: shaped || { x: 0, y: 0, w: 0, h: 0 } };
 }
 
@@ -1238,6 +1239,8 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
         patchLayer(l.id, { maskOpts: next }, true);
       }}
       onFeather={(feather) => patchLayer(l.id, { feather }, true)}
+      onClear={() => setShapes((l.shapes || []).filter((op) => op.keep))}
+      onClearProtect={() => setShapes((l.shapes || []).filter((op) => !op.keep))}
     />
   );
 
@@ -1558,8 +1561,6 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
               onGenerate={generate}
               onCancel={(job) => serverAction(() => sceneApi.cancel(doc.id, selected.id, job), 'Could not cancel')}
               onDelete={() => deleteLayer(selected.id)}
-              onClearMask={() => setShapes((selected.shapes || []).filter((op) => op.keep))}
-              onClearProtect={() => setShapes((selected.shapes || []).filter((op) => !op.keep))}
               onDeleteVersion={(n) => serverAction(() => sceneApi.deleteVersion(doc.id, selected.id, n), 'Could not discard the version')}
               onKeepOnly={(n) => serverAction(() => sceneApi.keepOnly(doc.id, selected.id, n), 'Could not discard the other versions')}
               onLoop={(n, kind) => loopVersion(selected.id, n, kind)}
