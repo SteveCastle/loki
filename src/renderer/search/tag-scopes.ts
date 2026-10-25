@@ -13,7 +13,7 @@
 // gaining focus).
 //
 // So the two surfaces index different scopes, and the search service keeps one
-// Fuse index per scope rather than one shared index of everything.
+// search index per scope rather than one shared index of everything.
 
 export const SUGGESTED_CATEGORY = 'Suggested';
 
@@ -32,7 +32,7 @@ export function excludedCategories(scope: TagScope): string[] {
  *
  * The exclusion is also pushed down to SQL (Electron) and to the query string
  * (web), which is where the real saving is. This is the belt-and-braces pass so
- * the Fuse index is the right size even against a backend that ignored the
+ * the search index is the right size even against a backend that ignored the
  * hint — an older media-server, say. Cheap: one linear scan.
  */
 export function applyScope<T extends { category?: string }>(

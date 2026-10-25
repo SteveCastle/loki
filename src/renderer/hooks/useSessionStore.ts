@@ -76,6 +76,44 @@ const debounceTimers: Partial<Record<SessionKey, NodeJS.Timeout>> = {};
 let batchTimer: NodeJS.Timeout | null = null;
 let pendingBatch: Partial<SessionData> = {};
 
+// Keys whose latest value has not been handed to the main process yet.
+// flushSession sends only these: re-sending the whole cache on every unload
+// structured-cloned the entire library (a million items = seconds) even when
+// it had been persisted long before.
+const unsent = new Set<SessionKey>();
+
+// The item arrays last handed over per large key. A write carrying the SAME
+// array (persistFsBase re-capturing an unchanged view, a library re-persisted
+// with only the cursor moved) is skipped instead of cloning it across IPC again.
+const lastSent: { library?: unknown; previous?: unknown } = {};
+
+function sameAsSent<K extends SessionKey>(key: K, value: SessionData[K]): boolean {
+  if (!value) return false;
+  if (key === 'library') {
+    const v = value as SessionLibraryData;
+    const sent = lastSent.library as SessionLibraryData | undefined;
+    return !!sent && sent.library === v.library && sent.initialFile === v.initialFile;
+  }
+  if (key === 'previous') {
+    const v = value as SessionPreviousData;
+    const sent = lastSent.previous as SessionPreviousData | undefined;
+    return (
+      !!sent &&
+      sent.previousLibrary === v.previousLibrary &&
+      sent.previousCursor === v.previousCursor &&
+      sent.previousInitialFile === v.previousInitialFile
+    );
+  }
+  return false;
+}
+
+function markSent(updates: Partial<SessionData>): void {
+  for (const key of Object.keys(updates) as SessionKey[]) {
+    unsent.delete(key);
+    if (key === 'library' || key === 'previous') lastSent[key] = updates[key];
+  }
+}
+
 // Debounce durations (ms)
 const DEBOUNCE_TIMES: Record<SessionKey, number> = {
   cursor: 100, // Very frequent updates
@@ -193,10 +231,18 @@ export function setSessionValue<K extends SessionKey>(
   // Clear existing timer for this key
   if (debounceTimers[key]) {
     clearTimeout(debounceTimers[key]);
+    delete debounceTimers[key];
   }
+
+  if (sameAsSent(key, value)) {
+    unsent.delete(key);
+    return;
+  }
+  unsent.add(key);
 
   // Schedule debounced write
   debounceTimers[key] = setTimeout(() => {
+    markSent({ [key]: value });
     sessionStore.set(key, value).catch((error) => {
       console.error(`[SessionStore] Failed to write ${key}:`, error);
     });
@@ -208,10 +254,28 @@ export function setSessionValue<K extends SessionKey>(
  * Set multiple values at once (debounced)
  */
 export function setSessionValues(updates: Partial<SessionData>): void {
-  // Update cache immediately
+  // Update cache immediately. Values identical to what the main process
+  // already holds are dropped from the write.
+  const changed: Partial<SessionData> = {};
   for (const [key, value] of Object.entries(updates)) {
     cache[key as SessionKey] = value as any;
+    if (sameAsSent(key as SessionKey, value as any)) {
+      // Any older value still queued would otherwise land after this one.
+      const timer = debounceTimers[key as SessionKey];
+      if (timer) {
+        clearTimeout(timer);
+        delete debounceTimers[key as SessionKey];
+      }
+      delete pendingBatch[key as SessionKey];
+      unsent.delete(key as SessionKey);
+    } else {
+      (changed as any)[key] = value;
+      unsent.add(key as SessionKey);
+    }
   }
+  // eslint-disable-next-line no-param-reassign
+  updates = changed;
+  if (Object.keys(updates).length === 0) return;
 
   // Use the longest debounce time for batched updates
   const maxDebounce = Math.max(
@@ -237,6 +301,7 @@ export function setSessionValues(updates: Partial<SessionData>): void {
   batchTimer = setTimeout(() => {
     const batch = pendingBatch;
     pendingBatch = {};
+    markSent(batch);
     sessionStore.setMany(batch).catch((error) => {
       console.error('[SessionStore] Failed to write batch:', error);
     });
@@ -252,11 +317,20 @@ export function clearSession(): void {
   cache.cursor = null;
   cache.query = null;
   cache.previous = null;
+  unsent.clear();
+  delete lastSent.library;
+  delete lastSent.previous;
 
   // Clear all pending timers
-  for (const timer of Object.values(debounceTimers)) {
+  for (const [key, timer] of Object.entries(debounceTimers)) {
     if (timer) clearTimeout(timer);
+    delete debounceTimers[key as SessionKey];
   }
+  if (batchTimer) {
+    clearTimeout(batchTimer);
+    batchTimer = null;
+  }
+  pendingBatch = {};
 
   sessionStore.clear().catch((error) => {
     console.error('[SessionStore] Failed to clear:', error);
@@ -269,6 +343,9 @@ export function clearSession(): void {
 export function clearSessionKeys(keys: SessionKey[]): void {
   for (const key of keys) {
     cache[key] = null;
+    unsent.delete(key);
+    delete pendingBatch[key];
+    if (key === 'library' || key === 'previous') delete lastSent[key];
     if (debounceTimers[key]) {
       clearTimeout(debounceTimers[key]);
       delete debounceTimers[key];
@@ -296,8 +373,15 @@ export async function flushSession(): Promise<void> {
   }
   pendingBatch = {};
 
-  // Write current cache state
-  await sessionStore.setMany(cache);
+  // Write only what the main process doesn't already have.
+  const updates: Partial<SessionData> = {};
+  unsent.forEach((key) => {
+    (updates as any)[key] = cache[key];
+  });
+  if (unsent.size > 0) {
+    markSent(updates);
+    await sessionStore.setMany(updates);
+  }
   await sessionStore.flush();
 }
 

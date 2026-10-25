@@ -128,9 +128,13 @@ function ListItemComponent({ item, idx, height, onDimensionsLoaded }: Props) {
       state.context.contextPalette.display &&
       selectionSet(state.context.contextPalette.selection).has(item.path)
   );
-  const { sortBy } = useSelector(libraryService, (state) => {
-    return state.context.settings;
-  });
+  // Individual fields, never the settings object: every grid cell runs these,
+  // and a whole-object selector re-rendered all of them on ANY setting change
+  // (a volume drag sends one per input tick).
+  const sortBy = useSelector(
+    libraryService,
+    (state) => state.context.settings.sortBy
+  );
   const state = useSelector(
     libraryService,
     (state) => state,
@@ -140,9 +144,13 @@ function ListItemComponent({ item, idx, height, onDimensionsLoaded }: Props) {
   );
   const canDrag =
     state.matches({ library: 'loadedFromDB' }) && sortBy === 'weight';
-  const { showTags, showFileInfo } = useSelector(
+  const showTags = useSelector(
     libraryService,
-    (state) => state.context.settings
+    (state) => state.context.settings.showTags
+  );
+  const showFileInfo = useSelector(
+    libraryService,
+    (state) => state.context.settings.showFileInfo
   );
 
   const imageCache = useSelector(libraryService, (state) => {

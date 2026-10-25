@@ -81,7 +81,7 @@ const loadCategoryTags =
 // UNORDERED, and aliased in SQL rather than remapped in JS — both for cost, at
 // 190K rows. The ORDER BY had no index behind it, so every call sorted the
 // whole table through a temp b-tree; no consumer depends on that order (the
-// search index ranks by Fuse score, and the sidebar's per-category lists come
+// search index ranks by match quality, and the sidebar's per-category lists come
 // from `load-category-tags`, which still sorts). Aliasing category_label in the
 // query also drops a 190K-object `.map()` that ran on the main process's event
 // loop — the same loop that serves gsm:// media reads.
@@ -89,7 +89,7 @@ const loadCategoryTags =
 // args[0] is an optional list of categories to leave out. The command palette
 // passes ["Suggested"], which is 97% of the table (183,548 of 189,122) — doing
 // that filter HERE means those rows are never read, never crammed through IPC,
-// and never Fuse-indexed. See src/renderer/search/tag-scopes.ts.
+// and never indexed. See src/renderer/search/tag-scopes.ts.
 type LoadAllTagsInput = [string[]?] | undefined;
 const loadAllTags =
   (db: Database) =>

@@ -37,7 +37,11 @@ import {
 } from './query/history';
 import { getFileType, FileTypes } from '../file-types';
 import { markStartup } from './startup-marks';
-import { cursorAfterRemoval, libraryWithout } from './library-cursor';
+import {
+  cursorAfterRemoval,
+  findPathIndex,
+  libraryWithout,
+} from './library-cursor';
 import { extendSelection } from './context-selection';
 import { movedPath, moveRange } from './media-path';
 import filter, { passesTypeFilter } from './filter';
@@ -296,12 +300,7 @@ function finishFsScan(
     ].filter(Boolean) as string[];
 
     for (const p of preferredPaths) {
-      const idx = sorted.findIndex(
-        (it: Item) =>
-          it?.path &&
-          path.normalize(it.path).toLowerCase() ===
-            path.normalize(p).toLowerCase()
-      );
+      const idx = findPathIndex(sorted, p, path.normalize);
       if (idx !== -1) {
         finalCursor = idx;
         break;
@@ -387,7 +386,6 @@ const setLibrary = assign<LibraryState, AnyEventObject>({
     // in the result set; otherwise the loader's cursor stands.
     let cursor: number = event.data.cursor;
     if (context.pinnedPath) {
-      const want = path.normalize(context.pinnedPath).toLowerCase();
       const view = filter(
         loadId,
         context.textFilter,
@@ -395,10 +393,7 @@ const setLibrary = assign<LibraryState, AnyEventObject>({
         context.settings.filters,
         context.settings.sortBy
       );
-      const idx = (view ?? []).findIndex(
-        (it: Item) =>
-          !!it?.path && path.normalize(it.path).toLowerCase() === want
-      );
+      const idx = findPathIndex(view ?? [], context.pinnedPath, path.normalize);
       if (idx >= 0) cursor = idx;
     }
     (event as any).__cursor = cursor;
@@ -1142,15 +1137,22 @@ export const libraryMachine = createMachine(
       CACHE_MASONRY_DIMENSIONS: {
         actions: assign<LibraryState, AnyEventObject>({
           masonryDimensionsCache: (context, event) => {
-            const { itemKey, width, height } = event;
-            // Only update if we don't already have this item cached
-            if (context.masonryDimensionsCache[itemKey]) {
+            // The grid batches its reports into `entries`; a single
+            // { itemKey, width, height } is still accepted.
+            const entries: [string, { width: number; height: number }][] =
+              event.entries ?? [
+                [event.itemKey, { width: event.width, height: event.height }],
+              ];
+            // Only update if we don't already have these items cached
+            const fresh = entries.filter(
+              ([key]) => !context.masonryDimensionsCache[key]
+            );
+            if (fresh.length === 0) {
               return context.masonryDimensionsCache;
             }
-            return {
-              ...context.masonryDimensionsCache,
-              [itemKey]: { width, height },
-            };
+            const next = { ...context.masonryDimensionsCache };
+            for (const [key, dims] of fresh) next[key] = dims;
+            return next;
           },
         }),
       },
@@ -1163,7 +1165,6 @@ export const libraryMachine = createMachine(
       SET_ACTIVE_CATEGORY: {
         actions: assign<LibraryState, AnyEventObject>({
           activeCategory: (context, event) => {
-            console.log('SET_ACTIVE_CATEGORY', context, event);
             store.set('activeCategory', event.data.category);
             return event.data.category;
           },
@@ -1191,7 +1192,6 @@ export const libraryMachine = createMachine(
           CHANGE_SETTING: {
             actions: assign<LibraryState, AnyEventObject>({
               settings: (context, event) => {
-                console.log('CHANGE_SETTING', context, event);
                 const processedData = { ...event.data };
 
                 // Battle mode drives its own pairing order: entering it
@@ -1211,6 +1211,7 @@ export const libraryMachine = createMachine(
                   processedData.sortBy = 'shuffle';
                 }
 
+                let changed = false;
                 for (const key in processedData) {
                   // Clamp volume to valid range [0, 1]
                   if (
@@ -1220,6 +1221,17 @@ export const libraryMachine = createMachine(
                     processedData[key] = clampVolume(processedData[key]);
                   }
 
+                  // An unchanged value costs nothing: no config write (each
+                  // store.set is a file write on the main process) and no new
+                  // settings object, which would re-render every component
+                  // selecting settings — every visible grid cell included.
+                  if (
+                    processedData[key] ===
+                    (context.settings as Record<string, unknown>)[key]
+                  ) {
+                    continue;
+                  }
+                  changed = true;
                   store.set(key, processedData[key]);
                   // Handle alwaysOnTop setting specially
                   if (key === 'alwaysOnTop') {
@@ -1229,6 +1241,7 @@ export const libraryMachine = createMachine(
                     );
                   }
                 }
+                if (!changed) return context.settings;
                 return {
                   ...context.settings,
                   ...processedData,
@@ -1278,7 +1291,6 @@ export const libraryMachine = createMachine(
           CHANGE_HOTKEY: {
             actions: assign<LibraryState, AnyEventObject>({
               hotKeys: (context, event) => {
-                console.log('CHANGE_HOTKEY', context, event);
                 for (const key in event.data) {
                   store.set(key, event.data[key]);
                 }
@@ -1293,7 +1305,6 @@ export const libraryMachine = createMachine(
             actions: [
               assign<LibraryState, AnyEventObject>({
                 storedCategories: (context, event) => {
-                  console.log('STORE_CATEGORY', context, event);
                   const { category, position } = event.data;
                   store.set(`storedCategories`, {
                     ...context.storedCategories,
@@ -1324,7 +1335,6 @@ export const libraryMachine = createMachine(
             actions: [
               assign<LibraryState, AnyEventObject>({
                 storedTags: (context, event) => {
-                  console.log('STORE_TAG', context, event);
                   const { tags, position } = event.data;
                   store.set(`storedTags`, {
                     ...context.storedTags,
@@ -1359,7 +1369,6 @@ export const libraryMachine = createMachine(
             actions: [
               assign<LibraryState, AnyEventObject>({
                 mostRecentTag: (context, event) => {
-                  console.log('SET_MOST_RECENT_TAG', context, event);
                   const newTag = event.tag;
                   updatePersistedState({
                     ...context,
@@ -1369,7 +1378,6 @@ export const libraryMachine = createMachine(
                   return newTag;
                 },
                 mostRecentCategory: (context, event) => {
-                  console.log('SET_MOST_RECENT_CATEGORY', context, event);
                   return event.category;
                 },
               }),
@@ -1577,7 +1585,6 @@ export const libraryMachine = createMachine(
           SET_VIDEO_LENGTH: {
             actions: assign<LibraryState, AnyEventObject>({
               videoPlayer: (context, event) => {
-                console.log('SET_VIDEO_LENGTH', context, event);
                 return {
                   ...context.videoPlayer,
                   videoLength: event.videoLength,
@@ -1662,21 +1669,17 @@ export const libraryMachine = createMachine(
               ),
               assign<LibraryState, AnyEventObject>({
                 cursor: (context, event) => {
-                  console.log('RESET_CURSOR', context, event);
-                  const cursor = filter(
-                    context.libraryLoadId,
-                    context.textFilter,
-                    context.library,
-                    context.settings.filters,
-                    context.settings.sortBy
-                  ).findIndex(
-                    (item: Item) =>
-                      item?.path &&
-                      event.currentItem?.path &&
-                      path.normalize(item?.path).toLowerCase() ===
-                        path.normalize(event.currentItem?.path).toLowerCase()
+                  const cursor = findPathIndex(
+                    filter(
+                      context.libraryLoadId,
+                      context.textFilter,
+                      context.library,
+                      context.settings.filters,
+                      context.settings.sortBy
+                    ),
+                    event.currentItem?.path,
+                    path.normalize
                   );
-                  console.log('index of current item', event.currentItem, cursor);
                   const finalCursor = cursor > -1 ? cursor : 0;
                   updatePersistedCursor(context, finalCursor);
                   return finalCursor;
@@ -1852,7 +1855,6 @@ export const libraryMachine = createMachine(
           selectingDB: {
             invoke: {
               src: (context, event) => {
-                console.log('selecting DB', context, event);
                 const currentDB = context.dbPath;
                 return invoke('select-db', [
                   currentDB,
@@ -1870,7 +1872,6 @@ export const libraryMachine = createMachine(
           loadingDB: {
             invoke: {
               src: (context, event) => {
-                console.log('loading DB', context, event);
                 return invoke('load-db', [
                   context.dbPath,
                 ]);
@@ -2001,7 +2002,6 @@ export const libraryMachine = createMachine(
             invoke: {
               src: (context, event) => {
                 const currentFile = context.initialFile;
-                console.log('selecting', context, event);
                 return invoke('select-file', [
                   currentFile,
                 ]);
@@ -2020,7 +2020,6 @@ export const libraryMachine = createMachine(
             invoke: {
               src: (context, event) => {
                 const currentFile = context.initialFile;
-                console.log('selecting directory', context, event);
                 return invoke('select-directory', [
                   currentFile,
                 ]);
@@ -2079,7 +2078,6 @@ export const libraryMachine = createMachine(
             exit: (context) => send('cancel-load-files', [context.fsScanId]),
             invoke: {
               src: (context, event) => {
-                console.log('loadingFromFS', context, event);
                 const { recursive } = context.settings;
                 return invoke('load-files', [
                   context.initialFile,
@@ -2179,13 +2177,10 @@ export const libraryMachine = createMachine(
                         context.settings.filters,
                         context.settings.sortBy
                       );
-                      const target = path
-                        .normalize(previousSelectedPath)
-                        .toLowerCase();
-                      const newIndex = sorted.findIndex(
-                        (item: Item) =>
-                          item?.path &&
-                          path.normalize(item.path).toLowerCase() === target
+                      const newIndex = findPathIndex(
+                        sorted,
+                        previousSelectedPath,
+                        path.normalize
                       );
                       if (newIndex !== -1) {
                         updatePersistedCursor(context, newIndex);
@@ -2438,7 +2433,6 @@ export const libraryMachine = createMachine(
                 actions: [
                   assign<LibraryState, AnyEventObject>({
                     library: (context, event) => {
-                      console.log('DELETE_FILE', context, event);
                       try {
                         invoke('delete-file', [
                           event.data.path,
@@ -2564,7 +2558,6 @@ export const libraryMachine = createMachine(
                 target: 'loadingFromFS',
                 actions: assign<LibraryState, AnyEventObject>({
                   settings: (context, event) => {
-                    console.log('CHANGE_SETTING_AND_RELOAD', context, event);
                     const processedData = { ...event.data };
 
                     for (const key in processedData) {
@@ -2599,11 +2592,6 @@ export const libraryMachine = createMachine(
                     persistFsBase,
                     assign<LibraryState, AnyEventObject>({
                       dbQuery: (context, event) => {
-                        console.log(
-                          'SET QUERY TAG TO',
-                          context,
-                          event.data.tag
-                        );
                         return { tags: [event.data.tag] };
                       },
                       // Mirror the tag click into the unified query model.
@@ -2635,7 +2623,6 @@ export const libraryMachine = createMachine(
                   cursor: 0,
                   libraryLoadId: () => newLoadId(),
                   settings: (context, event) => {
-                    console.log('SHUFFLE', context, event);
                     return {
                       ...context.settings,
                       sortBy: 'shuffle',
@@ -2683,7 +2670,15 @@ export const libraryMachine = createMachine(
                     }
                     return library;
                   },
-                  libraryLoadId: () => newLoadId(),
+                  // In battle mode the vote is always followed by NEXT_BATTLE,
+                  // which re-pairs. Minting a load id here too re-ran the
+                  // whole-library pairing once per rating update â€” three
+                  // times per vote. The cached view holds these same item
+                  // objects, so their new ratings show without a re-order.
+                  libraryLoadId: (context) =>
+                    context.settings.sortBy === 'battle'
+                      ? context.libraryLoadId
+                      : newLoadId(),
                 }),
               },
             },
@@ -2854,7 +2849,6 @@ export const libraryMachine = createMachine(
             // and search are mutually exclusive). Force textFilter='' on entry
             // so a stale search pill can't surface alongside tag results.
             entry: [
-              (context, event) => console.log('loadedFromDB', context, event),
               assign<LibraryState, AnyEventObject>({
                 currentStateType: () => 'db' as LibraryStateType,
                 textFilter: () => '',
@@ -2968,7 +2962,6 @@ export const libraryMachine = createMachine(
                   cursor: 0,
                   libraryLoadId: () => newLoadId(),
                   settings: (context, event) => {
-                    console.log('SHUFFLE', context, event);
                     return {
                       ...context.settings,
                       sortBy: 'shuffle',
@@ -3001,7 +2994,6 @@ export const libraryMachine = createMachine(
               UPDATE_MEDIA_ELO: {
                 actions: assign<LibraryState, AnyEventObject>({
                   library: (context, event) => {
-                    console.log('UPDATE_MEDIA_ELO', context, event);
                     const { path, elo, battles } = event;
                     const library = [...context.library];
                     // A tag query can surface the same file more than once
@@ -3020,7 +3012,15 @@ export const libraryMachine = createMachine(
                     }
                     return library;
                   },
-                  libraryLoadId: () => newLoadId(),
+                  // In battle mode the vote is always followed by NEXT_BATTLE,
+                  // which re-pairs. Minting a load id here too re-ran the
+                  // whole-library pairing once per rating update â€” three
+                  // times per vote. The cached view holds these same item
+                  // objects, so their new ratings show without a re-order.
+                  libraryLoadId: (context) =>
+                    context.settings.sortBy === 'battle'
+                      ? context.libraryLoadId
+                      : newLoadId(),
                 }),
               },
               DELETE_FILE: {
@@ -3028,7 +3028,6 @@ export const libraryMachine = createMachine(
                 actions: [
                   assign<LibraryState, AnyEventObject>({
                     library: (context, event) => {
-                      console.log('DELETE_FILE', context, event);
                       try {
                         invoke('delete-file', [
                           event.data.path,
@@ -3157,11 +3156,6 @@ export const libraryMachine = createMachine(
                   actions: [
                     assign<LibraryState, AnyEventObject>({
                       dbQuery: (context, event) => {
-                        console.log(
-                          'SET QUERY TAG TO',
-                          context,
-                          event.data.tags
-                        );
                         // Get active tags and index by tag.
                         const activeTags = context.dbQuery.tags.reduce(
                           (acc, tag) => {
@@ -3325,7 +3319,6 @@ export const libraryMachine = createMachine(
                   SET_VIDEO_LENGTH: {
                     actions: assign<LibraryState, AnyEventObject>({
                       videoPlayer: (context, event) => {
-                        console.log('SET_VIDEO_LENGTH', context, event);
                         return {
                           ...context.videoPlayer,
                           videoLength: event.videoLength,
@@ -3399,8 +3392,8 @@ export const libraryMachine = createMachine(
             },
           },
           loadingError: {
-            entry: (context, event) =>
-              console.log('error loading library', context, event),
+            entry: (_context, event) =>
+              console.error('error loading library', (event as any)?.data),
           },
         },
       },

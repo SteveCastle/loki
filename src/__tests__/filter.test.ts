@@ -268,10 +268,67 @@ describe('filter', () => {
 
     it('should invalidate cache when libraryLoadId changes', () => {
       const lib = [...sampleLibrary];
-      const result1 = filter('memo-1', '', lib, 'all', 'name');
-      const result2 = filter('memo-2', '', lib, 'all', 'name');
-      // Different libraryLoadId should produce fresh result
+      const result1 = filter('memo-1', '', lib, 'all', 'shuffle');
+      const result2 = filter('memo-2', '', lib, 'all', 'shuffle');
+      // A new libraryLoadId re-seeds the shuffle: a fresh result
       expect(result1).not.toBe(result2);
+    });
+
+    // Every single-item edit mints a new libraryLoadId. Those must not
+    // re-sort the whole library (seconds at 1M items for a name sort).
+    describe('incremental updates across libraryLoadIds', () => {
+      const big = (n: number) =>
+        Array.from({ length: n }, (_, i) =>
+          createItem(`/p/img${(i * 7919) % n}.jpg`, i, { elo: 1500 + (i % 97) })
+        );
+
+      it('reuses the order when only item fields changed in place', () => {
+        const lib = big(50);
+        const r1 = filter('inc-a1', '', lib, 'all', 'name');
+        const r2 = filter('inc-a2', '', [...lib], 'all', 'name');
+        expect(r2).toBe(r1);
+      });
+
+      it('re-sorts elo after an in-place elo update', () => {
+        const lib = big(50);
+        const r1 = filter('inc-b1', '', lib, 'all', 'elo');
+        const last = r1[r1.length - 1];
+        last.elo = 99999;
+        const r2 = filter('inc-b2', '', [...lib], 'all', 'elo');
+        expect(r2[0]).toBe(last);
+      });
+
+      it('drops removed items from the cached view, keeping its order', () => {
+        for (const sortBy of ['name', 'date', 'elo', 'shuffle'] as const) {
+          const lib = big(200);
+          const r1 = filter(`inc-c1-${sortBy}`, '', lib, 'all', sortBy);
+          const gone = new Set([lib[3], lib[150], lib[199]]);
+          const next = lib.filter((x) => !gone.has(x));
+          const r2 = filter(`inc-c2-${sortBy}`, '', next, 'all', sortBy);
+          expect(r2).toEqual(r1.filter((x) => !gone.has(x)));
+        }
+      });
+
+      it('does a full pass when items were added', () => {
+        const lib = big(20);
+        filter('inc-d1', '', lib, 'all', 'name');
+        const added = createItem('/p/aaa.jpg', 0);
+        const r2 = filter('inc-d2', '', [...lib, added], 'all', 'name');
+        expect(r2[0]).toBe(added);
+        expect(r2).toHaveLength(21);
+      });
+    });
+
+    it('sorts names in natural order', () => {
+      const lib = ['/a/img10.jpg', '/a/IMG2.jpg', '/a/img1.jpg', '/a/b-2.jpg'].map(
+        (p) => createItem(p)
+      );
+      expect(filter('nat-1', '', lib, 'all', 'name').map((i) => i.path)).toEqual([
+        '/a/b-2.jpg',
+        '/a/img1.jpg',
+        '/a/IMG2.jpg',
+        '/a/img10.jpg',
+      ]);
     });
 
     it('should invalidate cache when filter changes', () => {

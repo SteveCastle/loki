@@ -71,11 +71,9 @@ export default function App(): JSX.Element {
     );
   }, [state]);
   const isScanningFolder = state.matches({ library: 'loadingFromFS' });
-  console.log('state', state);
   if (state.matches({ library: 'manualSetup' })) return <SetupWizard />;
   if (state.matches({ library: 'welcome' })) return <Welcome />;
 
-  console.log('rendering app');
   return (
     <QueryClientProvider client={queryClient}>
       <DndProvider backend={HTML5Backend}>

@@ -1,9 +1,9 @@
 import { getMediaType } from 'file-types';
 import { FilterOption, SortByOption } from 'settings';
-import naturalCompare from 'natural-compare';
 import type { Item } from './state';
 import { orderForBattle } from './battle-pairing';
 import { seededShuffle } from './seeded-random';
+import { sortByNaturalKey } from './natural-key';
 
 // Single-entry memoization cache keyed by libraryLoadId + filters + sortBy
 let lastCacheKey: string | null = null;
@@ -12,6 +12,67 @@ let lastResult: Item[] | null = null;
 let lastLibrary: Item[] | null = null;
 let lastFilters: FilterOption | null = null;
 let lastSortBy: SortByOption | null = null;
+
+// A removal-only change bigger than this re-derives the view from scratch:
+// the incremental path's Set of removed items stops being the cheap option.
+const MAX_INCREMENTAL_REMOVALS = 50000;
+
+// Orders whose result depends only on fields an in-place library update never
+// touches, so the same items in the same order give the same view. Elo is
+// excluded (UPDATE_MEDIA_ELO mutates items in place), as are the seeded orders:
+// shuffle and battle re-seed from the new libraryLoadId by design.
+const STABLE_UNDER_IN_PLACE_UPDATE = new Set<string>([
+  'name',
+  'date',
+  'weight',
+  'similarity',
+]);
+
+/**
+ * How `next` relates to `prev`: 'same' (identical items, identical order), the
+ * set of items removed when `next` is `prev` with some items taken out and
+ * nothing else changed, or null for anything else. One two-pointer walk, no
+ * allocation beyond the removed set, and it bails as soon as `next` can't be
+ * a subsequence of `prev`.
+ */
+function removalsBetween(prev: Item[], next: Item[]): 'same' | Set<Item> | null {
+  if (next.length > prev.length) return null;
+  const budget = prev.length - next.length;
+  if (budget > MAX_INCREMENTAL_REMOVALS) return null;
+  if (budget === 0) {
+    for (let i = 0; i < prev.length; i++) if (prev[i] !== next[i]) return null;
+    return 'same';
+  }
+  const removed = new Set<Item>();
+  let i = 0;
+  for (let j = 0; j < next.length; j++) {
+    while (prev[i] !== next[j]) {
+      removed.add(prev[i]);
+      i++;
+      if (removed.size > budget) return null;
+    }
+    i++;
+  }
+  for (; i < prev.length; i++) removed.add(prev[i]);
+  return removed;
+}
+
+// True when `items` is already in the order `cmp` would sort it into — the
+// usual case for server-ranked similarity results and pre-sorted scans, where
+// re-sorting a million items is ~0.7s of wasted main-thread time.
+function isSorted(items: Item[], cmp: (a: Item, b: Item) => number): boolean {
+  for (let i = 1; i < items.length; i++) {
+    if (cmp(items[i - 1], items[i]) > 0) return false;
+  }
+  return true;
+}
+
+const COMPARATORS: Partial<Record<string, (a: Item, b: Item) => number>> = {
+  date: (a, b) => b.mtimeMs - a.mtimeMs,
+  weight: (a, b) => (a.weight || 0) - (b.weight || 0),
+  elo: (a, b) => (b.elo ?? 1500) - (a.elo ?? 1500),
+  similarity: (a, b) => (b.score ?? 0) - (a.score ?? 0),
+};
 
 /** Whether the media-type filter setting lets `itemPath` into the view. */
 export function passesTypeFilter(filters: FilterOption, itemPath: string) {
@@ -66,6 +127,36 @@ function filter(
     lastResult = result;
     lastLibrary = library;
     return result;
+  }
+
+  // Every single-item edit (delete, forget, merge, an elo vote) mints a new
+  // libraryLoadId, which used to mean re-filtering and RE-SORTING the whole
+  // library — seconds at a million items for a name sort. When the library is
+  // the previous one with items removed, removing them from the previous view
+  // preserves its order exactly (for shuffle too, so deleting a file no longer
+  // reshuffles the grid). When it's the same items in the same order, an order
+  // that can't have changed is reused as is. Battle always re-pairs.
+  if (
+    lastLibrary &&
+    lastResult &&
+    lastFilters === filters &&
+    lastSortBy === sortBy &&
+    sortBy !== 'battle' &&
+    sortBy !== 'stream'
+  ) {
+    const diff = removalsBetween(lastLibrary, library);
+    if (diff === 'same' && STABLE_UNDER_IN_PLACE_UPDATE.has(sortBy)) {
+      lastCacheKey = cacheKey;
+      lastLibrary = library;
+      return lastResult;
+    }
+    if (diff instanceof Set) {
+      const result = lastResult.filter((item) => !diff.has(item));
+      lastCacheKey = cacheKey;
+      lastResult = result;
+      lastLibrary = library;
+      return result;
+    }
   }
 
   const filtered = library.filter((item) =>
@@ -123,21 +214,17 @@ function filter(
     return result;
   }
 
-  const sortedLibrary = filtered.sort((a, b) => {
-    if (sortBy === 'name') {
-      return naturalCompare(a.path.toLowerCase(), b.path.toLowerCase());
-    } else if (sortBy === 'date') {
-      return b.mtimeMs - a.mtimeMs;
-    } else if (sortBy === 'weight') {
-      return (a.weight || 0) - (b.weight || 0);
-    } else if (sortBy === 'elo') {
-      return (b.elo ?? 1500) - (a.elo ?? 1500);
-    } else if (sortBy === 'similarity') {
-      return (b.score ?? 0) - (a.score ?? 0);
-    }
-
-    return 0;
-  });
+  let sortedLibrary = filtered;
+  if (sortBy === 'name') {
+    // Same order as naturalCompare on the lower-cased path, ~9x faster: the
+    // keys are built once rather than re-derived inside every comparison.
+    sortedLibrary = sortByNaturalKey(filtered, (item) =>
+      item.path.toLowerCase()
+    );
+  } else {
+    const cmp = COMPARATORS[sortBy];
+    if (cmp && !isSorted(filtered, cmp)) filtered.sort(cmp);
+  }
   lastCacheKey = cacheKey;
   lastResult = sortedLibrary;
   return sortedLibrary;

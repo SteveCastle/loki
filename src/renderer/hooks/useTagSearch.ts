@@ -1,7 +1,7 @@
 // useTagSearch — reusable tag type-ahead over the SHARED, pre-warmed indexes.
 //
 // Both the taxonomy sidebar and the command palette consume this hook. It does
-// not own a worker or Fuse instance: all indexing + matching is routed through
+// not own a worker or index: all indexing + matching is routed through
 // the module-level singleton in ../search/tag-search-service, so the whole app
 // shares ONE worker.
 //
@@ -17,6 +17,7 @@ import { debounce } from 'lodash';
 import { GlobalStateContext } from '../state';
 import { invoke } from '../platform';
 import {
+  cancelTagSearches,
   indexTags,
   searchTags,
   type TagConcept,
@@ -27,13 +28,13 @@ import {
   excludedCategories,
   type TagScope,
 } from '../search/tag-scopes';
-import { SEARCH_DEBOUNCE_MS } from '../search/search-config';
+import { TAG_SEARCH_DEBOUNCE_MS } from '../search/search-config';
 
 export type { TagConcept } from '../search/tag-search-service';
 export type { TagScope } from '../search/tag-scopes';
 
 // Mirrors the historical cap: each rendered result can trigger downstream IPC
-// work, so we cap the match list even though Fuse ranks across the full set.
+// work, so we cap the match list even though the matcher ranks the full set.
 const MAX_SEARCH_RESULTS = 200;
 
 // Deliberately thin rows: label + category + weight (see loadAllTags in
@@ -74,17 +75,35 @@ export function useTagSearch(
     (state) => state.context.initSessionId
   );
 
+  const [results, setResults] = useState<TagConcept[]>([]);
+
+  // Stable callback that guards against late results after unmount.
+  const aliveRef = useRef(true);
+  useEffect(() => {
+    aliveRef.current = true;
+    return () => {
+      aliveRef.current = false;
+    };
+  }, []);
+  const setResultsSafe = useRef((items: TagConcept[]) => {
+    if (aliveRef.current) setResults(items);
+  });
+
   // Debounce the raw text into the value actually dispatched to search.
   const [debouncedText, setDebouncedText] = useState<string>('');
   const debouncedSet = useRef(
-    debounce((value: string) => setDebouncedText(value), SEARCH_DEBOUNCE_MS)
+    debounce((value: string) => setDebouncedText(value), TAG_SEARCH_DEBOUNCE_MS)
   );
   useEffect(() => {
     debouncedSet.current(text);
   }, [text]);
   useEffect(() => {
     const d = debouncedSet.current;
-    return () => d.cancel();
+    const cb = setResultsSafe.current;
+    return () => {
+      d.cancel();
+      cancelTagSearches(cb);
+    };
   }, []);
 
   // Scope-tag fetch — same key + loader as the warmer and taxonomy so all
@@ -103,21 +122,9 @@ export function useTagSearch(
     if (allTagsData) indexTags(allTagsData, scope);
   }, [allTagsData, scope]);
 
-  const [results, setResults] = useState<TagConcept[]>([]);
-
-  // Stable callback that guards against late results after unmount.
-  const aliveRef = useRef(true);
   useEffect(() => {
-    aliveRef.current = true;
-    return () => {
-      aliveRef.current = false;
-    };
-  }, []);
-  const setResultsSafe = useRef((items: TagConcept[]) => {
-    if (aliveRef.current) setResults(items);
-  });
-
-  useEffect(() => {
+    // Only the newest request matters; drop any still in flight.
+    cancelTagSearches(setResultsSafe.current);
     searchTags(
       enabled ? debouncedText : '',
       MAX_SEARCH_RESULTS,

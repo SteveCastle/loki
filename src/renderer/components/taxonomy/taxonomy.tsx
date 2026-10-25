@@ -9,6 +9,7 @@ import {
 import { useSelector } from '@xstate/react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { debounce } from 'lodash';
+import { TAG_SEARCH_DEBOUNCE_MS } from '../../search/search-config';
 import { Tooltip } from 'react-tooltip';
 import { GlobalStateContext } from '../../state';
 import { getNextFilterMode } from '../../../settings';
@@ -170,9 +171,11 @@ export default function Taxonomy() {
 
   // Two-tier search state: tagFilterInput updates on every keystroke so the
   // input feels responsive; tagFilter is the debounced value dispatched to the
-  // search worker. The actual fuzzy match runs off-thread (see the worker
-  // setup below), so the debounce only needs to coalesce bursts of keystrokes
-  // rather than guard the main thread — hence a short 150ms window.
+  // search worker. The actual match runs off-thread in milliseconds, so the
+  // debounce only coalesces bursts of keystrokes; anything that queries the
+  // database off this text (SuggestionSections) applies its own, longer one.
+  // Results can't show before tagFilter is set, so this window IS the visible
+  // type-ahead latency — keep it short.
   const [tagFilterInput, setTagFilterInput] = useState<string>('');
   const [tagFilter, setTagFilter] = useState<string>('');
   // "Search by meaning" mode: typed text commits as a visual: (text→image)
@@ -190,7 +193,7 @@ export default function Taxonomy() {
   const debouncedSetTagFilter = useRef(
     debounce((value: string) => {
       setTagFilter(value);
-    }, 150)
+    }, TAG_SEARCH_DEBOUNCE_MS)
   );
   useEffect(() => {
     // In meaning mode the text drives a semantic query, not tag-tree filtering
@@ -385,14 +388,16 @@ export default function Taxonomy() {
     }
   }
 
-  // Tag search runs through the shared singleton worker via useTagSearch. We
-  // pass the already-debounced tagFilter; the hook debounces again (harmless)
-  // and returns ranked, pre-capped matches. Explicitly the 'all' scope: the
-  // sidebar searches the complete taxonomy, machine-suggested tags included,
-  // unlike the command palette.
+  // Tag search runs through the shared singleton worker via useTagSearch. It
+  // takes the RAW input, not the debounced tagFilter: the hook applies its own
+  // short debounce, and stacking this component's 150ms on top of it was pure
+  // added latency once a search started answering in milliseconds. Explicitly
+  // the 'all' scope: the sidebar searches the complete taxonomy,
+  // machine-suggested tags included, unlike the command palette.
+  const tagSearchText = meaningMode ? '' : tagFilterInput;
   const { results: searchResults } = useTagSearch(
-    tagFilter,
-    !!tagFilter,
+    tagSearchText,
+    !!tagSearchText,
     SIDEBAR_TAG_SCOPE
   );
 
