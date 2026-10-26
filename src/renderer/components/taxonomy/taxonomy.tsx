@@ -24,7 +24,7 @@ import VirtualizedTagGrid from './virtualized-tag-grid';
 import TagListView from './tag-list-view';
 import GroupedTagView from './grouped-tag-view';
 import TagGroupModal from './tag-group-modal';
-import { TagGroup, TagGrouping } from './tag-groups';
+import { TagGroup, TagGrouping, hiddenGroupLabels } from './tag-groups';
 import { setCategoryTagGrouping } from './tag-group-actions';
 import NewTagModal from './new-tag-modal';
 import NewCategoryModal from './new-category-modal';
@@ -159,6 +159,12 @@ export default function Taxonomy() {
   const authToken = useSelector(
     libraryService,
     (state) => state.context.authToken
+  );
+  // Hidden tag groups (and their tags) stay out of the panel unless this
+  // viewer setting brings them back.
+  const showHiddenTagGroups = useSelector(
+    libraryService,
+    (state) => !!state.context.settings.showHiddenTagGroups
   );
 
   const state = useSelector(
@@ -413,10 +419,21 @@ export default function Taxonomy() {
       // acceptable for an async search and imperceptible at this debounce.
       return searchResults;
     }
+    // Tags in a hidden group leave the panel in either layout — grouped (the
+    // group's header goes too, see groupTags) or flat with grouping off.
+    const hidden = showHiddenTagGroups
+      ? null
+      : hiddenGroupLabels(activeCategoryGroups);
     return (activeCategoryTags ?? [])
-      .slice()
+      .filter((t) => !(hidden?.size && t.group && hidden.has(t.group)))
       .sort((a, b) => a.weight - b.weight);
-  }, [tagFilter, searchResults, activeCategoryTags]);
+  }, [
+    tagFilter,
+    searchResults,
+    activeCategoryTags,
+    activeCategoryGroups,
+    showHiddenTagGroups,
+  ]);
 
   if (!categories || state.matches('loadingDB') || state.matches('selectingDB')) {
     return (
@@ -789,6 +806,7 @@ export default function Taxonomy() {
                   category={activeCategory}
                   tags={tags}
                   groups={activeCategoryGroups ?? []}
+                  showHidden={showHiddenTagGroups}
                   viewMode={activeViewMode}
                   selectedTags={selectedTags}
                   isDisabled={isDisabled}

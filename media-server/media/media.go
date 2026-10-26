@@ -2159,6 +2159,11 @@ func InitializeSchema(db *sql.DB) error {
 	if err != nil {
 		return fmt.Errorf("failed to create tag_group table: %w", err)
 	}
+	// Per-group display: hidden = 1 leaves the group out of the taxonomy
+	// panel unless the viewer shows hidden groups; view_mode 'card' | 'list'
+	// overrides the category's tag view mode (NULL follows it).
+	_, _ = db.Exec(`ALTER TABLE tag_group ADD COLUMN hidden INTEGER`)
+	_, _ = db.Exec(`ALTER TABLE tag_group ADD COLUMN view_mode TEXT`)
 
 	// Create media_tag_by_category table
 	_, err = db.Exec(`

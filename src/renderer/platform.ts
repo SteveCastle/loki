@@ -390,6 +390,25 @@ function channelToEndpoint(channel: string): EndpointMapping | null {
         weight: args[2],
       }),
     },
+    'update-tag-group-hidden': {
+      url: '/api/tag-groups/hidden',
+      method: 'PUT',
+      argsToBody: (args) => ({
+        categoryLabel: args[0],
+        label: args[1],
+        hidden: !!args[2],
+      }),
+    },
+    // mode null follows the category's tag view mode.
+    'update-tag-group-view-mode': {
+      url: '/api/tag-groups/view-mode',
+      method: 'PUT',
+      argsToBody: (args) => ({
+        categoryLabel: args[0],
+        label: args[1],
+        viewMode: args[2] ?? '',
+      }),
+    },
     // groupLabel null ungroups the tag.
     'set-tag-group': {
       url: '/api/tags/group',

@@ -1969,6 +1969,8 @@ type tagGroupRequest struct {
 	Label         string  `json:"label"`
 	NewLabel      string  `json:"newLabel"`
 	Weight        float64 `json:"weight"`
+	Hidden        bool    `json:"hidden"`
+	ViewMode      string  `json:"viewMode"`
 }
 
 func readTagGroupRequest(w http.ResponseWriter, r *http.Request) (tagGroupRequest, bool) {
@@ -1989,8 +1991,10 @@ func lokiTagGroupsHandler(deps *Dependencies) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		category := r.URL.Query().Get("category")
 		type groupInfo struct {
-			Label  string  `json:"label"`
-			Weight float64 `json:"weight"`
+			Label    string  `json:"label"`
+			Weight   float64 `json:"weight"`
+			Hidden   bool    `json:"hidden"`
+			ViewMode *string `json:"viewMode"`
 		}
 		result := []groupInfo{}
 		if category == "" {
@@ -1998,7 +2002,8 @@ func lokiTagGroupsHandler(deps *Dependencies) http.HandlerFunc {
 			return
 		}
 		rows, err := deps.DB.Query(`
-			SELECT label, COALESCE(weight, 0)
+			SELECT label, COALESCE(weight, 0), COALESCE(hidden, 0) != 0,
+			       CASE WHEN view_mode IN ('card', 'list') THEN view_mode END
 			FROM tag_group
 			WHERE category_label = ?
 			ORDER BY weight, label`, category)
@@ -2009,9 +2014,13 @@ func lokiTagGroupsHandler(deps *Dependencies) http.HandlerFunc {
 		defer rows.Close()
 		for rows.Next() {
 			var g groupInfo
-			if err := rows.Scan(&g.Label, &g.Weight); err != nil {
+			var viewMode sql.NullString
+			if err := rows.Scan(&g.Label, &g.Weight, &g.Hidden, &viewMode); err != nil {
 				httpError(w, err.Error(), http.StatusInternalServerError)
 				return
+			}
+			if viewMode.Valid {
+				g.ViewMode = &viewMode.String
 			}
 			result = append(result, g)
 		}
@@ -2087,6 +2096,51 @@ func lokiUpdateTagGroupWeightHandler(deps *Dependencies) http.HandlerFunc {
 		if _, err := deps.DB.Exec(
 			"UPDATE tag_group SET weight = ? WHERE category_label = ? AND label = ?",
 			req.Weight, req.CategoryLabel, req.Label); err != nil {
+			httpError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, map[string]string{})
+	}
+}
+
+// PUT /api/tag-groups/hidden {categoryLabel, label, hidden} — a hidden group
+// is left out of the taxonomy panel unless the viewer shows hidden groups.
+func lokiUpdateTagGroupHiddenHandler(deps *Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		req, ok := readTagGroupRequest(w, r)
+		if !ok {
+			return
+		}
+		hidden := 0
+		if req.Hidden {
+			hidden = 1
+		}
+		if _, err := deps.DB.Exec(
+			"UPDATE tag_group SET hidden = ? WHERE category_label = ? AND label = ?",
+			hidden, req.CategoryLabel, req.Label); err != nil {
+			httpError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, map[string]string{})
+	}
+}
+
+// PUT /api/tag-groups/view-mode {categoryLabel, label, viewMode} — 'card' or
+// 'list' overrides the category's tag view mode for this group; anything else
+// (usually "") clears the override.
+func lokiUpdateTagGroupViewModeHandler(deps *Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		req, ok := readTagGroupRequest(w, r)
+		if !ok {
+			return
+		}
+		var mode any
+		if req.ViewMode == "card" || req.ViewMode == "list" {
+			mode = req.ViewMode
+		}
+		if _, err := deps.DB.Exec(
+			"UPDATE tag_group SET view_mode = ? WHERE category_label = ? AND label = ?",
+			mode, req.CategoryLabel, req.Label); err != nil {
 			httpError(w, err.Error(), http.StatusInternalServerError)
 			return
 		}

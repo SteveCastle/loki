@@ -204,3 +204,48 @@ func TestTagGroups_Lifecycle(t *testing.T) {
 		t.Fatalf("groups survived category delete: %v", got)
 	}
 }
+
+// Hidden and view mode are per-group display settings: both default off /
+// null, round-trip through the groups payload, and survive a rename.
+func TestTagGroups_DisplaySettings(t *testing.T) {
+	deps := tagGroupDeps(t)
+	rr := postJSON(lokiCreateTagGroupHandler(deps), tagGroupRequest{CategoryLabel: "Subject", Label: "Places"})
+	mustOK(t, "create", rr.Code, rr.Body.String())
+
+	type display struct {
+		Label    string  `json:"label"`
+		Hidden   bool    `json:"hidden"`
+		ViewMode *string `json:"viewMode"`
+	}
+	read := func() display {
+		t.Helper()
+		rr := getJSON(lokiTagGroupsHandler(deps), "/api/taxonomy/groups?category=Subject")
+		mustOK(t, "groups", rr.Code, rr.Body.String())
+		var groups []display
+		if err := json.Unmarshal(rr.Body.Bytes(), &groups); err != nil || len(groups) != 1 {
+			t.Fatalf("decode %q: %v", rr.Body.String(), err)
+		}
+		return groups[0]
+	}
+
+	if g := read(); g.Hidden || g.ViewMode != nil {
+		t.Fatalf("new group: hidden=%v viewMode=%v, want false/null", g.Hidden, g.ViewMode)
+	}
+
+	rr = postJSON(lokiUpdateTagGroupHiddenHandler(deps), tagGroupRequest{CategoryLabel: "Subject", Label: "Places", Hidden: true})
+	mustOK(t, "hide", rr.Code, rr.Body.String())
+	rr = postJSON(lokiUpdateTagGroupViewModeHandler(deps), tagGroupRequest{CategoryLabel: "Subject", Label: "Places", ViewMode: "list"})
+	mustOK(t, "view mode", rr.Code, rr.Body.String())
+	rr = postJSON(lokiRenameTagGroupHandler(deps), tagGroupRequest{CategoryLabel: "Subject", Label: "Places", NewLabel: "Locations"})
+	mustOK(t, "rename", rr.Code, rr.Body.String())
+	if g := read(); g.Label != "Locations" || !g.Hidden || g.ViewMode == nil || *g.ViewMode != "list" {
+		t.Fatalf("after hide+list+rename: %+v", g)
+	}
+
+	// An unknown mode clears the override; unhiding clears hidden.
+	postJSON(lokiUpdateTagGroupViewModeHandler(deps), tagGroupRequest{CategoryLabel: "Subject", Label: "Locations", ViewMode: "bogus"})
+	postJSON(lokiUpdateTagGroupHiddenHandler(deps), tagGroupRequest{CategoryLabel: "Subject", Label: "Locations", Hidden: false})
+	if g := read(); g.Hidden || g.ViewMode != nil {
+		t.Fatalf("after reset: hidden=%v viewMode=%v", g.Hidden, g.ViewMode)
+	}
+}

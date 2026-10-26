@@ -253,6 +253,23 @@ export async function initDB(db: Database) {
   weight REAL,
   PRIMARY KEY (category_label, label)
 )`);
+  // Per-group display: hidden (1 = left out of the taxonomy panel unless the
+  // viewer's "Show Hidden Tag Groups" setting is on) and view_mode ('card' |
+  // 'list'; NULL = follow the category's tag view mode). Older libraries
+  // pre-date both columns.
+  {
+    const groupColumns = await db.all(`PRAGMA table_info(tag_group)`);
+    for (const column of [
+      { name: 'hidden', type: 'INTEGER' },
+      { name: 'view_mode', type: 'TEXT' },
+    ]) {
+      if (!groupColumns.some((c: any) => c.name === column.name)) {
+        await db.run(
+          `ALTER TABLE tag_group ADD COLUMN ${column.name} ${column.type}`
+        );
+      }
+    }
+  }
 
   // Create media table
   await db.run(`CREATE TABLE IF NOT EXISTS media (

@@ -6,7 +6,7 @@ import editPencil from '../../../../assets/edit-pencil.svg';
 import deleteIcon from '../../../../assets/delete.svg';
 import { GlobalStateContext } from '../../state';
 import { invoke } from '../../platform';
-import { TagGroup, weightBeside } from './tag-groups';
+import { TagGroup, TagViewMode, weightBeside } from './tag-groups';
 
 // Drag type for reordering groups by their header. Separate from 'TAG' so a
 // group can never be dropped onto a category, a tag, or media.
@@ -24,6 +24,11 @@ type Props = {
   groups: TagGroup[];
   count: number;
   collapsed: boolean;
+  // Display settings (named groups only). `viewMode` is the layout the
+  // group's tags use now; `categoryViewMode` is what it falls back to.
+  hidden?: boolean;
+  viewMode: TagViewMode;
+  categoryViewMode: TagViewMode;
   onToggleCollapsed: () => void;
   onAddTag: (group: string) => void;
   onRename: (group: string) => void;
@@ -36,6 +41,9 @@ function TagGroupHeader({
   groups,
   count,
   collapsed,
+  hidden = false,
+  viewMode,
+  categoryViewMode,
   onToggleCollapsed,
   onAddTag,
   onRename,
@@ -45,6 +53,10 @@ function TagGroupHeader({
   const canWrite = useSelector(
     libraryService,
     (state) => state.context.canWrite
+  );
+  const showHiddenTagGroups = useSelector(
+    libraryService,
+    (state) => !!state.context.settings.showHiddenTagGroups
   );
   const queryClient = useQueryClient();
   const ref = React.useRef<HTMLDivElement>(null);
@@ -133,6 +145,45 @@ function TagGroupHeader({
 
   drag(drop(ref));
 
+  // Flip the group between cards and list. Landing on the category's own
+  // mode clears the override, so the group follows later category changes.
+  async function handleToggleViewMode() {
+    if (group === null) return;
+    const next: TagViewMode = viewMode === 'list' ? 'card' : 'list';
+    try {
+      await invoke('update-tag-group-view-mode', [
+        category,
+        group,
+        next === categoryViewMode ? null : next,
+      ]);
+      queryClient.invalidateQueries({ queryKey: ['taxonomy'] });
+    } catch (err) {
+      reportError('Failed to change group view', err);
+    }
+  }
+
+  async function handleToggleHidden() {
+    if (group === null) return;
+    try {
+      await invoke('update-tag-group-hidden', [category, group, !hidden]);
+      queryClient.invalidateQueries({ queryKey: ['taxonomy'] });
+      // Hiding with hidden groups not shown makes the header vanish; say
+      // where it went.
+      if (!hidden && !showHiddenTagGroups) {
+        libraryService.send({
+          type: 'ADD_TOAST',
+          data: {
+            type: 'success',
+            title: `Hid "${group}"`,
+            message: 'Turn on Settings › Show Hidden Tag Groups to see it again.',
+          },
+        });
+      }
+    } catch (err) {
+      reportError(hidden ? 'Failed to unhide group' : 'Failed to hide group', err);
+    }
+  }
+
   async function handleDelete() {
     if (group === null) return;
     setConfirmingDelete(false);
@@ -152,6 +203,7 @@ function TagGroupHeader({
         'tag-group-header',
         group === null ? 'ungrouped' : '',
         collapsed ? 'collapsed' : '',
+        hidden ? 'hidden-group' : '',
         isDragging ? 'dragging' : '',
         isOver && !reordering ? 'hovered' : '',
         reordering && isAbove ? 'above' : '',
@@ -169,6 +221,11 @@ function TagGroupHeader({
       </span>
       <span className="tag-group-label">{group ?? 'Ungrouped'}</span>
       <span className="tag-group-count">{count}</span>
+      {hidden && (
+        <span className="tag-group-hidden-badge" title="Hidden group">
+          {EYE_OFF_ICON}
+        </span>
+      )}
       {confirmingDelete ? (
         <div className="tag-group-confirm" onClick={(e) => e.stopPropagation()}>
           <span>Delete group? Its tags are kept.</span>
@@ -192,6 +249,26 @@ function TagGroupHeader({
               }}
             >
               +
+            </button>
+            <button
+              disabled={isDisabled}
+              title={viewMode === 'list' ? 'Show as cards' : 'Show as list'}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (!isDisabled) handleToggleViewMode();
+              }}
+            >
+              {viewMode === 'list' ? GRID_ICON : LIST_ICON}
+            </button>
+            <button
+              disabled={isDisabled}
+              title={hidden ? 'Unhide group' : 'Hide group'}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (!isDisabled) handleToggleHidden();
+              }}
+            >
+              {hidden ? EYE_ICON : EYE_OFF_ICON}
             </button>
             <button
               disabled={isDisabled}
@@ -219,5 +296,39 @@ function TagGroupHeader({
     </div>
   );
 }
+
+const svgProps = {
+  viewBox: '0 0 24 24',
+  fill: 'none',
+  stroke: 'currentColor',
+  strokeWidth: 2,
+  strokeLinecap: 'round' as const,
+  strokeLinejoin: 'round' as const,
+  'aria-hidden': true,
+};
+const EYE_ICON = (
+  <svg {...svgProps}>
+    <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z" />
+    <circle cx="12" cy="12" r="3" />
+  </svg>
+);
+const EYE_OFF_ICON = (
+  <svg {...svgProps}>
+    <path d="M3 8c3.6 8 14.4 8 18 0M19.5 16l-2.5-3.4M12 17.5V14M4.5 16l2.5-3.4" />
+  </svg>
+);
+const LIST_ICON = (
+  <svg {...svgProps}>
+    <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" />
+  </svg>
+);
+const GRID_ICON = (
+  <svg {...svgProps}>
+    <rect x="3" y="3" width="7" height="7" rx="1" />
+    <rect x="14" y="3" width="7" height="7" rx="1" />
+    <rect x="3" y="14" width="7" height="7" rx="1" />
+    <rect x="14" y="14" width="7" height="7" rx="1" />
+  </svg>
+);
 
 export default React.memo(TagGroupHeader);

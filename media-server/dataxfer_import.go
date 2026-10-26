@@ -190,6 +190,13 @@ func mergeImport(ctx context.Context, deps *Dependencies, workDir string, dest s
 	mergeSimple(src, dst,
 		`SELECT category_label, label, weight FROM tag_group`,
 		`INSERT OR IGNORE INTO tag_group(category_label, label, weight) VALUES(?,?,?)`, 3)
+	// Group display (hidden / view mode) postdates groups themselves; only
+	// fills a group the destination hasn't configured.
+	mergeSimple(src, dst,
+		`SELECT hidden, view_mode, category_label, label FROM tag_group
+		 WHERE hidden IS NOT NULL OR view_mode IS NOT NULL`,
+		`UPDATE tag_group SET hidden = ?, view_mode = ?
+		 WHERE category_label = ? AND label = ? AND hidden IS NULL AND view_mode IS NULL`, 4)
 	mergeSimple(src, dst,
 		`SELECT group_label, label FROM tag WHERE group_label IS NOT NULL`,
 		`UPDATE tag SET group_label = ? WHERE label = ? AND group_label IS NULL`, 2)

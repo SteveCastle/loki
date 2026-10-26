@@ -664,6 +664,7 @@ const getInitialContext = (): LibraryState => {
     ['showTags', 'all'],
     ['hideSuggestedTags', false],
     ['hidePeopleTags', false],
+    ['showHiddenTagGroups', false],
     ['showFileInfo', 'none'],
     ['showControls', false],
     ['gridSize', [4, 4]],
@@ -806,6 +807,7 @@ const getInitialContext = (): LibraryState => {
       showTags: batched['showTags'] as 'all' | 'list' | 'detail' | 'none',
       hideSuggestedTags: batched['hideSuggestedTags'] as boolean,
       hidePeopleTags: batched['hidePeopleTags'] as boolean,
+      showHiddenTagGroups: batched['showHiddenTagGroups'] as boolean,
       showFileInfo: batched['showFileInfo'] as
         | 'all'
         | 'list'

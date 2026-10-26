@@ -1158,6 +1158,35 @@
   opacity: 1;
 }
 
+/* Inline SVG action icons (view mode, hide) match the img ones. */
+.Taxonomy .tag-group-header .actions button svg {
+  width: 14px;
+  height: 14px;
+  display: block;
+}
+
+/* Hidden groups only appear when "Show Hidden Tag Groups" is on: dimmed, with
+   an eye-off badge, so they read as hidden and can be unhidden. */
+.Taxonomy .tag-group-header.hidden-group {
+  color: rgba(255, 255, 255, 0.35);
+}
+
+.Taxonomy .tag-group-hidden-badge {
+  display: inline-flex;
+  width: 12px;
+  height: 12px;
+  flex: 0 0 auto;
+}
+
+.Taxonomy .tag-group-hidden-badge svg {
+  width: 100%;
+  height: 100%;
+}
+
+.Taxonomy .hidden-group-row {
+  opacity: 0.5;
+}
+
 .Taxonomy .tag-group-header .actions button img {
   width: 14px;
   height: 14px;

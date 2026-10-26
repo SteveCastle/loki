@@ -610,6 +610,8 @@ ipcMain.handle('load-db', async (event, args) => {
   ipcMain.removeHandler('rename-tag-group');
   ipcMain.removeHandler('delete-tag-group');
   ipcMain.removeHandler('update-tag-group-weight');
+  ipcMain.removeHandler('update-tag-group-hidden');
+  ipcMain.removeHandler('update-tag-group-view-mode');
   ipcMain.removeHandler('set-tag-group');
   ipcMain.removeHandler('apply-elo-ordering');
   ipcMain.removeHandler('consolidate-tag-files');
@@ -728,6 +730,14 @@ ipcMain.handle('load-db', async (event, args) => {
   ipcMain.handle(
     'update-tag-group-weight',
     taxonomyModule.updateTagGroupWeight(db)
+  );
+  ipcMain.handle(
+    'update-tag-group-hidden',
+    taxonomyModule.updateTagGroupHidden(db)
+  );
+  ipcMain.handle(
+    'update-tag-group-view-mode',
+    taxonomyModule.updateTagGroupViewMode(db)
   );
   ipcMain.handle('set-tag-group', taxonomyModule.setTagGroup(db));
   ipcMain.handle('apply-elo-ordering', taxonomyModule.applyEloOrdering(db));

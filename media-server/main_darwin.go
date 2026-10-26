@@ -2679,6 +2679,8 @@ func main() {
 	}, renderer.RoleAdmin))
 	mux.HandleFunc("/api/tag-groups/rename", renderer.ApplyMiddlewares(lokiRenameTagGroupHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/tag-groups/weight", renderer.ApplyMiddlewares(lokiUpdateTagGroupWeightHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/tag-groups/hidden", renderer.ApplyMiddlewares(lokiUpdateTagGroupHiddenHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/tag-groups/view-mode", renderer.ApplyMiddlewares(lokiUpdateTagGroupViewModeHandler(deps), renderer.RoleAdmin))
 
 	mux.HandleFunc("/api/assignments", renderer.ApplyMiddlewares(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {

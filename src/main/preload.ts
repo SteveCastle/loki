@@ -60,6 +60,8 @@ export type Channels =
   | 'rename-tag-group'
   | 'delete-tag-group'
   | 'update-tag-group-weight'
+  | 'update-tag-group-hidden'
+  | 'update-tag-group-view-mode'
   | 'set-tag-group'
   | 'create-assignment'
   | 'fetch-tag-preview'

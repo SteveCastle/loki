@@ -11,6 +11,8 @@ import {
   renameTagGroup,
   deleteTagGroup,
   updateTagGroupWeight,
+  updateTagGroupHidden,
+  updateTagGroupViewMode,
   setTagGroup,
   updateCategoryTagGrouping,
   renameCategory,
@@ -20,6 +22,7 @@ import {
 import {
   groupTags,
   flattenGroupedRows,
+  hiddenGroupLabels,
   weightBeside,
   loadCollapsedGroups,
   saveCollapsedGroups,
@@ -92,6 +95,46 @@ describe('flattenGroupedRows', () => {
     const rows = flattenGroupedRows(sections, new Set(['G']), 2);
     expect(rows.map((r) => r.type)).toEqual(['header', 'header', 'tags']);
     expect(rows[0].type === 'header' && rows[0].collapsed).toBe(true);
+  });
+});
+
+describe('group display settings', () => {
+  const tags = [tag('a', 1, 'Secret'), tag('b', 2, 'Shown'), tag('c', 3)];
+  const groups = [
+    { label: 'Secret', weight: 1, hidden: true },
+    { label: 'Shown', weight: 2, viewMode: 'list' as const },
+  ];
+
+  it('drops hidden groups and their tags unless asked to show them', () => {
+    const hidden = groupTags(tags, groups, false)!;
+    expect(hidden.map((s) => s.group)).toEqual(['Shown', null]);
+    // A hidden group's tags do not leak into Ungrouped.
+    expect(hidden[1].tags.map((t) => t.label)).toEqual(['c']);
+
+    const shown = groupTags(tags, groups, true)!;
+    expect(shown.map((s) => s.group)).toEqual(['Secret', 'Shown', null]);
+    expect(shown[0].hidden).toBe(true);
+    expect([...hiddenGroupLabels(groups)]).toEqual(['Secret']);
+  });
+
+  it('lays a list-mode group out one tag per row inside a card category', () => {
+    const sections = groupTags(
+      [tag('a', 1, 'L'), tag('b', 2, 'L'), tag('c', 3), tag('d', 4)],
+      [{ label: 'L', weight: 1, viewMode: 'list' }]
+    )!;
+    const rows = flattenGroupedRows(sections, new Set(), 4, 'card');
+    const tagRows = rows.filter((r) => r.type === 'tags') as Extract<
+      typeof rows[number],
+      { type: 'tags' }
+    >[];
+    expect(tagRows.map((r) => [r.mode, r.tags.length])).toEqual([
+      ['list', 1],
+      ['list', 1],
+      ['card', 2],
+    ]);
+    // A list category's override-free sections follow it.
+    const listRows = flattenGroupedRows(sections, new Set(), 4, 'list');
+    expect(listRows.filter((r) => r.type === 'tags')).toHaveLength(4);
   });
 });
 
@@ -192,6 +235,27 @@ describe('tag group IPC handlers', () => {
 
     await setTagGroup(db)(ev, ['sunset', null]);
     expect(await groupOf(db, 'Subject', 'sunset')).toBeNull();
+  });
+
+  it('stores per-group hidden and view mode, migrating older tables', async () => {
+    const db = await legacyDb();
+    await createTagGroup(db)(ev, ['Subject', 'Places']);
+    const read = async () =>
+      ((await loadTagGroups(db)(ev, ['Subject'])) as any[])[0];
+    expect(await read()).toMatchObject({ hidden: false, viewMode: null });
+
+    await updateTagGroupHidden(db)(ev, ['Subject', 'Places', true]);
+    await updateTagGroupViewMode(db)(ev, ['Subject', 'Places', 'list']);
+    await renameTagGroup(db)(ev, ['Subject', 'Places', 'Scenes']);
+    expect(await read()).toMatchObject({
+      label: 'Scenes',
+      hidden: true,
+      viewMode: 'list',
+    });
+
+    await updateTagGroupViewMode(db)(ev, ['Subject', 'Scenes', null]);
+    await updateTagGroupHidden(db)(ev, ['Subject', 'Scenes', false]);
+    expect(await read()).toMatchObject({ hidden: false, viewMode: null });
   });
 
   it('stores the grouping toggle', async () => {

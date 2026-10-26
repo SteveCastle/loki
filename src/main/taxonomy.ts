@@ -687,12 +687,20 @@ const loadTagGroups =
     if (!categoryLabel) return [];
     try {
       const rows = await db.all(
-        `SELECT label, weight FROM tag_group
+        `SELECT label, weight, hidden, view_mode FROM tag_group
           WHERE category_label = $1
           ORDER BY weight, label`,
         [categoryLabel]
       );
-      return rows.map((row) => ({ label: row.label, weight: row.weight ?? 0 }));
+      return rows.map((row) => ({
+        label: row.label,
+        weight: row.weight ?? 0,
+        hidden: !!row.hidden,
+        viewMode:
+          row.view_mode === 'card' || row.view_mode === 'list'
+            ? row.view_mode
+            : null,
+      }));
     } catch (e) {
       console.log(e);
       return [];
@@ -754,6 +762,33 @@ const updateTagGroupWeight =
     await db.run(
       `UPDATE tag_group SET weight = $1 WHERE category_label = $2 AND label = $3`,
       [weight, categoryLabel, label]
+    );
+  };
+
+type UpdateTagGroupHiddenInput = [string, string, boolean];
+const updateTagGroupHidden =
+  (db: Database) =>
+  async (_: IpcMainInvokeEvent, args: UpdateTagGroupHiddenInput) => {
+    const [categoryLabel, label, hidden] = args;
+    await db.run(
+      `UPDATE tag_group SET hidden = $1 WHERE category_label = $2 AND label = $3`,
+      [hidden ? 1 : 0, categoryLabel, label]
+    );
+  };
+
+// mode null (or anything but 'card' / 'list') follows the category's mode.
+type UpdateTagGroupViewModeInput = [string, string, 'card' | 'list' | null];
+const updateTagGroupViewMode =
+  (db: Database) =>
+  async (_: IpcMainInvokeEvent, args: UpdateTagGroupViewModeInput) => {
+    const [categoryLabel, label, mode] = args;
+    await db.run(
+      `UPDATE tag_group SET view_mode = $1 WHERE category_label = $2 AND label = $3`,
+      [
+        mode === 'card' || mode === 'list' ? mode : null,
+        categoryLabel,
+        label,
+      ]
     );
   };
 
@@ -980,6 +1015,8 @@ export {
   renameTagGroup,
   deleteTagGroup,
   updateTagGroupWeight,
+  updateTagGroupHidden,
+  updateTagGroupViewMode,
   setTagGroup,
   applyEloOrdering,
   consolidateTagFiles,

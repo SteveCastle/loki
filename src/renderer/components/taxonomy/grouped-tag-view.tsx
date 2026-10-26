@@ -12,7 +12,9 @@ import TagListRow from './tag-list-row';
 import TagGroupHeader, { TAG_GROUP_DND_TYPE } from './tag-group-header';
 import {
   TagGroup,
+  TagViewMode,
   groupTags,
+  sectionViewMode,
   flattenGroupedRows,
   sortGroups,
   loadCollapsedGroups,
@@ -31,7 +33,11 @@ type Props = {
   category: string;
   tags: Concept[];
   groups: TagGroup[];
-  viewMode: 'card' | 'list';
+  // The viewer's showHiddenTagGroups setting: hidden groups are dropped
+  // unless it is on, then shown dimmed so they can be unhidden.
+  showHidden: boolean;
+  // The category's mode; a group's own viewMode overrides it.
+  viewMode: TagViewMode;
   selectedTags: string[];
   isDisabled: boolean;
   handleEditAction: (tag: string) => void;
@@ -54,6 +60,7 @@ export default function GroupedTagView({
   category,
   tags,
   groups,
+  showHidden,
   viewMode,
   selectedTags,
   isDisabled,
@@ -66,13 +73,11 @@ export default function GroupedTagView({
   // Dragging a tag (or a group header) toward the top or bottom edge scrolls
   // the list, so a far-off group is reachable mid-drag.
   useDragAutoScroll(parentRef, ['TAG', TAG_GROUP_DND_TYPE]);
-  const columns =
-    viewMode === 'list'
-      ? 1
-      : Math.max(
-          1,
-          Math.floor((width || MIN_COLUMN_WIDTH) / MIN_COLUMN_WIDTH)
-        );
+  // Card columns for card sections; list sections always take one per row.
+  const columns = Math.max(
+    1,
+    Math.floor((width || MIN_COLUMN_WIDTH) / MIN_COLUMN_WIDTH)
+  );
 
   const [collapsed, setCollapsed] = useState<Set<string>>(() =>
     loadCollapsedGroups(category)
@@ -94,15 +99,13 @@ export default function GroupedTagView({
 
   const orderedGroups = useMemo(() => sortGroups(groups), [groups]);
   const sections = useMemo(
-    () => groupTags(tags, orderedGroups) ?? [],
-    [tags, orderedGroups]
+    () => groupTags(tags, orderedGroups, showHidden) ?? [],
+    [tags, orderedGroups, showHidden]
   );
   const rows = useMemo(
-    () => flattenGroupedRows(sections, collapsed, columns),
-    [sections, collapsed, columns]
+    () => flattenGroupedRows(sections, collapsed, columns, viewMode),
+    [sections, collapsed, columns, viewMode]
   );
-
-  const rowHeight = viewMode === 'list' ? LIST_ROW_HEIGHT : CARD_HEIGHT + CARD_GAP;
   // Both callbacks must be stable between renders: the virtualizer recomputes
   // its measurements whenever either identity changes, and an inline
   // getItemKey re-renders forever. They change exactly when the rows do (a
@@ -113,9 +116,12 @@ export default function GroupedTagView({
     [rows]
   );
   const estimateSize = useCallback(
-    (index: number) =>
-      rows[index]?.type === 'header' ? HEADER_HEIGHT : rowHeight,
-    [rows, rowHeight]
+    (index: number) => {
+      const row = rows[index];
+      if (!row || row.type === 'header') return HEADER_HEIGHT;
+      return row.mode === 'list' ? LIST_ROW_HEIGHT : CARD_HEIGHT + CARD_GAP;
+    },
+    [rows]
   );
 
   // The tag being dragged, if it is one of ours. Item and type are fixed for a
@@ -191,6 +197,9 @@ export default function GroupedTagView({
                   groups={orderedGroups}
                   count={row.section.tags.length}
                   collapsed={row.collapsed}
+                  hidden={row.section.hidden}
+                  viewMode={sectionViewMode(row.section, viewMode)}
+                  categoryViewMode={viewMode}
                   onToggleCollapsed={() => toggleCollapsed(row.section.key)}
                   onAddTag={onAddTagToGroup}
                   onRename={onRenameGroup}
@@ -199,11 +208,13 @@ export default function GroupedTagView({
               </div>
             );
           }
-          if (viewMode === 'list') {
+          const rowHidden = row.section.hidden ? ' hidden-group-row' : '';
+          if (row.mode === 'list') {
             const tag = row.tags[0];
             return (
               <div
                 key={virtualRow.key}
+                className={rowHidden || undefined}
                 style={{ ...style, height: `${LIST_ROW_HEIGHT}px` }}
               >
                 <TagListRow
@@ -220,7 +231,7 @@ export default function GroupedTagView({
           return (
             <div
               key={virtualRow.key}
-              className="virtualized-row"
+              className={`virtualized-row${rowHidden}`}
               style={{
                 ...style,
                 height: `${CARD_HEIGHT}px`,

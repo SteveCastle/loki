@@ -269,6 +269,13 @@ func buildExportDB(deps *Dependencies, dbPath string, selected []string) (map[st
 		return nil, fmt.Errorf("tag_group: %w", err)
 	}
 	if err := copyRows(src, tx,
+		`SELECT hidden, view_mode, category_label, label FROM tag_group
+		 WHERE hidden IS NOT NULL OR view_mode IS NOT NULL`,
+		`UPDATE tag_group SET hidden = ?, view_mode = ? WHERE category_label = ? AND label = ?`,
+		4); err != nil {
+		return nil, fmt.Errorf("tag_group display: %w", err)
+	}
+	if err := copyRows(src, tx,
 		`SELECT group_label, label FROM tag WHERE group_label IS NOT NULL`,
 		`UPDATE tag SET group_label = ? WHERE label = ?`,
 		2); err != nil {

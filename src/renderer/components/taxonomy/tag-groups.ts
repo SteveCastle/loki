@@ -7,7 +7,18 @@
 // grouping switched off) never reaches this layout — groupTags returns null and
 // the panel renders the flat, weight-sorted list it always has.
 
-export type TagGroup = { label: string; weight: number };
+export type TagViewMode = 'card' | 'list';
+
+export type TagGroup = {
+  label: string;
+  weight: number;
+  // Left out of the panel unless the viewer's showHiddenTagGroups setting is
+  // on. Absent (older server) reads as visible.
+  hidden?: boolean;
+  // Overrides the category's tag view mode for this group; null/absent
+  // follows it.
+  viewMode?: TagViewMode | null;
+};
 
 // Per-category toggle stored on the category row (category.tag_grouping).
 // 'off' lists the tags flat again, ignoring their groups.
@@ -20,11 +31,13 @@ export type GroupableTag = {
 };
 
 // One group's slice of the category. `group` is null for the trailing
-// "Ungrouped" section.
+// "Ungrouped" section, which is never hidden and has no view-mode override.
 export type GroupSection<T extends GroupableTag> = {
   key: string;
   group: string | null;
   tags: T[];
+  hidden?: boolean;
+  viewMode?: TagViewMode | null;
 };
 
 // Collapse-state key of the Ungrouped section. A NUL can't come from a typed
@@ -44,13 +57,23 @@ export function sortGroups(groups: TagGroup[]): TagGroup[] {
 // naming a group that no longer exists (e.g. renamed by an older app version)
 // falls back to Ungrouped rather than disappearing. Returns null when the
 // category has no groups: the caller keeps its flat layout.
+//
+// With showHidden false, hidden groups — and the tags in them — are left out
+// entirely (their tags do not fall back to Ungrouped).
 export function groupTags<T extends GroupableTag>(
   tags: T[],
-  groups: TagGroup[] | undefined | null
+  groups: TagGroup[] | undefined | null,
+  showHidden = true
 ): GroupSection<T>[] | null {
   if (!groups || groups.length === 0) return null;
   const sections = sortGroups(groups).map(
-    (g): GroupSection<T> => ({ key: g.label, group: g.label, tags: [] })
+    (g): GroupSection<T> => ({
+      key: g.label,
+      group: g.label,
+      tags: [],
+      hidden: !!g.hidden,
+      viewMode: g.viewMode ?? null,
+    })
   );
   const byLabel = new Map(sections.map((s) => [s.group as string, s]));
   const ungrouped: GroupSection<T> = {
@@ -62,7 +85,24 @@ export function groupTags<T extends GroupableTag>(
     const section = (tag.group && byLabel.get(tag.group)) || ungrouped;
     section.tags.push(tag);
   }
-  return [...sections, ungrouped];
+  const shown = showHidden ? sections : sections.filter((s) => !s.hidden);
+  return [...shown, ungrouped];
+}
+
+// Labels of the category's hidden groups, for the flat layout (grouping off)
+// to drop their tags the same way the grouped layout does.
+export function hiddenGroupLabels(
+  groups: TagGroup[] | undefined | null
+): Set<string> {
+  return new Set((groups ?? []).filter((g) => g.hidden).map((g) => g.label));
+}
+
+// The layout a section's tags use: its own override, else the category's.
+export function sectionViewMode(
+  section: { viewMode?: TagViewMode | null },
+  categoryMode: TagViewMode
+): TagViewMode {
+  return section.viewMode ?? categoryMode;
 }
 
 export type GroupedRow<T extends GroupableTag> =
@@ -72,19 +112,28 @@ export type GroupedRow<T extends GroupableTag> =
       section: GroupSection<T>;
       collapsed: boolean;
     }
-  | { type: 'tags'; key: string; section: GroupSection<T>; tags: T[] };
+  | {
+      type: 'tags';
+      key: string;
+      section: GroupSection<T>;
+      tags: T[];
+      mode: TagViewMode;
+    };
 
 // Flattens sections into virtualizer rows: a header per section, then its
-// tags chunked `perRow` at a time (the card grid's column count, or 1 for the
-// list style). Collapsed sections contribute only their header.
+// tags chunked — `columns` at a time for a card section, one per row for a
+// list section (each section's mode is its override, else `categoryMode`).
+// Collapsed sections contribute only their header.
 export function flattenGroupedRows<T extends GroupableTag>(
   sections: GroupSection<T>[],
   collapsed: ReadonlySet<string>,
-  perRow: number
+  columns: number,
+  categoryMode: TagViewMode = 'card'
 ): GroupedRow<T>[] {
-  const step = Math.max(1, Math.floor(perRow));
   const rows: GroupedRow<T>[] = [];
   for (const section of sections) {
+    const mode = sectionViewMode(section, categoryMode);
+    const step = mode === 'list' ? 1 : Math.max(1, Math.floor(columns));
     const isCollapsed = collapsed.has(section.key);
     rows.push({
       type: 'header',
@@ -99,6 +148,7 @@ export function flattenGroupedRows<T extends GroupableTag>(
         key: `t:${section.key}:${i}`,
         section,
         tags: section.tags.slice(i, i + step),
+        mode,
       });
     }
   }
