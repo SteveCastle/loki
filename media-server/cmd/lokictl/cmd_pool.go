@@ -333,7 +333,8 @@ func cmdPoolCreate(a *App, args []string) int {
 	fs := flags("pool create " + kind)
 	key := fs.String("runpod-key", os.Getenv("RUNPOD_API_KEY"), "RunPod API key (default $RUNPOD_API_KEY)")
 	image := fs.String("image", provision.DefaultImage, "worker image")
-	var gpus, preload, dcs listFlag
+	var gpus, preload, dcs, only listFlag
+	fs.Var(&only, "engines", "serve only these engines (e.g. retouch): the workers never load another engine's models, so they stay warm for these; route the engines here with pool route")
 	fs.Var(&gpus, "gpu", "RunPod GPU type, repeatable or comma separated (default: "+strings.Join(provision.DefaultGPUs, ", ")+")")
 	fs.Var(&dcs, "datacenter", "allowed data centers (e.g. EU-RO-1), repeatable")
 	netVol := fs.String("network-volume", "", "a RunPod network volume id: models downloaded once, shared by every worker")
@@ -348,12 +349,21 @@ func cmdPoolCreate(a *App, args []string) int {
 	minWorkers := fs.Int("min-workers", 0, "serverless: workers kept running (0 = scale to zero)")
 	idle := fs.Int("idle", 120, "serverless: seconds a worker (and its loaded models) stays after its last job")
 	execSecs := fs.Int("max-job-secs", 3600, "serverless: execution timeout per job")
+	endpointKey := fs.String("endpoint-key", os.Getenv("RUNPOD_ENDPOINT_KEY"), "serverless: the key the server keeps to run jobs (a restricted key with write access to the endpoint; default $RUNPOD_ENDPOINT_KEY, else --runpod-key)")
 	transfer := transferFlags(fs)
 	pos, err := parseInterleaved(fs, rest)
 	if err != nil || len(pos) != 1 {
 		return a.Usage(fs, "usage: lokictl pool create "+kind+" <pool> [flags]")
 	}
 	name := pos[0]
+	var engines []string
+	for _, e := range only {
+		engines = append(engines, workerapi.EngineName(e))
+	}
+	var env map[string]string
+	if len(engines) > 0 {
+		env = map[string]string{"LOKI_WORKER_TOOLS": strings.Join(engines, ",")}
+	}
 	rp, err := runpodClient(*key)
 	if err != nil {
 		return a.Usage(fs, err.Error())
@@ -368,15 +378,15 @@ func cmdPoolCreate(a *App, args []string) int {
 	ctx := context.Background()
 	switch kind {
 	case "runpod-pods":
-		var engines []string
+		var warm []string
 		for _, e := range preload {
-			engines = append(engines, workerapi.EngineName(e))
+			warm = append(warm, workerapi.EngineName(e))
 		}
-		pool := appconfig.WorkerPool{Name: name, Kind: appconfig.PoolKindNodes, Provider: &appconfig.PoolProvider{Name: "runpod"}}
+		pool := appconfig.WorkerPool{Name: name, Kind: appconfig.PoolKindNodes, Engines: engines, Provider: &appconfig.PoolProvider{Name: "runpod"}}
 		var made []*provision.Pod
 		for i := 0; i < *count; i++ {
 			token := workerapi.NewToken()
-			p, err := rp.CreatePod(ctx, provision.PodSpec{Name: fmt.Sprintf("loki-%s-%d", name, i+1), Image: *image, GPUs: gpus, Cloud: *cloud, VolumeGB: *volume, NetworkVolumeID: *netVol, DataCenters: dcs, Token: token, Preload: engines, RegistryAuthID: *registryAuth})
+			p, err := rp.CreatePod(ctx, provision.PodSpec{Name: fmt.Sprintf("loki-%s-%d", name, i+1), Image: *image, GPUs: gpus, Cloud: *cloud, VolumeGB: *volume, NetworkVolumeID: *netVol, DataCenters: dcs, Token: token, Preload: warm, Env: env, RegistryAuthID: *registryAuth})
 			if err != nil {
 				for _, m := range made {
 					_ = rp.DeletePod(ctx, m.ID)
@@ -389,11 +399,15 @@ func cmdPoolCreate(a *App, args []string) int {
 		}
 		d.Config.Pools = append(d.Config.Pools, pool)
 	case "runpod-serverless":
-		e, err := rp.CreateServerless(ctx, provision.ServerlessSpec{Name: "loki-" + name, Image: *image, GPUs: gpus, WorkersMin: *minWorkers, WorkersMax: *maxWorkers, IdleSeconds: *idle, ExecutionSecs: *execSecs, NetworkVolumeID: *netVol, Flashboot: true, RegistryAuthID: *registryAuth})
+		e, err := rp.CreateServerless(ctx, provision.ServerlessSpec{Name: "loki-" + name, Image: *image, GPUs: gpus, WorkersMin: *minWorkers, WorkersMax: *maxWorkers, IdleSeconds: *idle, ExecutionSecs: *execSecs, NetworkVolumeID: *netVol, Flashboot: true, Env: env, RegistryAuthID: *registryAuth})
 		if err != nil {
 			return a.Fail(err)
 		}
-		d.Config.Pools = append(d.Config.Pools, appconfig.WorkerPool{Name: name, Kind: appconfig.PoolKindRunPod, EndpointID: e.ID, APIKey: *key, MaxJobs: *maxWorkers, Transfer: transfer(),
+		runKey := *endpointKey
+		if runKey == "" {
+			runKey = *key
+		}
+		d.Config.Pools = append(d.Config.Pools, appconfig.WorkerPool{Name: name, Kind: appconfig.PoolKindRunPod, Engines: engines, EndpointID: e.ID, APIKey: runKey, MaxJobs: *maxWorkers, Transfer: transfer(),
 			Provider: &appconfig.PoolProvider{Name: "runpod", EndpointID: e.ID, TemplateID: e.TemplateID}})
 		if transfer() == nil {
 			fmt.Fprintln(a.ErrOut, `{"note":"no transfer bucket: files up to 7 MB travel inline (stills work; video references need --transfer-root or --bucket)"}`)

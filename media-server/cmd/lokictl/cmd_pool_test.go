@@ -133,3 +133,51 @@ func TestPoolCreateAndDestroyRunPodPods(t *testing.T) {
 		t.Fatalf("deleted %v, pools %+v", deleted, got().Pools)
 	}
 }
+
+// pool create runpod-serverless --engines: the template's workers serve only
+// those engines, the pool is limited to them, and the server keeps the
+// endpoint key (not the management key) for running jobs.
+func TestPoolCreateServerlessPerEngine(t *testing.T) {
+	var mu sync.Mutex
+	var tmpl, ep map[string]any
+	rp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		if r.Header.Get("Authorization") != "Bearer mgmt" {
+			w.WriteHeader(401)
+			return
+		}
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/templates":
+			_ = json.NewDecoder(r.Body).Decode(&tmpl)
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "tpl1"})
+		case r.Method == http.MethodPost && r.URL.Path == "/endpoints":
+			_ = json.NewDecoder(r.Body).Decode(&ep)
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "ep1"})
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer rp.Close()
+	old := runpodBase
+	runpodBase = rp.URL
+	defer func() { runpodBase = old }()
+
+	srv, got := fakeEnginesServer(t, appconfig.EnginesConfig{Strategy: "pool"})
+	a, _, _ := appForServer(srv.URL)
+	code := cmdPoolCreate(a, []string{"runpod-serverless", "retouch", "--engines", "retouch", "--runpod-key", "mgmt", "--endpoint-key", "restricted",
+		"--max-workers", "2", "--network-volume", "vol1", "--bucket", "b", "--access-key", "ak", "--secret-key", "sk"})
+	if code != 0 {
+		t.Fatalf("create exit %d", code)
+	}
+	if env, _ := tmpl["env"].(map[string]any); env["LOKI_WORKER_TOOLS"] != "loki-retouch" {
+		t.Fatalf("template env %v", tmpl["env"])
+	}
+	if ep["templateId"] != "tpl1" || ep["networkVolumeId"] != "vol1" || ep["workersMax"] != float64(2) {
+		t.Fatalf("endpoint %v", ep)
+	}
+	p := got().Pools[0]
+	if p.Name != "retouch" || p.EndpointID != "ep1" || p.APIKey != "restricted" || len(p.Engines) != 1 || p.Engines[0] != "loki-retouch" || p.MaxJobs != 2 || p.Transfer == nil || p.Transfer.Bucket != "b" {
+		t.Fatalf("pool %+v", p)
+	}
+}
