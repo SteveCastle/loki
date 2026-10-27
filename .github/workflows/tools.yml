@@ -1,25 +1,29 @@
 name: AI CLI tools
 
-# Fast feedback for the standalone CUDA CLIs under tools/. The same build also runs inside release.yml
-# (job "Build AI tools"), where it can never block a release; this workflow is where a broken tool build
-# shows up as a red check on the PR.
+# Fast feedback for the standalone CUDA CLIs under tools/ and the loki-worker image built from them. The same
+# builds also run inside release.yml (jobs "Build AI tools" and "Publish worker image"), where they can never
+# block a release; this workflow is where a broken build shows up as a red check on the PR.
+#
+# Pull requests only (plus a manual run for a branch without one): a `push` trigger as well would build every
+# commit of a PR branch twice, once per event. master is covered by release.yml.
 on:
-  push:
-    branches-ignore:
-      - master # master is covered by release.yml
-    paths:
-      - 'tools/**'
-      - '.github/actions/build-ai-tool/**'
-      - '.github/workflows/tools.yml'
   pull_request:
     paths:
       - 'tools/**'
+      - 'media-server/workerapi/**'
+      - 'media-server/cmd/loki-worker/**'
       - '.github/actions/build-ai-tool/**'
+      - '.github/actions/worker-image/**'
       - '.github/workflows/tools.yml'
   workflow_dispatch:
 
 permissions:
   contents: read
+
+# a newer commit on the same PR supersedes the run in progress
+concurrency:
+  group: tools-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -57,3 +61,27 @@ jobs:
             tools/${{ matrix.tool }}/dist/${{ steps.tool.outputs.archive }}.sha256
           if-no-files-found: error
           retention-days: 7
+
+  # The worker image from the Linux builds above (no second compile), smoke-tested, not pushed.
+  worker-image:
+    name: loki-worker image
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: media-server/go.mod
+          cache-dependency-path: media-server/go.sum
+
+      - name: Test loki-worker and its contract
+        working-directory: media-server
+        run: go test ./workerapi/... ./cmd/loki-worker/
+
+      - name: Build and smoke-test the image
+        uses: ./.github/actions/worker-image
+        with:
+          version: pr-${{ github.event.pull_request.number || github.run_number }}

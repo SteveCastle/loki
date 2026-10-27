@@ -32,11 +32,16 @@
 
 ARG CUDA_VERSION=12.6.3
 ARG UBUNTU_VERSION=22.04
+# Where the engines come from: "source" compiles them here (a local build),
+# "prebuilt" packages the Linux binaries CI already built
+# (tools/worker/prebuilt/<engine>, from the build-ai-tool artifacts), so CI
+# never compiles the CUDA engines twice.
+ARG ENGINES_STAGE=source
 
 # -----------------------------------------------------------------------------
 # Stage 1 — the CUDA engines (Rust + nvcc)
 # -----------------------------------------------------------------------------
-FROM nvidia/cuda:${CUDA_VERSION}-devel-ubuntu${UBUNTU_VERSION} AS engines
+FROM nvidia/cuda:${CUDA_VERSION}-devel-ubuntu${UBUNTU_VERSION} AS engines-source
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates curl build-essential pkg-config \
  && rm -rf /var/lib/apt/lists/*
@@ -60,6 +65,11 @@ RUN --mount=type=cache,target=/opt/cargo/registry \
       cp "/src/target/$e/release/$e" /out/; \
     done; \
     ls -la /out
+
+FROM scratch AS engines-prebuilt
+COPY tools/worker/prebuilt/ /out/
+
+FROM engines-${ENGINES_STAGE} AS engines
 
 # -----------------------------------------------------------------------------
 # Stage 2 — loki-worker (Go)
@@ -102,7 +112,7 @@ FROM nvidia/cuda:${CUDA_VERSION}-runtime-ubuntu${UBUNTU_VERSION}
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates curl tini \
  && rm -rf /var/lib/apt/lists/*
-COPY --from=engines /out/ /usr/local/bin/
+COPY --from=engines --chmod=755 /out/ /usr/local/bin/
 COPY --from=worker /out/loki-worker /usr/local/bin/loki-worker
 COPY --from=ffmpeg /out/ /usr/local/bin/
 ARG VERSION=dev

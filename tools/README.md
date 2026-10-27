@@ -92,8 +92,8 @@ so the server can send its Transform jobs to a pool of remote GPUs instead of (o
 
 | workflow | when | what |
 |---|---|---|
-| [`tools.yml`](../.github/workflows/tools.yml) | PRs and branch pushes touching `tools/**` | build, test, smoke-test and package both tools on Windows and Linux; archives are kept for 7 days |
-| [`release.yml`](../.github/workflows/release.yml) job *Build AI tools* | pushes to `master` | the same build; archives are attached to the GitHub release next to the Electron app and the media server |
+| [`tools.yml`](../.github/workflows/tools.yml) | pull requests touching `tools/**` (or by hand) | build, test, smoke-test and package every tool on Windows and Linux (archives kept 7 days), then package the Linux builds into the loki-worker image and smoke-test it |
+| [`release.yml`](../.github/workflows/release.yml) job *Build AI tools* | pushes to `master` | the same build; archives are attached to the GitHub release next to the Electron app and the media server. Job *Publish worker image* then pushes `ghcr.io/stevecastle/loki-worker` built from those same Linux archives. |
 
 Both use the composite action [`.github/actions/build-ai-tool`](../.github/actions/build-ai-tool/action.yml). Hosted runners have no GPU,
 so the CI runs the GPU-free tests and checks that the executable starts and prints its help with no NVIDIA driver present; it installs only

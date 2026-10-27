@@ -20,8 +20,8 @@ working unchanged.
 
 ## The image
 
-`ghcr.io/stevecastle/loki-worker` (built by [`.github/workflows/worker-image.yml`](../../.github/workflows/worker-image.yml)
-from [`Dockerfile`](Dockerfile); tags `latest`, the app version, `sha-<commit>`). One image holds all four engines,
+`ghcr.io/stevecastle/loki-worker` (published by the release pipeline from [`Dockerfile`](Dockerfile), packaging the engines its
+tool jobs built; tags `latest`, the app version, `sha-<commit>`). One image holds all four engines,
 loki-worker, and ffmpeg. Models are not in the image: they download on first use (17 GB retouch, 42 GB reshoot, 27 GB
 dream, 1.8 GB segment) into `/models` — **mount a volume there** so they survive restarts.
 
@@ -179,6 +179,7 @@ Serverless (RunPod queue) jobs take `{"input": {"spec": JobSpec}}` (or `{"warm":
 
 ```bash
 docker build -f tools/worker/Dockerfile -t loki-worker .           # repo root as context; ~30 min cold (CUDA kernels)
+# CI packages engines it already built instead: put them in tools/worker/prebuilt/ and add --build-arg ENGINES_STAGE=prebuilt
 docker build -f tools/worker/Dockerfile --build-arg ENGINES="loki-segment loki-dream" -t loki-worker:light .
 cd media-server && go test ./workerapi/ ./cmd/loki-worker/          # fake engines, no GPU
 # against a real worker with models (a GPU):

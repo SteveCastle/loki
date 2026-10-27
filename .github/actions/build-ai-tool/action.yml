@@ -73,6 +73,16 @@ runs:
         if command -v ffmpeg >/dev/null; then exit 0; fi
         if [ "$RUNNER_OS" = "Windows" ]; then choco install ffmpeg -y --no-progress; else sudo apt-get update && sudo apt-get install -y ffmpeg; fi
 
+    # The Linux build is also what the loki-worker image ships (tools/worker/Dockerfile, ENGINES_STAGE=prebuilt), so
+    # it carries SASS for Ada and Hopper plus compute_90 PTX for Blackwell; the FP8 engines need sm_89+, loki-segment
+    # also runs on Ampere. Set for the whole job: build.rs reruns on a changed value, so the test step must see the same.
+    - name: CUDA targets (Linux)
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        if [ "${{ inputs.tool }}" = "loki-segment" ]; then echo "LOKI_CUDA_ARCHS=80,86,89,90" >> "$GITHUB_ENV"; else echo "LOKI_CUDA_ARCHS=89,90" >> "$GITHUB_ENV"; fi
+        echo "LOKI_CUDA_PTX=90" >> "$GITHUB_ENV"
+
     - name: Build
       shell: bash
       working-directory: tools/${{ inputs.tool }}

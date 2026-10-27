@@ -14,3 +14,4 @@
 !media-server/go.sum
 !media-server/workerapi
 !media-server/cmd/loki-worker
+!tools/worker/prebuilt

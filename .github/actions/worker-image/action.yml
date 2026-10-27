@@ -1,0 +1,91 @@
+name: Build loki-worker image
+description: >
+  Packages the Linux builds of the four loki-* engines (the tools-<engine>-linux-amd64 artifacts of the
+  build-ai-tool jobs in the same run) with loki-worker and ffmpeg into the loki-worker image
+  (tools/worker/Dockerfile, ENGINES_STAGE=prebuilt: nothing is compiled twice), smoke-tests it (no GPU on
+  hosted runners: every binary must start and print its version), and optionally pushes it to GHCR.
+
+inputs:
+  version:
+    description: Image version label (also the loki-worker version)
+    required: true
+  push:
+    description: Push to GHCR ("true"/"false")
+    default: 'false'
+  tags:
+    description: Image tags to push, one per line (when push is true)
+    default: ''
+  token:
+    description: Token for ghcr.io (GITHUB_TOKEN with packages:write)
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: Download the Linux engines
+      uses: actions/download-artifact@v4
+      with:
+        pattern: tools-*-linux-amd64
+        path: ${{ runner.temp }}/engines
+
+    - name: Unpack into tools/worker/prebuilt
+      shell: bash
+      run: |
+        set -euo pipefail
+        mkdir -p tools/worker/prebuilt
+        for e in loki-retouch loki-reshoot loki-dream loki-segment; do
+          dir="$RUNNER_TEMP/engines/tools-$e-linux-amd64"
+          [ -f "$dir/$e-linux-amd64.zip" ] || { echo "::error::no Linux build of $e in this run"; exit 1; }
+          (cd "$dir" && sha256sum -c "$e-linux-amd64.zip.sha256")
+          unzip -q -o "$dir/$e-linux-amd64.zip" -d "$RUNNER_TEMP/unz"
+          install -m 755 "$RUNNER_TEMP/unz/$e-linux-amd64/$e" tools/worker/prebuilt/$e
+        done
+        ls -l tools/worker/prebuilt
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Build
+      uses: docker/build-push-action@v6
+      env:
+        DOCKER_BUILD_RECORD_UPLOAD: 'false'
+      with:
+        context: .
+        file: tools/worker/Dockerfile
+        platforms: linux/amd64
+        load: true
+        tags: loki-worker:ci
+        build-args: |
+          ENGINES_STAGE=prebuilt
+          VERSION=${{ inputs.version }}
+        cache-from: type=gha,scope=loki-worker
+        cache-to: type=gha,scope=loki-worker,mode=max
+
+    - name: Smoke test
+      shell: bash
+      run: |
+        docker run --rm --entrypoint sh loki-worker:ci -c '
+          set -e
+          loki-worker --version
+          for e in loki-retouch loki-reshoot loki-dream loki-segment; do $e --version; $e --help | grep -q -- "--worker"; done
+          ffmpeg -hide_banner -version | head -1
+        '
+
+    - name: Log in to GHCR
+      if: inputs.push == 'true'
+      uses: docker/login-action@v3
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ inputs.token }}
+
+    - name: Push
+      if: inputs.push == 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        while read -r tag; do
+          [ -n "$tag" ] || continue
+          docker tag loki-worker:ci "$tag"
+          docker push "$tag"
+        done <<< "${{ inputs.tags }}"

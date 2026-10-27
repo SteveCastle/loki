@@ -585,6 +585,32 @@ jobs:
             tools/${{ matrix.tool }}/dist/${{ steps.tool.outputs.archive }}.sha256
           if-no-files-found: error
 
+  # The GPU worker image (tools/worker/README.md): the Linux engine builds of build-tools above, packaged with
+  # loki-worker and ffmpeg — the engines are not compiled again. Non-blocking like build-tools; needs all four
+  # Linux builds, so a failed tool build skips the image for that release.
+  publish-worker-image:
+    name: Publish worker image
+    needs: [version-and-tag, build-tools]
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build, smoke-test, push
+        uses: ./.github/actions/worker-image
+        with:
+          version: ${{ needs.version-and-tag.outputs.version }}
+          push: 'true'
+          token: ${{ secrets.GITHUB_TOKEN }}
+          tags: |
+            ghcr.io/stevecastle/loki-worker:latest
+            ghcr.io/stevecastle/loki-worker:${{ needs.version-and-tag.outputs.version }}
+            ghcr.io/stevecastle/loki-worker:sha-${{ github.sha }}
+
   # Container image — the easiest install path for Linux/NAS users. Publishes
   # to GHCR with both a version tag and :latest.
   publish-docker:
