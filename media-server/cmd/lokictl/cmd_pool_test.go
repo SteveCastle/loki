@@ -111,6 +111,21 @@ func TestPoolCreateAndDestroyRunPodPods(t *testing.T) {
 	if env["LOKI_WORKER_TOKEN"] != n.Token || env["LOKI_WORKER_PRELOAD"] != "loki-retouch" {
 		t.Fatalf("pod env %v", env)
 	}
+	if created[0]["volumeMountPath"] != "/models" || env["LOKI_MODELS"] != "/models" || created[0]["volumeInGb"] == nil {
+		t.Fatalf("pod volume: %v %v", created[0]["volumeMountPath"], env["LOKI_MODELS"])
+	}
+	// with a network volume the pod sees it where serverless workers do
+	if code := cmdPoolCreate(a, []string{"runpod-pods", "shared", "--runpod-key", "rpk", "--network-volume", "vol1"}); code != 0 {
+		t.Fatalf("create with a network volume: exit %d", code)
+	}
+	nv := created[len(created)-1]
+	if nv["networkVolumeId"] != "vol1" || nv["volumeMountPath"] != "/runpod-volume" || nv["env"].(map[string]any)["LOKI_MODELS"] != "/runpod-volume/models" || nv["volumeInGb"] != nil {
+		t.Fatalf("network-volume pod: %v", nv)
+	}
+	if code := cmdPoolDestroy(a, []string{"shared", "--runpod-key", "rpk"}); code != 0 {
+		t.Fatalf("destroy shared: exit %d", code)
+	}
+	deleted = nil
 	if code := cmdPoolDestroy(a, []string{"gpu", "--runpod-key", "rpk"}); code != 0 {
 		t.Fatalf("destroy exit %d", code)
 	}

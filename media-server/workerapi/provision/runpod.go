@@ -22,6 +22,10 @@ const DefaultImage = "ghcr.io/stevecastle/loki-worker:latest"
 // 24 GB or more), cheapest first; RunPod rents whichever is available.
 var DefaultGPUs = []string{"NVIDIA GeForce RTX 4090", "NVIDIA L40S", "NVIDIA RTX 6000 Ada Generation", "NVIDIA GeForce RTX 5090", "NVIDIA H100 80GB HBM3"}
 
+// NetworkVolumeMount is where RunPod serverless workers mount a network
+// volume; pods with one mount it there too.
+const NetworkVolumeMount = "/runpod-volume"
+
 // WorkerPort is the port the image serves on.
 const WorkerPort = 8080
 
@@ -83,7 +87,8 @@ type PodSpec struct {
 	// Cloud is SECURE (default) or COMMUNITY.
 	Cloud string
 	// VolumeGB is the pod volume mounted at /models: the models stay across
-	// pod restarts (ignored with NetworkVolumeID).
+	// pod restarts (ignored with NetworkVolumeID, which is mounted at
+	// /runpod-volume like a serverless worker's, models in its models/ folder).
 	VolumeGB        int
 	ContainerDiskGB int
 	NetworkVolumeID string
@@ -116,7 +121,14 @@ func (r *RunPod) CreatePod(ctx context.Context, s PodSpec) (*Pod, error) {
 	if len(s.GPUs) == 0 {
 		s.GPUs = DefaultGPUs
 	}
-	env := map[string]string{"LOKI_WORKER_TOKEN": s.Token, "LOKI_MODELS": "/models"}
+	// A network volume is shared with serverless workers, which mount it at
+	// /runpod-volume and read /runpod-volume/models: pods use the same path so
+	// every worker finds the one copy of the models.
+	mount, models := "/models", "/models"
+	if s.NetworkVolumeID != "" {
+		mount, models = NetworkVolumeMount, NetworkVolumeMount+"/models"
+	}
+	env := map[string]string{"LOKI_WORKER_TOKEN": s.Token, "LOKI_MODELS": models}
 	if len(s.Preload) > 0 {
 		env["LOKI_WORKER_PRELOAD"] = strings.Join(s.Preload, ",")
 	}
@@ -130,7 +142,7 @@ func (r *RunPod) CreatePod(ctx context.Context, s PodSpec) (*Pod, error) {
 		"gpuCount":          max(1, s.GPUCount),
 		"cloudType":         firstNonEmpty(s.Cloud, "SECURE"),
 		"containerDiskInGb": max(s.ContainerDiskGB, 30),
-		"volumeMountPath":   "/models",
+		"volumeMountPath":   mount,
 		"ports":             []string{fmt.Sprintf("%d/http", WorkerPort)},
 		"env":               env,
 	}
