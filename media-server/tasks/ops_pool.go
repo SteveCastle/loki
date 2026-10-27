@@ -117,13 +117,17 @@ func prepareEmbedOp(run *ItemRun) (*ItemProcessor, error) {
 		}
 	}
 
+	// First use downloads the model (logged to the job), then proceeds.
+	if err := EnsureModels(j.Ctx, jobLogf(q, j.ID), model.ID); err != nil {
+		return nil, err
+	}
 	imageModel, _ := deps.ModelPath(model.ID, model.ImageModelFile)
 	if imageModel == "" {
-		return nil, fmt.Errorf("%s not installed; install it from Dependencies", model.DisplayName)
+		return nil, fmt.Errorf("%s is installed but %s is missing; reinstall it from Dependencies", model.DisplayName, model.ImageModelFile)
 	}
 	embedBin := deps.BundledOrEmpty("embed")
 	if embedBin == "" {
-		return nil, fmt.Errorf("embed binary not installed; install it from Dependencies")
+		return nil, bundledMissing("embed")
 	}
 
 	_, threads := ResolveEmbedResources()
@@ -215,10 +219,6 @@ func prepareAutotagOp(run *ItemRun) (*ItemProcessor, error) {
 	db := q.Db
 	cfg := appconfig.Get()
 
-	if err := EnsureCategoryExists(db, suggestedCategory, 0); err != nil {
-		return nil, fmt.Errorf("ensure category: %w", err)
-	}
-
 	_, threads := ResolveAutotagResources()
 	ortLib, provider := resolveONNXRuntime(AutotagProviderFromConfig())
 	if AutotagProviderFromConfig() == "directml" && provider != "directml" {
@@ -226,16 +226,26 @@ func prepareAutotagOp(run *ItemRun) (*ItemProcessor, error) {
 	}
 
 	// Resolve the active tagging model + its files (deps first, config fallback).
+	// A model configured by path is used as is; otherwise first use
+	// downloads the dependency (logged to the job), then proceeds.
 	tagger := ActiveTaggerModel()
+	if depModelPathOrEmpty(tagger.ID, tagger.ModelFile) == "" && cfg.OnnxTagger.ModelPath == "" {
+		if err := EnsureModels(j.Ctx, jobLogf(q, j.ID), tagger.ID); err != nil {
+			return nil, err
+		}
+	}
 	modelPath := firstNonEmpty(depModelPathOrEmpty(tagger.ID, tagger.ModelFile), cfg.OnnxTagger.ModelPath)
 	if modelPath == "" {
-		return nil, fmt.Errorf("%s not installed; install it from Dependencies", tagger.DisplayName)
+		return nil, fmt.Errorf("%s is installed but %s is missing; reinstall it from Dependencies", tagger.DisplayName, tagger.ModelFile)
 	}
 	labelsPath := firstNonEmpty(depModelPathOrEmpty(tagger.ID, tagger.LabelsFile), cfg.OnnxTagger.LabelsPath)
 	configPath := firstNonEmpty(depModelPathOrEmpty(tagger.ID, tagger.ConfigFile), cfg.OnnxTagger.ConfigPath)
 	onnxtagBin := deps.BundledOrEmpty("onnxtag")
 	if onnxtagBin == "" {
-		return nil, fmt.Errorf("onnxtag binary not installed; install it from Dependencies")
+		return nil, bundledMissing("onnxtag")
+	}
+	if err := EnsureCategoryExists(db, suggestedCategory, 0); err != nil {
+		return nil, fmt.Errorf("ensure category: %w", err)
 	}
 
 	args := []string{"--serve", "--model=" + modelPath, "--provider=" + provider}

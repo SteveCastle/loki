@@ -1,0 +1,3 @@
+{"gen": "gen6", "steps": 8, "seeds": 2,
+ "why": "x1delta had the best fidelity (delta words). Mutate it: xd-face (keep the facing/angle to camera: the window profile turned toward camera and lost its curves), xd-lead (delta words in v2lead's leading position), xd-face-body (+ body-type list). Sampling crosses with gen 5's winners come in gen 7.",
+ "strategies": ["xd-face", "xd-lead", "xd-face-body"]}

@@ -98,13 +98,16 @@ func directMLRuntimeLib() string {
 // m's image encoder (extracting a video frame first when needed). Used to embed
 // a "find similar" query item on the fly when it isn't indexed yet.
 func embedFileWithModel(ctx context.Context, path string, m EmbedModel) ([]float32, error) {
+	if err := startModelInstalls("visual search model", m.ID); err != nil {
+		return nil, err
+	}
 	imageModel, err := deps.ModelPath(m.ID, m.ImageModelFile)
 	if err != nil || imageModel == "" {
 		return nil, fmt.Errorf("%s image model not installed: %w", m.DisplayName, err)
 	}
 	embedBin := deps.BundledOrEmpty("embed")
 	if embedBin == "" {
-		return nil, fmt.Errorf("embed binary not installed")
+		return nil, bundledMissing("embed")
 	}
 	ortLib := deps.BundledOrEmpty("onnxruntime")
 

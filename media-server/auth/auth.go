@@ -36,6 +36,11 @@ type AuthService struct {
 	jwtSecret []byte
 }
 
+// SessionLifetime is how long a sign-in lasts: the JWT's expiry and the
+// auth_token cookie's, which must match — a cookie that dies first (it used
+// to be 24h) signs browsers out while their token is still good.
+const SessionLifetime = 365 * 24 * time.Hour
+
 func NewAuthService(db *sql.DB, secret string) *AuthService {
 	return &AuthService{
 		db:        db,
@@ -153,7 +158,7 @@ func (s *AuthService) Login(username, password string) (string, error) {
 	}
 
 	// Generate Token
-	expirationTime := time.Now().Add(24 * time.Hour * 365)
+	expirationTime := time.Now().Add(SessionLifetime)
 	claims := &Claims{
 		Username: username,
 		RegisteredClaims: jwt.RegisteredClaims{

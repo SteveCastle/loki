@@ -5,6 +5,7 @@
 // re-cloned to the worker on every consumer's first search and (b) being fuzzy
 // scanned for trivially-short, match-everything queries.
 import {
+  cancelTagSearches,
   indexTags,
   searchTags,
   type TagConcept,
@@ -82,5 +83,51 @@ describe('tag-search-service', () => {
     // Same reference, different scope: must still index, or the second scope
     // would be left searching whatever the first one happened to load.
     expect(indexTags(ref, 'curated')).toBe(true);
+  });
+
+  // The palette can be typed into before its scope's tags have arrived. The
+  // search must be held and answered once the index lands, not dropped.
+  it('answers a search issued before its scope is indexed', () => {
+    // 'curated' has no index yet in this fresh module only if no earlier test
+    // indexed it, so isolate the module.
+    jest.isolateModules(() => {
+      // eslint-disable-next-line global-require, @typescript-eslint/no-var-requires
+      const svc = require('../renderer/search/tag-search-service');
+      const cb = jest.fn();
+      svc.searchTags('blo', 10, cb, 'curated');
+      expect(cb).not.toHaveBeenCalled();
+      svc.indexTags([...TAGS], 'curated');
+      expect(cb).toHaveBeenCalledTimes(1);
+      expect(cb.mock.calls[0][0].map((t: TagConcept) => t.label)).toContain(
+        'blonde_hair'
+      );
+    });
+  });
+
+  it('drops a cancelled search that was waiting on its index', () => {
+    jest.isolateModules(() => {
+      // eslint-disable-next-line global-require, @typescript-eslint/no-var-requires
+      const svc = require('../renderer/search/tag-search-service');
+      const cb = jest.fn();
+      svc.searchTags('blo', 10, cb, 'curated');
+      svc.cancelTagSearches(cb);
+      svc.indexTags([...TAGS], 'curated');
+      expect(cb).not.toHaveBeenCalled();
+    });
+  });
+
+  it('returns the same tag objects it was given', (done) => {
+    const ref = [...TAGS];
+    indexTags(ref, 'all');
+    searchTags(
+      'blue',
+      10,
+      (items) => {
+        expect(items[0]).toBe(ref[1]);
+        done();
+      },
+      'all'
+    );
+    expect(typeof cancelTagSearches).toBe('function');
   });
 });

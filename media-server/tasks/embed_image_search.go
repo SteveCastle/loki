@@ -18,6 +18,9 @@ func ImageQueryVectorForBytes(ctx context.Context, m EmbedModel, image []byte) (
 	if len(image) == 0 {
 		return nil, fmt.Errorf("empty image")
 	}
+	if err := startModelInstalls("visual search model", m.ID); err != nil {
+		return nil, err
+	}
 	imageModel, err := deps.ModelPath(m.ID, m.ImageModelFile)
 	if err != nil {
 		return nil, fmt.Errorf("image model not installed: %w", err)
@@ -28,7 +31,7 @@ func ImageQueryVectorForBytes(ctx context.Context, m EmbedModel, image []byte) (
 	ortLib := deps.BundledOrEmpty("onnxruntime")
 	embedBin := deps.BundledOrEmpty("embed")
 	if embedBin == "" {
-		return nil, fmt.Errorf("embed binary not installed")
+		return nil, bundledMissing("embed")
 	}
 
 	tmp, err := os.CreateTemp("", "region-*.png")

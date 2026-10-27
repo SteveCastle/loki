@@ -96,22 +96,45 @@ const GetPlayer = React.memo(
 
 GetPlayer.displayName = 'GetPlayer';
 
+// One Set per selection array, shared by every visible cell: a shift-range
+// selection can hold hundreds of thousands of paths, and each cell runs its
+// selector on every machine event.
+const selectionSets = new WeakMap<string[], Set<string>>();
+const EMPTY_SET = new Set<string>();
+function selectionSet(selection: string[] | null | undefined): Set<string> {
+  if (!selection || selection.length === 0) return EMPTY_SET;
+  let set = selectionSets.get(selection);
+  if (!set) {
+    set = new Set(selection);
+    selectionSets.set(selection, set);
+  }
+  return set;
+}
+
 function ListItemComponent({ item, idx, height, onDimensionsLoaded }: Props) {
   const mediaRef = useRef<
     HTMLImageElement | HTMLVideoElement | HTMLAudioElement
   >(null);
   const { libraryService } = useContext(GlobalStateContext);
-  const cursor = useSelector(libraryService, (state) => state.context.cursor);
+  // A boolean, so a cursor move re-renders only the two cells it touches.
+  const isCursor = useSelector(
+    libraryService,
+    (state) => state.context.cursor === idx
+  );
   // Highlight items in the context palette's multi-selection while it's open.
   const inContextSelection = useSelector(
     libraryService,
     (state) =>
       state.context.contextPalette.display &&
-      (state.context.contextPalette.selection ?? []).includes(item.path)
+      selectionSet(state.context.contextPalette.selection).has(item.path)
   );
-  const { sortBy } = useSelector(libraryService, (state) => {
-    return state.context.settings;
-  });
+  // Individual fields, never the settings object: every grid cell runs these,
+  // and a whole-object selector re-rendered all of them on ANY setting change
+  // (a volume drag sends one per input tick).
+  const sortBy = useSelector(
+    libraryService,
+    (state) => state.context.settings.sortBy
+  );
   const state = useSelector(
     libraryService,
     (state) => state,
@@ -121,9 +144,13 @@ function ListItemComponent({ item, idx, height, onDimensionsLoaded }: Props) {
   );
   const canDrag =
     state.matches({ library: 'loadedFromDB' }) && sortBy === 'weight';
-  const { showTags, showFileInfo } = useSelector(
+  const showTags = useSelector(
     libraryService,
-    (state) => state.context.settings
+    (state) => state.context.settings.showTags
+  );
+  const showFileInfo = useSelector(
+    libraryService,
+    (state) => state.context.settings.showFileInfo
   );
 
   const imageCache = useSelector(libraryService, (state) => {
@@ -280,7 +307,7 @@ function ListItemComponent({ item, idx, height, onDimensionsLoaded }: Props) {
     () =>
       [
         'ListItem',
-        cursor === idx ? 'selected' : '',
+        isCursor ? 'selected' : '',
         inContextSelection ? 'context-selected' : '',
         collectedProps.isOver &&
         !collectedProps.isSelf &&
@@ -296,8 +323,7 @@ function ListItemComponent({ item, idx, height, onDimensionsLoaded }: Props) {
         isLeft ? 'left' : 'right',
       ].join(' '),
     [
-      cursor,
-      idx,
+      isCursor,
       inContextSelection,
       canDrag,
       collectedProps.isOver,

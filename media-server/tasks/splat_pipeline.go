@@ -56,9 +56,6 @@ type splatTools struct {
 	FFmpeg, FFprobe, Colmap, Brush string
 }
 
-// installSplatDep is a variable so tests never touch the network.
-var installSplatDep = installDep
-
 // resolveSplatTools finds COLMAP and Brush — on PATH first, then the
 // managed copies, installing them on first use (logged to the job).
 func resolveSplatTools(ctx context.Context, logf func(string, ...any)) (splatTools, error) {
@@ -74,7 +71,7 @@ func resolveSplatTools(ctx context.Context, logf func(string, ...any)) (splatToo
 		}
 	}
 	if t.FFmpeg == "" || t.FFprobe == "" {
-		return t, fmt.Errorf("ffmpeg/ffprobe not found (install them from the Dependencies page)")
+		return t, fmt.Errorf("ffmpeg/ffprobe not found (they ship with Lowkey Media Server — reinstall or update the server, or put them on PATH)")
 	}
 	ext := platform.BinaryExtension()
 	// rel is the executable inside the dependency's folder.
@@ -91,9 +88,8 @@ func resolveSplatTools(ctx context.Context, logf func(string, ...any)) (splatToo
 		if runtime.GOOS != "windows" && id == "colmap" {
 			return "", fmt.Errorf("COLMAP is not on PATH — no prebuilt Linux/macOS release exists; install colmap 4.x (package manager or source build) and restart the server")
 		}
-		logf("installing %s (one-time download)", human)
-		if err := installSplatDep(ctx, logf, id); err != nil {
-			return "", fmt.Errorf("could not install %s: %w (it can also be put on PATH)", human, err)
+		if err := EnsureModels(ctx, func(s string) { logf("%s", s) }, id); err != nil {
+			return "", fmt.Errorf("%w (%s can also be put on PATH)", err, human)
 		}
 		return managed(id, rel, name)
 	}

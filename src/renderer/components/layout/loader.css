@@ -11,6 +11,28 @@
   z-index: 999;
   padding: 20px;
   pointer-events: none;
+  gap: 12px;
+}
+
+.Loader:has(.Loader-stop) {
+  opacity: 1;
+}
+
+.Loader-stop {
+  pointer-events: auto;
+  font: inherit;
+  font-size: 12px;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 4px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+.Loader-stop:hover {
+  background: rgba(0, 0, 0, 0.8);
+  border-color: rgba(255, 255, 255, 0.5);
 }
 
 .Loader .spinner,

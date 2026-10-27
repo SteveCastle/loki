@@ -1,13 +1,13 @@
 name: Build AI CLI tool
 description: >
-  Build, test and package one of the standalone CUDA CLIs under tools/ (loki-retouch, loki-reshoot) for the
+  Build, test and package one of the standalone CUDA CLIs under tools/ (loki-retouch, loki-reshoot, loki-segment, loki-dream) for the
   runner's OS. Only nvcc and the CUDA headers are installed (kernels are compiled to fatbins at build time;
   the driver is loaded at run time), so no GPU is needed: the tests that run here are the GPU-free ones, and
   the GPU tests are run by hand (see tools/README.md).
 
 inputs:
   tool:
-    description: Directory name under tools/ (loki-retouch or loki-reshoot)
+    description: Directory name under tools/ (loki-retouch, loki-reshoot, loki-segment or loki-dream)
     required: true
   target:
     description: Artifact suffix, e.g. windows-amd64 or linux-amd64
@@ -73,6 +73,16 @@ runs:
         if command -v ffmpeg >/dev/null; then exit 0; fi
         if [ "$RUNNER_OS" = "Windows" ]; then choco install ffmpeg -y --no-progress; else sudo apt-get update && sudo apt-get install -y ffmpeg; fi
 
+    # The Linux build is also what the loki-worker image ships (tools/worker/Dockerfile, ENGINES_STAGE=prebuilt), so
+    # it carries SASS for Ada and Hopper plus compute_90 PTX for Blackwell; the FP8 engines need sm_89+, loki-segment
+    # also runs on Ampere. Set for the whole job: build.rs reruns on a changed value, so the test step must see the same.
+    - name: CUDA targets (Linux)
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        if [ "${{ inputs.tool }}" = "loki-segment" ]; then echo "LOKI_CUDA_ARCHS=80,86,89,90" >> "$GITHUB_ENV"; else echo "LOKI_CUDA_ARCHS=89,90" >> "$GITHUB_ENV"; fi
+        echo "LOKI_CUDA_PTX=90" >> "$GITHUB_ENV"
+
     - name: Build
       shell: bash
       working-directory: tools/${{ inputs.tool }}
@@ -119,6 +129,8 @@ runs:
         fi
         cp README.md "$STAGE/README.md"
         cp ../CONVENTIONS.md "$STAGE/CONVENTIONS.md"
+        # Model licenses that require their text to travel with the tool (loki-segment: Meta's SAM License).
+        for f in LICENSE-*.txt; do [ -f "$f" ] && cp "$f" "$STAGE/"; done
         cd dist
         # A zip on both platforms (the media server's dependency installer unpacks zips), with a sha256sum
         # sidecar that it verifies the download against. The executable sits in a <name>/ folder inside.

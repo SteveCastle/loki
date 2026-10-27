@@ -27,7 +27,7 @@ export function useWarmTagSearch(): void {
   );
 
   // Held off the startup critical path. Even at the curated scope this is a DB
-  // query, an IPC clone and a Fuse build, and none of it is on the path to
+  // query, an IPC clone and an index build, and none of it is on the path to
   // showing the user the file they opened. Nothing on screen needs it: it only
   // makes the FIRST type-ahead instant, and the user cannot type before the app
   // has painted.

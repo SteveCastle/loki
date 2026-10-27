@@ -138,6 +138,10 @@ type Job struct {
 	State        JobState           `json:"state"`
 	Ctx          context.Context    `json:"-"`
 	Cancel       context.CancelFunc `json:"-"`
+	// cancelHold: the job was cancelled while running and still holds its
+	// host/resource buckets until its task actually returns (see
+	// ReleaseCancelled).
+	cancelHold bool
 
 	// Timestamps for various states
 	CreatedAt   time.Time `json:"created_at"`
@@ -200,6 +204,20 @@ type Queue struct {
 	// its normalized item keys; pathJobs is the reverse. Lazily initialized.
 	jobItems map[string][]string
 	pathJobs map[string]map[string]struct{}
+
+	// firstPending is a low-water mark into JobOrder: every job before it
+	// is known not to be Pending, so ClaimJob skips the finished history
+	// instead of walking all of it on every claim (each job completion
+	// claims the next). Jobs only become Pending by being appended, except
+	// ResumeJob and removals, which reset it.
+	firstPending int
+
+	// Deferred persistence of appended stdout/outputs (see persist.go).
+	dirty     map[string]struct{}
+	lastSaved map[string]time.Time
+	flushStop chan struct{}
+	flushDone chan struct{}
+	closeOnce sync.Once
 }
 
 // NewQueue initializes and returns a new Queue.
@@ -237,6 +255,7 @@ func NewQueueWithDB(db *sql.DB) *Queue {
 	if err := q.loadJobsFromDB(); err != nil {
 		log.Printf("Failed to load jobs from database: %v", err)
 	}
+	q.startFlusher()
 
 	return q
 }
@@ -334,6 +353,9 @@ func (q *Queue) saveJobToDB(job *Job) error {
 		string(resourcesJSON),
 		job.InterruptCount,
 	)
+	if err == nil {
+		q.noteSavedLocked(job.ID)
+	}
 
 	return err
 }
@@ -555,7 +577,7 @@ func (q *Queue) AddJob(id string, command string, arguments []string, input stri
 	}
 
 	// Broadcast the new job to the Signal channel
-	q.Signal <- id
+	q.signalLocked(id)
 	error := serializeListUpdate("create", job)
 	if error != nil {
 		return "", error
@@ -644,7 +666,7 @@ func (q *Queue) CopyJob(id string) (string, error) {
 	}
 
 	// Broadcast the new job to the Signal channel
-	q.Signal <- newID
+	q.signalLocked(newID)
 	error := serializeListUpdate("create", &newJob)
 	if error != nil {
 		return "", error
@@ -660,7 +682,11 @@ func (q *Queue) ClaimJob() (*Job, error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
-	for _, jobID := range q.JobOrder {
+	for q.firstPending < len(q.JobOrder) &&
+		q.Jobs[q.JobOrder[q.firstPending]].State != StatePending {
+		q.firstPending++
+	}
+	for _, jobID := range q.JobOrder[q.firstPending:] {
 		job := q.Jobs[jobID]
 		if job.State == StatePending && q.canClaim(job) {
 			// Every bucket the job occupies (host + resources) must have a
@@ -752,9 +778,10 @@ func (q *Queue) ErrorJob(id string) error {
 		log.Printf("Failed to save job error state to database: %v", err)
 	}
 
-	err := serializeListUpdate("update", job)
-	if err != nil {
-		return nil
+	// A broadcast failure must not skip cancelling dependents, or they sit
+	// pending forever behind a job that will never succeed.
+	if err := serializeListUpdate("update", job); err != nil {
+		log.Printf("Failed to broadcast job error state: %v", err)
 	}
 
 	// Cancel pending dependents in the same workflow
@@ -814,7 +841,10 @@ func (q *Queue) CancelJob(id string) error {
 	job.Cancel()
 
 	if job.State == StateInProgress {
-		q.decRunningLocked(job)
+		// Keep the buckets until the task has really stopped: a cancelled
+		// diffusion/ffmpeg run can take seconds to wind down, and freeing
+		// its GPU slot now let the next ~20 GB job start on top of it.
+		job.cancelHold = true
 	}
 
 	job.State = StateCancelled
@@ -832,6 +862,21 @@ func (q *Queue) CancelJob(id string) error {
 	}
 
 	return nil
+}
+
+// ReleaseCancelled frees the buckets of a job cancelled mid-run, once its
+// task has returned. The runner calls it after every task; it is a no-op
+// for any job that is not holding buckets past its cancellation.
+func (q *Queue) ReleaseCancelled(id string) {
+	q.mu.Lock()
+	job, ok := q.Jobs[id]
+	if !ok || !job.cancelHold {
+		q.mu.Unlock()
+		return
+	}
+	job.cancelHold = false
+	q.decRunningLocked(job)
+	q.mu.Unlock()
 }
 
 // RequestPause asks a running or pending job to pause. A pending job pauses
@@ -918,6 +963,7 @@ func (q *Queue) ResumeJob(id string) error {
 	}
 
 	job.State = StatePending
+	q.firstPending = 0 // a job mid-history is claimable again
 	job.ClaimedAt = time.Time{}
 	delete(q.pauseRequests, id)
 
@@ -1011,10 +1057,8 @@ func (q *Queue) PushJobStdout(id string, stdout string) error {
 
 	job.Stdout = append(job.Stdout, stdout)
 
-	// Save to database
-	if err := q.saveJobToDB(job); err != nil {
-		log.Printf("Failed to save job stdout to database: %v", err)
-	}
+	// Persisted by the flusher, not per line (see persist.go).
+	q.markDirtyLocked(id)
 
 	err := serializeStdout(stdout, id)
 	if err != nil {
@@ -1047,9 +1091,8 @@ func (q *Queue) RegisterOutputFile(id string, path string, source ...string) err
 	}
 	job.SourceFiles = append(job.SourceFiles, src)
 
-	if err := q.saveJobToDB(job); err != nil {
-		log.Printf("Failed to save job output files to database: %v", err)
-	}
+	// Persisted by the flusher, not per output (see persist.go).
+	q.markDirtyLocked(id)
 
 	return nil
 }
@@ -1078,11 +1121,21 @@ func (q *Queue) RegisterOutputFiles(id string, paths []string) error {
 	job.OutputFiles = append(job.OutputFiles, paths...)
 	job.SourceFiles = append(job.SourceFiles, make([]string, len(paths))...)
 
-	if err := q.saveJobToDB(job); err != nil {
-		log.Printf("Failed to save job output files to database: %v", err)
-	}
+	q.markDirtyLocked(id)
 
 	return nil
+}
+
+// signalLocked wakes the runner for id without ever blocking while q.mu is
+// held. The runner's consumer takes q.mu (ClaimJob) after receiving, so a
+// blocking send on a full channel under the lock deadlocks the whole queue;
+// when the buffer is full the send is handed to a goroutine instead.
+func (q *Queue) signalLocked(id string) {
+	select {
+	case q.Signal <- id:
+	default:
+		go func() { q.Signal <- id }()
+	}
 }
 
 // CompleteJob marks the specified job as completed if it is currently InProgress.
@@ -1259,19 +1312,22 @@ func (q *Queue) RemoveJob(id string) error {
 		return errors.New("job not found")
 	}
 
-	if job.State == StateInProgress {
+	if job.State == StateInProgress || job.cancelHold {
 		q.decRunningLocked(job)
 	}
 
 	delete(q.pauseRequests, id)
 	q.dropJobItemsLocked(id)
 	delete(q.Jobs, id)
+	delete(q.dirty, id)
+	delete(q.lastSaved, id)
 	for i, jobId := range q.JobOrder {
 		if jobId == id {
 			q.JobOrder = append(q.JobOrder[:i], q.JobOrder[i+1:]...)
 			break
 		}
 	}
+	q.firstPending = 0 // indices shifted
 
 	// Remove from database
 	if err := q.removeJobFromDB(id); err != nil {
@@ -1295,44 +1351,69 @@ func (q *Queue) ClearFinishedJobs() (int, error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
-	var clearedCount int
+	// One pass to split the order, one transaction for the deletes: removing
+	// each job with its own JobOrder scan and autocommit DELETE was O(n^2)
+	// and held q.mu for minutes on a large history.
 	var jobsToRemove []string
-
-	// Collect IDs of jobs to remove (terminal states only)
+	kept := q.JobOrder[:0:0]
 	for _, jobID := range q.JobOrder {
 		switch q.Jobs[jobID].State {
 		case StateCompleted, StateCancelled, StateError:
 			jobsToRemove = append(jobsToRemove, jobID)
+		default:
+			kept = append(kept, jobID)
+		}
+	}
+	if len(jobsToRemove) == 0 {
+		return 0, nil
+	}
+	q.JobOrder = kept
+	q.firstPending = 0 // indices shifted
+
+	if q.Db != nil {
+		if err := q.deleteJobsFromDB(jobsToRemove); err != nil {
+			log.Printf("Failed to remove finished jobs from database: %v", err)
 		}
 	}
 
-	// Remove the jobs
 	for _, jobID := range jobsToRemove {
+		if q.Jobs[jobID].cancelHold {
+			q.decRunningLocked(q.Jobs[jobID])
+		}
 		q.dropJobItemsLocked(jobID)
 		delete(q.Jobs, jobID)
-
-		// Remove from job order
-		for i, id := range q.JobOrder {
-			if id == jobID {
-				q.JobOrder = append(q.JobOrder[:i], q.JobOrder[i+1:]...)
-				break
-			}
-		}
-
-		// Remove from database
-		if err := q.removeJobFromDB(jobID); err != nil {
-			log.Printf("Failed to remove job %s from database: %v", jobID, err)
-		}
-
+		delete(q.dirty, jobID)
+		delete(q.lastSaved, jobID)
+	}
+	for i, jobID := range jobsToRemove {
 		// Broadcast the delete event
-		err := serializeListUpdate("delete", &Job{ID: jobID})
-		if err != nil {
-			return clearedCount, err
+		if err := serializeListUpdate("delete", &Job{ID: jobID}); err != nil {
+			return i, err
 		}
-		clearedCount++
 	}
 
-	return clearedCount, nil
+	return len(jobsToRemove), nil
+}
+
+// deleteJobsFromDB deletes many job rows in a single transaction.
+func (q *Queue) deleteJobsFromDB(ids []string) error {
+	tx, err := q.Db.Begin()
+	if err != nil {
+		return err
+	}
+	st, err := tx.Prepare("DELETE FROM jobs WHERE id = ?")
+	if err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	defer st.Close()
+	for _, id := range ids {
+		if _, err := st.Exec(id); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 type SerializedJob struct {
@@ -1506,4 +1587,11 @@ func (q *Queue) SetHostLimit(host string, limit int) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	q.HostLimits[host] = limit
+}
+
+// HostLimit returns a bucket's concurrency cap (0 when unset).
+func (q *Queue) HostLimit(host string) int {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return q.HostLimits[host]
 }

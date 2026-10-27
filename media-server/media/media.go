@@ -2118,6 +2118,8 @@ func InitializeSchema(db *sql.DB) error {
 	// Errors are ignored — they fire when the column already exists.
 	_, _ = db.Exec(`ALTER TABLE category ADD COLUMN description TEXT`)
 	_, _ = db.Exec(`ALTER TABLE category ADD COLUMN tag_view_mode TEXT`)
+	// 'off' lists the category's tags flat, ignoring tag groups.
+	_, _ = db.Exec(`ALTER TABLE category ADD COLUMN tag_grouping TEXT`)
 
 	// Create tag table
 	_, err = db.Exec(`
@@ -2139,6 +2141,29 @@ func InitializeSchema(db *sql.DB) error {
 	// a server-created database diverged from an Electron-created one. Same
 	// idempotent-ALTER pattern as category above.
 	_, _ = db.Exec(`ALTER TABLE tag ADD COLUMN description TEXT`)
+	// The tag_group (within its category) the tag is listed under; NULL =
+	// ungrouped.
+	_, _ = db.Exec(`ALTER TABLE tag ADD COLUMN group_label TEXT`)
+
+	// Tag groups: a purely visual level between a category and its tags. No
+	// query path reads them, so a library without groups behaves as before.
+	// Mirrored in the desktop viewer's initDB (src/main/database.ts).
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS tag_group (
+			category_label TEXT NOT NULL,
+			label TEXT NOT NULL,
+			weight REAL,
+			PRIMARY KEY (category_label, label)
+		)
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to create tag_group table: %w", err)
+	}
+	// Per-group display: hidden = 1 leaves the group out of the taxonomy
+	// panel unless the viewer shows hidden groups; view_mode 'card' | 'list'
+	// overrides the category's tag view mode (NULL follows it).
+	_, _ = db.Exec(`ALTER TABLE tag_group ADD COLUMN hidden INTEGER`)
+	_, _ = db.Exec(`ALTER TABLE tag_group ADD COLUMN view_mode TEXT`)
 
 	// Create media_tag_by_category table
 	_, err = db.Exec(`

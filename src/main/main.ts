@@ -15,6 +15,7 @@ import invariant from 'tiny-invariant';
 import Store from 'electron-store';
 import MenuBuilder from './menu';
 import { resolveHtmlPath } from './util';
+import { openExternalLink } from './open-external';
 import {
   registerSessionStoreHandlers,
   setupSessionStoreLifecycle,
@@ -25,7 +26,14 @@ import { logEvent, installGlobalErrorHandlers } from './errorLog';
 import { withTimeout } from './async-timeout';
 import { isValidFilePath, filePathFromArgv } from './file-handling';
 import { registerStudioProtocol, openStudioWindow } from './studio-window';
+import { openSceneWindow, registerScenePickRelay } from './scene-window';
+import { registerPickWindows } from './pick-window';
 import { registerWallpaperHandlers } from './wallpaper';
+import {
+  autoStartServer,
+  registerServerInstallHandlers,
+} from './server-install';
+import { registerServerLoginHandlers } from './server-login';
 import { heicDisplayFile, isHeicPath } from './heic';
 import {
   mark,
@@ -271,6 +279,22 @@ ipcMain.on('minimize', async (event) => {
 });
 
 registerWallpaperHandlers();
+registerScenePickRelay();
+registerPickWindows({
+  preload: app.isPackaged
+    ? path.join(__dirname, 'preload.js')
+    : path.join(__dirname, '../../.erb/dll/preload.js'),
+  icon: app.isPackaged
+    ? path.join(process.resourcesPath, 'assets', 'icon-window.png')
+    : path.join(__dirname, '../../assets', 'icon-window.png'),
+  // Not the primary window: no launch file (it restores the last session) and
+  // its marks stay out of the launch trace.
+  onCreate: (win) => {
+    const id = win.webContents.id;
+    windowLaunchFiles.set(id, '');
+    win.on('closed', () => windowLaunchFiles.delete(id));
+  },
+});
 
 ipcMain.on('open-external', async (event, args) => {
   const url = args[0];
@@ -285,6 +309,28 @@ ipcMain.on('show-item-in-folder', async (event, args) => {
 // Launch Lowkey Studio in its own window with the given media auto-imported.
 ipcMain.on('open-studio', async (_event, args) => {
   openStudioWindow(Array.isArray(args) ? args.filter((p) => typeof p === 'string') : []);
+});
+
+// Open the Scene editor (mask regions of a still, edit and animate them) in
+// its own window: args = [mediaPath, videoTimeSeconds].
+ipcMain.on('open-scene-editor', async (_event, args) => {
+  const [mediaPath, time] = Array.isArray(args) ? args : [];
+  if (typeof mediaPath !== 'string' || !mediaPath) return;
+  openSceneWindow(mediaPath, Number(time) || 0, {
+    preload: app.isPackaged
+      ? path.join(__dirname, 'preload.js')
+      : path.join(__dirname, '../../.erb/dll/preload.js'),
+    icon: app.isPackaged
+      ? path.join(process.resourcesPath, 'assets', 'icon-window.png')
+      : path.join(__dirname, '../../assets', 'icon-window.png'),
+    // Not the primary window: get-boot-args must not hand it the launch file
+    // (or let its marks join the launch trace).
+    onCreate: (win) => {
+      const id = win.webContents.id;
+      windowLaunchFiles.set(id, '');
+      win.on('closed', () => windowLaunchFiles.delete(id));
+    },
+  });
 });
 
 ipcMain.on('toggle-fullscreen', async (event) => {
@@ -313,6 +359,8 @@ ipcMain.on('set-always-on-top', async (event, args) => {
 
 // Electron Store Provider (for settings/config)
 const store = new Store();
+registerServerInstallHandlers(store);
+registerServerLoginHandlers();
 
 // Session Store Provider (for ephemeral session data like library, cursor, etc.)
 registerSessionStoreHandlers();
@@ -556,6 +604,15 @@ ipcMain.handle('load-db', async (event, args) => {
   ipcMain.removeHandler('update-tag-description');
   ipcMain.removeHandler('update-category-description');
   ipcMain.removeHandler('update-category-tag-view-mode');
+  ipcMain.removeHandler('update-category-tag-grouping');
+  ipcMain.removeHandler('load-tag-groups');
+  ipcMain.removeHandler('create-tag-group');
+  ipcMain.removeHandler('rename-tag-group');
+  ipcMain.removeHandler('delete-tag-group');
+  ipcMain.removeHandler('update-tag-group-weight');
+  ipcMain.removeHandler('update-tag-group-hidden');
+  ipcMain.removeHandler('update-tag-group-view-mode');
+  ipcMain.removeHandler('set-tag-group');
   ipcMain.removeHandler('apply-elo-ordering');
   ipcMain.removeHandler('consolidate-tag-files');
   ipcMain.removeHandler('consolidate-category-files');
@@ -573,6 +630,8 @@ ipcMain.handle('load-db', async (event, args) => {
 
   // Register Media Events
   ipcMain.handle('load-files', loadFilesModule.loadFiles(db));
+  ipcMain.removeAllListeners('cancel-load-files');
+  ipcMain.on('cancel-load-files', loadFilesModule.cancelLoadFiles);
   ipcMain.handle('refresh-library', loadFilesModule.refreshLibrary(db));
   ipcMain.handle('load-media-by-tags', mediaModule.loadMediaByTags(db));
   ipcMain.handle(
@@ -660,6 +719,27 @@ ipcMain.handle('load-db', async (event, args) => {
     'update-category-tag-view-mode',
     taxonomyModule.updateCategoryTagViewMode(db)
   );
+  ipcMain.handle(
+    'update-category-tag-grouping',
+    taxonomyModule.updateCategoryTagGrouping(db)
+  );
+  ipcMain.handle('load-tag-groups', taxonomyModule.loadTagGroups(db));
+  ipcMain.handle('create-tag-group', taxonomyModule.createTagGroup(db));
+  ipcMain.handle('rename-tag-group', taxonomyModule.renameTagGroup(db));
+  ipcMain.handle('delete-tag-group', taxonomyModule.deleteTagGroup(db));
+  ipcMain.handle(
+    'update-tag-group-weight',
+    taxonomyModule.updateTagGroupWeight(db)
+  );
+  ipcMain.handle(
+    'update-tag-group-hidden',
+    taxonomyModule.updateTagGroupHidden(db)
+  );
+  ipcMain.handle(
+    'update-tag-group-view-mode',
+    taxonomyModule.updateTagGroupViewMode(db)
+  );
+  ipcMain.handle('set-tag-group', taxonomyModule.setTagGroup(db));
   ipcMain.handle('apply-elo-ordering', taxonomyModule.applyEloOrdering(db));
   ipcMain.handle(
     'consolidate-tag-files',
@@ -763,6 +843,22 @@ ipcMain.handle(
     }
   }
 );
+
+// The Scene editor's voice reference: an audio file, or a video whose
+// soundtrack holds the voice.
+ipcMain.handle('select-voice-file', async (event: IpcMainInvokeEvent) => {
+  const win = senderWindow(event) ?? mainWindow;
+  invariant(win, 'no window to parent the dialog to');
+  const result = await dialog.showOpenDialog(win, {
+    title: 'Choose a voice',
+    properties: ['openFile'],
+    filters: [
+      { name: 'Audio or video', extensions: ['wav', 'mp3', 'm4a', 'aac', 'flac', 'ogg', 'opus', 'mp4', 'mov', 'mkv', 'webm'] },
+      { name: 'All Files', extensions: ['*'] },
+    ],
+  });
+  return result.canceled ? null : result.filePaths[0];
+});
 
 // Handle directory selection event from renderer process
 type SelectDirectoryInput = [string | undefined];
@@ -875,6 +971,12 @@ const createWindow = async (options?: { launchFile?: string }) => {
       setTimeout(() => {
         checkForUpdatesInBackground();
       }, 1500);
+      // Same for the media server ("Start media server with the viewer"):
+      // its boot opens the shared SQLite library, so let the viewer's own
+      // load-db get there first.
+      setTimeout(() => {
+        autoStartServer(store);
+      }, 4000);
     }
   });
 
@@ -920,7 +1022,7 @@ const createWindow = async (options?: { launchFile?: string }) => {
 
   // Open urls in the user's browser
   win.webContents.setWindowOpenHandler((edata) => {
-    shell.openExternal(edata.url);
+    openExternalLink(edata.url);
     return { action: 'deny' };
   });
 

@@ -4,6 +4,7 @@ import cancel from '../../../../assets/cancel.svg';
 import useOnClickOutside from '../../hooks/useOnClickOutside';
 import { invoke } from '../../platform';
 import { GlobalStateContext } from '../../state';
+import { TagGroup, sortGroups } from './tag-groups';
 
 import './new-modal.css';
 
@@ -13,6 +14,7 @@ type CachedConcept = {
   weight: number;
   description?: string;
   thumbnail_path_600?: string | null;
+  group?: string | null;
 };
 
 type Props = {
@@ -20,15 +22,33 @@ type Props = {
   handleClose: () => void;
   currentValue?: string;
   currentDescription?: string;
+  // The group the tag starts in: the tag's current group when editing, or
+  // the header whose "+" opened a create. Absent = ungrouped.
+  groupLabel?: string | null;
+  // False for the machine-managed categories (Suggested, People, Duplicates),
+  // which have no groups: the Group field is hidden.
+  allowGroups?: boolean;
 };
+
+// Group <select> values that aren't group names. NUL can't be typed into a
+// group name, so these never collide with a real one.
+const NO_GROUP = '\u0000none';
+const NEW_GROUP = '\u0000new';
 
 export default function NewTagModal({
   categoryLabel,
   handleClose,
   currentValue = '',
   currentDescription = '',
+  groupLabel = null,
+  allowGroups = true,
 }: Props) {
   const [newLabel, setNewLabel] = useState<string>(currentValue);
+  const [groupChoice, setGroupChoice] = useState<string>(
+    groupLabel || NO_GROUP
+  );
+  const [newGroupName, setNewGroupName] = useState('');
+  const groupTouched = useRef(false);
   const [description, setDescription] = useState<string>(currentDescription);
   const ref = useRef(null);
   useOnClickOutside(ref, () => {
@@ -44,14 +64,29 @@ export default function NewTagModal({
   // an empty box — the existing note is invisible and uneditable. That was
   // already the case in web mode, where the server's tags endpoint never
   // returned the field; both platforms now fetch it the same way.
-  const { data: tagDetail } = useQuery<{ description?: string } | null, Error>(
+  type TagDetail = {
+    description?: string;
+    category?: string;
+    group?: string | null;
+  } | null;
+  const { data: tagDetail } = useQuery<TagDetail, Error>(
     ['taxonomy', 'tag-detail', currentValue],
-    async () =>
-      (await invoke('get-tag', [currentValue])) as {
-        description?: string;
-      } | null,
+    async () => (await invoke('get-tag', [currentValue])) as TagDetail,
     { enabled: isEditing, staleTime: Infinity }
   );
+
+  // Groups belong to the tag's own category, which (opened from search
+  // results) the caller may only have guessed; the fetched detail is exact.
+  const groupCategory = tagDetail?.category || categoryLabel;
+  const { data: categoryGroups } = useQuery<TagGroup[], Error>(
+    ['taxonomy', 'tag-groups-for-modal', groupCategory],
+    async () => {
+      const result = await invoke('load-tag-groups', [groupCategory]);
+      return Array.isArray(result) ? sortGroups(result as TagGroup[]) : [];
+    },
+    { enabled: allowGroups && !!groupCategory, staleTime: 0 }
+  );
+  const groups = categoryGroups ?? [];
 
   // The description currently stored for this tag: the baseline the save
   // compares against, so an untouched box never issues a write. Seeded with
@@ -68,7 +103,46 @@ export default function NewTagModal({
     if (!descriptionTouched.current) setDescription(fetched);
   }, [tagDetail]);
 
+  // The group stored for this tag: the baseline for "did the group change".
+  const [savedGroup, setSavedGroup] = useState<string | null>(
+    isEditing ? groupLabel : null
+  );
+  useEffect(() => {
+    if (!tagDetail || tagDetail.group === undefined) return;
+    setSavedGroup(tagDetail.group || null);
+    if (!groupTouched.current) setGroupChoice(tagDetail.group || NO_GROUP);
+  }, [tagDetail]);
+
+  const creatingGroup = groupChoice === NEW_GROUP;
+  const newGroupTrimmed = newGroupName.trim();
+  // The group the tag should end up in, or null for ungrouped. A "new" group
+  // whose name already exists just reuses that group.
+  const targetGroup: string | null = creatingGroup
+    ? newGroupTrimmed || null
+    : groupChoice === NO_GROUP
+    ? null
+    : groupChoice;
+  const canSubmit =
+    newLabel.trim().length > 0 && (!creatingGroup || newGroupTrimmed !== '');
+
+  // Creates the new group if one was named, then files the tag under the
+  // target group when it differs from where the tag already is.
+  async function applyGroup(tagLabel: string, from: string | null) {
+    if (!allowGroups) return;
+    if (
+      creatingGroup &&
+      newGroupTrimmed &&
+      !groups.some((g) => g.label === newGroupTrimmed)
+    ) {
+      await invoke('create-tag-group', [groupCategory, newGroupTrimmed]);
+    }
+    if (targetGroup !== from) {
+      await invoke('set-tag-group', [tagLabel, targetGroup]);
+    }
+  }
+
   function handleSubmit() {
+    if (!canSubmit) return;
     async function submit() {
       if (isEditing) {
         try {
@@ -78,6 +152,7 @@ export default function NewTagModal({
           if (description !== savedDescription) {
             await invoke('update-tag-description', [newLabel, description]);
           }
+          await applyGroup(newLabel, savedGroup);
           setNewLabel('');
           handleClose();
           queryClient.invalidateQueries({ queryKey: ['taxonomy'] });
@@ -118,6 +193,9 @@ export default function NewTagModal({
           weight: maxWeight + 1,
           description,
           thumbnail_path_600: null,
+          // A brand-new group isn't in the groups cache yet; until the
+          // refetch the tag shows as Ungrouped rather than nowhere.
+          group: creatingGroup ? null : targetGroup,
         };
       };
 
@@ -144,6 +222,7 @@ export default function NewTagModal({
 
       try {
         await invoke('create-tag', [submittedLabel, categoryLabel, 0]);
+        await applyGroup(submittedLabel, null);
         if (description) {
           await invoke('update-tag-description', [submittedLabel, description]);
         }
@@ -275,6 +354,50 @@ export default function NewTagModal({
             }}
             placeholder="Optional notes about this tag..."
           />
+          {allowGroups && (
+            <>
+              <label>Group</label>
+              <select
+                className="input-modal-select"
+                value={groupChoice}
+                onChange={(e) => {
+                  groupTouched.current = true;
+                  setGroupChoice(e.currentTarget.value);
+                }}
+                onKeyDown={(e) => e.stopPropagation()}
+              >
+                <option value={NO_GROUP}>No group</option>
+                {groups.map((g) => (
+                  <option key={g.label} value={g.label}>
+                    {g.label}
+                  </option>
+                ))}
+                {/* The tag's group before the groups list has loaded. */}
+                {groupChoice !== NO_GROUP &&
+                  groupChoice !== NEW_GROUP &&
+                  !groups.some((g) => g.label === groupChoice) && (
+                    <option value={groupChoice}>{groupChoice}</option>
+                  )}
+                <option value={NEW_GROUP}>New group…</option>
+              </select>
+              {creatingGroup && (
+                <input
+                  autoFocus
+                  type="text"
+                  placeholder="New group name"
+                  value={newGroupName}
+                  onChange={(e) => {
+                    e.stopPropagation();
+                    setNewGroupName(e.currentTarget.value);
+                  }}
+                  onKeyDown={(e) => {
+                    e.stopPropagation();
+                    if (e.key === 'Enter') handleSubmit();
+                  }}
+                />
+              )}
+            </>
+          )}
         </div>
 
         {isEditing && (
@@ -319,7 +442,11 @@ export default function NewTagModal({
           >
             Cancel
           </button>
-          <button className="btn-save" onClick={handleSubmit}>
+          <button
+            className="btn-save"
+            onClick={handleSubmit}
+            disabled={!canSubmit}
+          >
             {isEditing ? 'Save' : 'Create'}
           </button>
         </div>

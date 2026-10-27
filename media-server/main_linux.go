@@ -25,7 +25,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/pkg/browser"
 	_ "modernc.org/sqlite"
 
 	"github.com/stevecastle/shrike/appconfig"
@@ -160,6 +159,7 @@ func switchDatabase(newDBPath string) error {
 
 	// Swap dependencies (this updates the global deps pointer that all handlers reference)
 	oldDB := deps.DB
+	oldQueue := deps.Queue
 	deps.DB = newDB
 	deps.Queue = newQueue
 
@@ -182,7 +182,11 @@ func switchDatabase(newDBPath string) error {
 		log.Printf("Failed to create default user on new database: %v", err)
 	}
 
-	// Close the old DB last
+	// Persist the old queue's pending log/output appends, then close the
+	// old DB last.
+	if oldQueue != nil {
+		oldQueue.Close()
+	}
 	if oldDB != nil {
 		log.Println("Closing old database connection...")
 		_ = oldDB.Close()
@@ -574,6 +578,7 @@ func healthHandler(deps *Dependencies) http.HandlerFunc {
 
 		health := map[string]interface{}{
 			"status":    "healthy",
+			"version":   Version,
 			"timestamp": time.Now().Unix(),
 			"stream":    streamStats,
 			"jobs":      jobStats,
@@ -1911,13 +1916,8 @@ func mediaFileHandler(deps *Dependencies) http.HandlerFunc {
 			return
 		}
 
-		// Check file size (prevent serving extremely large files for preview)
-		// For localhost serving of large videos, we allow up to 2GB
-		const maxFileSize = 2 * 1024 * 1024 * 1024 // 2GB limit
-		if fileInfo.Size() > maxFileSize {
-			http.Error(w, "File too large for preview", http.StatusRequestEntityTooLarge)
-			return
-		}
+		// No size cap: ServeFile streams with Range support, and a cap made
+		// long or 4K videos over 2 GB unplayable in the web UI.
 
 		// Browsers can't decode HEIC: serve a cached JPEG rendering instead.
 		if heic.IsHeic(filePath) {
@@ -2131,7 +2131,7 @@ func authMiddleware(deps *Dependencies, next http.Handler, requiredRole renderer
 				if claims.Username == auth.DefaultAdminUsername {
 					setupRequired, _ := deps.Auth.IsSetupRequired()
 					if setupRequired {
-						if r.Header.Get("Accept") == "application/json" {
+						if isAPIRequest(r) {
 							w.Header().Set("Content-Type", "application/json")
 							w.WriteHeader(http.StatusForbidden)
 							w.Write([]byte(`{"error":"setup_required","message":"Please create a new user account"}`))
@@ -2149,7 +2149,7 @@ func authMiddleware(deps *Dependencies, next http.Handler, requiredRole renderer
 		// Check cookie
 		cookie, err := r.Cookie("auth_token")
 		if err != nil {
-			if r.Header.Get("Accept") == "application/json" {
+			if isAPIRequest(r) {
 				http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			} else {
 				http.Redirect(w, r, loginRedirectTarget("/login?redirect="+url.QueryEscape(r.URL.RequestURI())), http.StatusFound)
@@ -2160,7 +2160,7 @@ func authMiddleware(deps *Dependencies, next http.Handler, requiredRole renderer
 		// Verify token
 		claims, err := deps.Auth.VerifyToken(cookie.Value)
 		if err != nil {
-			if r.Header.Get("Accept") == "application/json" {
+			if isAPIRequest(r) {
 				http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			} else {
 				http.Redirect(w, r, loginRedirectTarget("/login?redirect="+url.QueryEscape(r.URL.RequestURI())), http.StatusFound)
@@ -2172,7 +2172,7 @@ func authMiddleware(deps *Dependencies, next http.Handler, requiredRole renderer
 		if claims.Username == auth.DefaultAdminUsername {
 			setupRequired, _ := deps.Auth.IsSetupRequired()
 			if setupRequired {
-				if r.Header.Get("Accept") == "application/json" {
+				if isAPIRequest(r) {
 					w.Header().Set("Content-Type", "application/json")
 					w.WriteHeader(http.StatusForbidden)
 					w.Write([]byte(`{"error":"setup_required","message":"Please create a new user account"}`))
@@ -2258,7 +2258,7 @@ func loginAPIHandler(deps *Dependencies) http.HandlerFunc {
 			Path:     "/",
 			HttpOnly: true,
 			SameSite: http.SameSiteLaxMode,
-			Expires:  time.Now().Add(24 * time.Hour),
+			Expires:  time.Now().Add(auth.SessionLifetime),
 		})
 
 		// Check if setup is required (logged in as default admin)
@@ -2448,6 +2448,9 @@ func userManagementHandler(deps *Dependencies) http.HandlerFunc {
 // -----------------------------------------------------------------------------
 
 func main() {
+	// A server already serving this port takes over (see launch.go).
+	exitIfAlreadyRunning()
+
 	// â€“â€“â€“ initialize database â€“â€“â€“
 	db, err := initDB()
 	if err != nil {
@@ -2493,13 +2496,19 @@ func main() {
 	startAutoScheduler(deps)
 
 	// â€“â€“â€“ embedding vector index (best-effort, non-fatal) â€“â€“â€“
-	log.Printf("Building embedding search indexâ€¦")
-	if model, n, err := tasks.RebuildActiveIndex(db, indexProgressFn("embedding index")); err == nil {
-		log.Printf("embedding index loaded: %d vectors (model %s)", n, model)
-	} else {
-		log.Printf("embedding index unavailable (model %s), using brute-force: %v", model, err)
-	}
-	buildFaceIndexAtStartup(db)
+	//
+	// Built in the background: on a large library loading every vector takes
+	// a long time, and the HTTP server used to stay down for all of it.
+	// Searches brute-force until each index is installed.
+	go func() {
+		log.Printf("Building embedding search indexâ€¦")
+		if model, n, err := tasks.RebuildActiveIndex(db, indexProgressFn("embedding index")); err == nil {
+			log.Printf("embedding index loaded: %d vectors (model %s)", n, model)
+		} else {
+			log.Printf("embedding index unavailable (model %s), using brute-force: %v", model, err)
+		}
+		buildFaceIndexAtStartup(db)
+	}()
 
 	// Initialize renderer auth middleware
 	renderer.AuthMiddleware = func(next http.Handler, role renderer.AuthRole) http.Handler {
@@ -2546,9 +2555,11 @@ func main() {
 	mux.HandleFunc("/tasks", renderer.ApplyMiddlewares(tasksHandler(deps), renderer.RoleAdmin))
 	RegisterDepsRoutes(mux, deps)
 	registerSetupRoutes(mux, deps)
+	registerEngineRoutes(mux, deps)
 	RegisterVizRoutes(mux, deps)
 	RegisterFacesRoutes(mux, deps)
 	RegisterDuplicatesRoutes(mux, deps)
+	RegisterSceneRoutes(mux, deps)
 	mux.HandleFunc("/open", renderer.ApplyMiddlewares(openPathHandler(), renderer.RoleAdmin))
 	mux.HandleFunc("/editor", renderer.ApplyMiddlewares(editorHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/workflow", renderer.ApplyMiddlewares(workflowHandler(deps), renderer.RoleAdmin))
@@ -2620,6 +2631,7 @@ func main() {
 	mux.HandleFunc("/api/taxonomy/tags", renderer.ApplyMiddlewares(lokiTaxonomyTagsHandler(deps), renderer.RolePublicRead))
 	mux.HandleFunc("/api/taxonomy/tag", renderer.ApplyMiddlewares(lokiTaxonomyTagHandler(deps), renderer.RolePublicRead))
 	mux.HandleFunc("/api/taxonomy/category-count", renderer.ApplyMiddlewares(lokiCategoryCountHandler(deps), renderer.RolePublicRead))
+	mux.HandleFunc("/api/taxonomy/groups", renderer.ApplyMiddlewares(lokiTagGroupsHandler(deps), renderer.RolePublicRead))
 
 	mux.HandleFunc("/api/tags", renderer.ApplyMiddlewares(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
@@ -2633,6 +2645,7 @@ func main() {
 	mux.HandleFunc("/api/tags/move", renderer.ApplyMiddlewares(lokiMoveTagHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/tags/order", renderer.ApplyMiddlewares(lokiOrderTagsHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/tags/weight", renderer.ApplyMiddlewares(lokiUpdateTagWeightHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/tags/group", renderer.ApplyMiddlewares(lokiSetTagGroupHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/tags/timestamp", renderer.ApplyMiddlewares(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodPut:
@@ -2652,8 +2665,23 @@ func main() {
 			lokiDeleteCategoryHandler(deps)(w, r)
 		}
 	}, renderer.RoleAdmin))
+	mux.HandleFunc("/api/categories/impact", renderer.ApplyMiddlewares(lokiCategoryImpactHandler(deps), renderer.RolePublicRead))
 	mux.HandleFunc("/api/categories/rename", renderer.ApplyMiddlewares(lokiRenameCategoryHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/categories/tag-view-mode", renderer.ApplyMiddlewares(lokiUpdateCategoryTagViewModeHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/categories/tag-grouping", renderer.ApplyMiddlewares(lokiUpdateCategoryTagGroupingHandler(deps), renderer.RoleAdmin))
+
+	mux.HandleFunc("/api/tag-groups", renderer.ApplyMiddlewares(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPost:
+			lokiCreateTagGroupHandler(deps)(w, r)
+		case http.MethodDelete:
+			lokiDeleteTagGroupHandler(deps)(w, r)
+		}
+	}, renderer.RoleAdmin))
+	mux.HandleFunc("/api/tag-groups/rename", renderer.ApplyMiddlewares(lokiRenameTagGroupHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/tag-groups/weight", renderer.ApplyMiddlewares(lokiUpdateTagGroupWeightHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/tag-groups/hidden", renderer.ApplyMiddlewares(lokiUpdateTagGroupHiddenHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/tag-groups/view-mode", renderer.ApplyMiddlewares(lokiUpdateTagGroupViewModeHandler(deps), renderer.RoleAdmin))
 
 	mux.HandleFunc("/api/assignments", renderer.ApplyMiddlewares(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
@@ -2733,7 +2761,12 @@ func main() {
 		Addr: appconfig.Get().ListenAddr(),
 		// Activity tracking wraps everything: user-intent requests feed the
 		// auto-scheduler's "app is in use" signal.
-		Handler: withActivityTracking(mux),
+		Handler: withActivityTracking(withCompression(mux)),
+		// Bound how long a client may dribble headers or hold an idle
+		// keep-alive socket. No WriteTimeout: SSE and video streams are
+		// long-lived by design.
+		ReadHeaderTimeout: 15 * time.Second,
+		IdleTimeout:       2 * time.Minute,
 	}
 
 	// Set up signal handling for graceful shutdown
@@ -2750,7 +2783,7 @@ func main() {
 
 	// Optionally open browser (only if DISPLAY is set or running under a desktop environment)
 	if os.Getenv("DISPLAY") != "" || os.Getenv("WAYLAND_DISPLAY") != "" {
-		_ = browser.OpenURL(appconfig.Get().LocalBaseURL() + "/")
+		openUIOnLaunch()
 	} else {
 		log.Printf("No display detected. Access the web UI at %s", appconfig.Get().LocalBaseURL())
 	}

@@ -60,3 +60,19 @@ Notes:
   jobs are proven stable.
 - CUDA 12.6.3 is pinned in the action (it must match the `cuda-12060` feature of `cudarc` in each `Cargo.toml`).
 - Windows installs the full toolkit; Linux installs only `nvcc`, `cudart-dev` and `cccl` (verified sufficient to build both tools).
+
+## Worker image
+
+**Built by:** the composite action `.github/actions/worker-image`, from the Linux artifacts of the tool builds in the same run
+(`tools/worker/Dockerfile` with `ENGINES_STAGE=prebuilt`), so the CUDA engines are compiled once per run:
+
+- `tools.yml` (pull requests) builds and smoke-tests the image without pushing (job *loki-worker image*, after the tool matrix);
+- `release.yml` (master) pushes it to `ghcr.io/stevecastle/loki-worker` (`latest`, the `package.json` version, `sha-<commit>`) in job
+  *Publish worker image*, after *Build AI tools*. Non-blocking like the tools; it needs all four Linux builds.
+
+The Linux tool builds carry SASS for sm_89/sm_90 (sm_80/86 too for loki-segment) plus compute_90 PTX, set by the build-ai-tool action
+for the image. The first push creates the GHCR package private: make it public once (repository → Packages → loki-worker → Package
+settings) so providers can pull it without credentials, or give them a `read:packages` token. See `tools/worker/README.md`.
+
+`tools.yml` runs on `pull_request` only (and by hand): with a `push` trigger as well, every commit of a PR branch built the whole
+matrix twice, once per event.

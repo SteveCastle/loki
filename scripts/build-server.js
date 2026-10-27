@@ -40,13 +40,17 @@ run('npm run build:web');
 // 3. Build the Go binary
 console.log('\n--- Building Go server ---');
 const ext = process.platform === 'win32' ? '.exe' : '';
-// On Windows the server already presents itself via a system tray icon, so
-// the default console subsystem just produces a redundant black CLI window
-// when the user launches the .exe. `-H=windowsgui` switches the PE subsystem
-// to GUI so Windows won't allocate a console for the process. No effect on
-// macOS or Linux — those linkers ignore the flag.
-const ldflags = process.platform === 'win32' ? '' : '';
-run(`go build${ldflags} -o media-server${ext} .`, { cwd: SERVER_DIR });
+// Dev builds deliberately keep the console subsystem on Windows: the console
+// window is where the server's log scrolls while you work on it. Release
+// builds (.github/workflows/release.yml, build-media-server) link with
+// `-H=windowsgui` instead, so installed copies run headless behind their
+// tray icon — and every child process must go through
+// platform.HideSubprocessWindow or it pops its own console window there.
+const ldflags = '';
+// LOKI_DREAM=1 builds the text-to-image features in (Go `dream` tag; the
+// renderer reads the same variable at webpack time, see webpack.config.base).
+const tags = process.env.LOKI_DREAM === '1' ? ' -tags dream' : '';
+run(`go build${tags}${ldflags} -o media-server${ext} .`, { cwd: SERVER_DIR });
 
 console.log(`\n✓ Server built: media-server/media-server${ext}`);
 

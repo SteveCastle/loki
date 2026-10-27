@@ -6,13 +6,23 @@ import { createRoot } from 'react-dom/client';
 import invariant from 'tiny-invariant';
 import { GlobalStateProvider } from './state';
 import App from './App';
-import { logEvent } from './platform';
+import { logEvent, isPickerWindow } from './platform';
 import { beginStartupTrace, markStartup } from './startup-marks';
+
+// A Scene editor window (see components/scene/launch.ts) boots this same
+// bundle with ?scene=…: it renders the editor and none of the viewer, and
+// stays out of the launch trace.
+const sceneParam = new URLSearchParams(window.location.search).get('scene');
+// A reference picker window (components/scene/pick-bridge.ts) is the viewer,
+// but opened mid-session: it stays out of the launch trace too.
+const traced = !sceneParam && !isPickerWindow;
 
 // Everything above this line has now been evaluated — React, XState, the
 // platform layer, and the whole component tree.
-beginStartupTrace();
-markStartup('imports-evaluated');
+if (traced) {
+  beginStartupTrace();
+  markStartup('imports-evaluated');
+}
 
 // Capture renderer crashes/unhandled rejections to the app log file so a
 // frozen or blank UI in the field leaves a diagnosable trail.
@@ -35,9 +45,15 @@ window.addEventListener('unhandledrejection', (e) => {
 const container = document.getElementById('root');
 invariant(container, 'root element not found');
 const root = createRoot(container);
-markStartup('react-render');
-root.render(
-  <GlobalStateProvider>
-    <App />
-  </GlobalStateProvider>
-);
+if (sceneParam) {
+  import('./components/scene/scene-root')
+    .then((m) => m.renderSceneEditor(root, sceneParam))
+    .catch((error) => logEvent({ scope: 'scene-editor', message: 'Scene editor failed to load', error }));
+} else {
+  if (traced) markStartup('react-render');
+  root.render(
+    <GlobalStateProvider>
+      <App />
+    </GlobalStateProvider>
+  );
+}

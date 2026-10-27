@@ -57,6 +57,7 @@ var retouchOptions = []TaskOption{
 	{Name: "combine", Label: "Combine Inputs", Type: "bool", Default: false, Description: "With several input images: the first is <image1>, the rest become references, one output"},
 	{Name: "time", Label: "Video Time", Type: "number", Default: 0.0, Description: "Seconds into a video input to sample the frame from (images ignore it)"},
 	{Name: "meta", Label: "Recipe (JSON)", Type: "string", Default: "", Description: "A JSON object stamped verbatim into the result's generation record as `meta` (the Transform flow's intent + settings, to rebuild a saved task from a result); dropped for engines too old to take it"},
+	{Name: "nolibrary", Label: "Keep Out of Library", Type: "bool", Default: false, Description: "Scratch output (the Scene editor's layers): write the result beside the input but don't add it to the library or jump the viewer to it"},
 	{Name: "seq", Label: "Sequence Mode", Type: "bool", Default: false, Description: "Frames of a clip: stricter faithful prompt, framing pinned, one seed for all inputs"},
 }
 
@@ -76,10 +77,15 @@ type retouchParams struct {
 	Combine  bool
 	Time     float64
 	Seq      bool
+	// NoLibrary keeps a finished result out of the library (scratch work).
+	NoLibrary bool
 	// Meta is the caller's recipe (JSON object) for the generation record;
 	// MetaFile, when set by the task, carries a long one instead.
 	Meta     string
 	MetaFile string
+	// View is the camera-angle preset whose prompt Prompt is (no prompt of the
+	// caller's own): each input gets it again with its subject's facing.
+	View *retouchView
 }
 
 func optString(opts map[string]any, k string) string {
@@ -133,16 +139,17 @@ func splitPathList(raw string) []string {
 // retouchParamsFromOptions normalizes ParseOptions output for retouch.
 func retouchParamsFromOptions(opts map[string]any) retouchParams {
 	p := retouchParams{
-		Preset:  strings.ToLower(strings.TrimSpace(optString(opts, "preset"))),
-		Prompt:  strings.TrimSpace(optString(opts, "prompt")),
-		Append:  strings.TrimSpace(optString(opts, "append")),
-		Scale:   optFloat(opts, "scale"),
-		Size:    strings.TrimSpace(optString(opts, "size")),
-		Snap:    optBool(opts, "snap"),
-		Combine: optBool(opts, "combine"),
-		Seq:     optBool(opts, "seq"),
-		Refs:    splitPathList(optString(opts, "refs")),
-		Meta:    strings.TrimSpace(optString(opts, "meta")),
+		Preset:    strings.ToLower(strings.TrimSpace(optString(opts, "preset"))),
+		Prompt:    strings.TrimSpace(optString(opts, "prompt")),
+		Append:    strings.TrimSpace(optString(opts, "append")),
+		Scale:     optFloat(opts, "scale"),
+		Size:      strings.TrimSpace(optString(opts, "size")),
+		Snap:      optBool(opts, "snap"),
+		Combine:   optBool(opts, "combine"),
+		Seq:       optBool(opts, "seq"),
+		NoLibrary: optBool(opts, "nolibrary"),
+		Refs:      splitPathList(optString(opts, "refs")),
+		Meta:      strings.TrimSpace(optString(opts, "meta")),
 	}
 	if p.Preset == "none" {
 		p.Preset = ""
@@ -150,6 +157,7 @@ func retouchParamsFromOptions(opts map[string]any) retouchParams {
 	// A camera-angle preset is its prompt; an explicit prompt replaces it.
 	if v, ok := retouchViewByID(p.Preset); ok && p.Prompt == "" {
 		p.Prompt = v.Prompt()
+		p.View = &v
 	}
 	if p.Scale < 0 {
 		p.Scale = 0
@@ -336,7 +344,34 @@ func (w *lineWriter) Flush() {
 // runAICLI runs one loki-* CLI invocation, streaming stderr into the job log
 // (prefixed with tag, step lines throttled) and reporting step progress via
 // onStep. Returns the stdout lines (the written path).
+//
+// A remote tool (a worker lease) runs the same command line on its worker:
+// local files are sent along and the outputs come back to the paths args name.
 func runAICLI(ctx context.Context, q *jobqueue.Queue, jobID, tag string, tool aiToolRun, args []string, onStep func(i, n int)) ([]string, error) {
+	firstStep := true
+	onErrLine := func(s string) {
+		if i, n, ok := parseStepLine(s); ok {
+			if onStep != nil {
+				onStep(i, n)
+			}
+			if firstStep || i%5 == 0 || i >= n {
+				_ = q.PushJobStdout(jobID, tag+": "+strings.TrimSpace(s))
+			}
+			firstStep = false
+			return
+		}
+		_ = q.PushJobStdout(jobID, tag+": "+s)
+	}
+	return runEngine(ctx, tool, args, onErrLine, func(s string) { _ = q.PushJobStdout(jobID, tag+": "+s) })
+}
+
+// runEngine runs one engine command line here or on the tool's worker,
+// handing each stderr line to onErrLine (and the dispatcher's notes to
+// onStatus); returns the stdout lines.
+func runEngine(ctx context.Context, tool aiToolRun, args []string, onErrLine, onStatus func(string)) ([]string, error) {
+	if tool.Remote() {
+		return runRemote(ctx, tool, args, tool.light, onErrLine, onStatus)
+	}
 	cmd := exec.CommandContext(ctx, tool.Bin, args...)
 	if len(tool.Env) > 0 {
 		cmd.Env = append(os.Environ(), tool.Env...)
@@ -351,20 +386,7 @@ func runAICLI(ctx context.Context, q *jobqueue.Queue, jobID, tag string, tool ai
 		outLines = append(outLines, strings.TrimSpace(s))
 		outMu.Unlock()
 	}}
-	firstStep := true
-	stderr := &lineWriter{fn: func(s string) {
-		if i, n, ok := parseStepLine(s); ok {
-			if onStep != nil {
-				onStep(i, n)
-			}
-			if firstStep || i%5 == 0 || i >= n {
-				_ = q.PushJobStdout(jobID, tag+": "+strings.TrimSpace(s))
-			}
-			firstStep = false
-			return
-		}
-		_ = q.PushJobStdout(jobID, tag+": "+s)
-	}}
+	stderr := &lineWriter{fn: onErrLine}
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	err := cmd.Run()
@@ -395,6 +417,8 @@ func absPath(p string) string {
 }
 
 func retouchTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
+	// Selection sessions (loki-segment) let go of their VRAM while this runs.
+	defer beginGPUHeavy()()
 	p := retouchParamsFromOptions(ParseOptions(j, retouchOptions))
 	return runRetouchJob(j, q, "retouch", p)
 }
@@ -478,6 +502,7 @@ func runRetouchJob(j *jobqueue.Job, q *jobqueue.Queue, tag string, p retouchPara
 	if err != nil {
 		return fail(err.Error(), err)
 	}
+	defer bin.Release()
 
 	res, rerr := resolveJobItemsRaw(j, q)
 	if rerr != nil {
@@ -530,7 +555,7 @@ func runRetouchJob(j *jobqueue.Job, q *jobqueue.Queue, tag string, p retouchPara
 	terminal := !q.HasDependents(j.ID)
 	var created []string
 	defer func() {
-		if terminal {
+		if terminal && !p.NoLibrary {
 			broadcastMediaCreated(created)
 		}
 	}()
@@ -590,7 +615,23 @@ func runRetouchJob(j *jobqueue.Job, q *jobqueue.Queue, tag string, p retouchPara
 		}
 		ran++
 		itemRefs := append(append([]string{}, item.refs...), refs...)
-		args := buildRetouchArgs(ip, input, itemRefs, output, promptFile)
+		itemPrompt := promptFile
+		if p.View != nil {
+			// A camera move said for the way this picture's subject faces.
+			if facing, ok := detectSubjectFacing(ctx, input); ok {
+				ip.Prompt = p.View.PromptFacing(facing, true)
+				q.PushJobStdout(j.ID, fmt.Sprintf("%s: %s: subject seen %s", tag, base, viewOf(facing)))
+				f, ferr := writePromptFile(ip.Prompt)
+				if ferr != nil {
+					return fail("failed to write prompt file: "+ferr.Error(), ferr)
+				}
+				if f != "" {
+					defer os.Remove(f)
+				}
+				itemPrompt = f
+			}
+		}
+		args := buildRetouchArgs(ip, input, itemRefs, output, itemPrompt)
 
 		msg := fmt.Sprintf("%s: running on %s -> %s", tag, base, filepath.Base(output))
 		if len(itemRefs) > 0 {
@@ -629,7 +670,7 @@ func runRetouchJob(j *jobqueue.Job, q *jobqueue.Queue, tag string, p retouchPara
 		// without a media row it is invisible to path/tag queries until
 		// someone re-ingests the folder. Intermediate (.loki-temp) output is
 		// never added — the step that places it owns that.
-		if terminal {
+		if terminal && !p.NoLibrary {
 			if err := insertMediaRecord(q.Db, output, info.Size()); err != nil {
 				q.PushJobStdout(j.ID, tag+": failed to add to library: "+err.Error())
 			}

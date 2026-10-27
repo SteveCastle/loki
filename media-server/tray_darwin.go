@@ -13,8 +13,6 @@ import (
 	"os"
 
 	"github.com/getlantern/systray"
-	"github.com/pkg/browser"
-	"github.com/stevecastle/shrike/appconfig"
 )
 
 //go:embed assets/logo.png
@@ -38,14 +36,14 @@ func runDarwinUI(sigChan <-chan os.Signal) {
 		systray.AddSeparator()
 		quitItem := systray.AddMenuItem("Quit", "Shut down Lowkey Media Server")
 
-		// open UI once at startup
-		_ = browser.OpenURL(appconfig.Get().LocalBaseURL() + "/")
+		// open UI once at startup, unless started in the background
+		openUIOnLaunch()
 
 		go func() {
 			for {
 				select {
 				case <-openItem.ClickedCh:
-					_ = browser.OpenURL(appconfig.Get().LocalBaseURL() + "/")
+					openUI()
 				case <-quitItem.ClickedCh:
 					systray.Quit()
 					return

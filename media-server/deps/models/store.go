@@ -110,6 +110,9 @@ func (w *AtomicWriter) Commit() error {
 	return os.Rename(w.partial, w.final)
 }
 
+// Close closes the partial file and keeps it, for a later resume.
+func (w *AtomicWriter) Close() error { return w.f.Close() }
+
 // Abort closes and removes the partial file.
 func (w *AtomicWriter) Abort() error {
 	_ = w.f.Close()

@@ -37,10 +37,15 @@ import {
 } from './query/history';
 import { getFileType, FileTypes } from '../file-types';
 import { markStartup } from './startup-marks';
-import { cursorAfterRemoval, libraryWithout } from './library-cursor';
+import {
+  cursorAfterRemoval,
+  findPathIndex,
+  libraryWithout,
+} from './library-cursor';
 import { extendSelection } from './context-selection';
 import { movedPath, moveRange } from './media-path';
-import filter from './filter';
+import filter, { passesTypeFilter } from './filter';
+import { appendUnique } from './scan-index';
 import {
   initSessionStore,
   getSessionValue,
@@ -188,6 +193,10 @@ type LibraryState = {
   pinnedPath: string | null;
   savedSortByDuringStreaming: Settings['sortBy'] | null;
   userMovedCursorDuringStreaming: boolean;
+  // Identifies the folder scan in flight. Main echoes it on every
+  // load-files-batch, so batches from a scan the user navigated away from
+  // (still in the IPC pipe when the next scan starts) are dropped.
+  fsScanId: string;
   // When set to a new unique ID, signals the list to scroll to the current cursor
   scrollToCursorEventId: string | null;
   // libraryLoadId captured at the moment an in-place mutation (e.g. removing
@@ -257,6 +266,113 @@ const addQueryErrorToast = assign<LibraryState, AnyEventObject>({
 const newLoadId = () =>
   `${uniqueId()}-${Math.random().toString(36).slice(2, 10)}`;
 
+// Leave the streaming mode loadingFromFS set up: restore the user's sort, land
+// the cursor on the pinned (or currently shown) item within that sort, and
+// persist the library. Used both when a scan completes (`lib` = main's sorted
+// result) and when the user interrupts one (`lib` = whatever streamed in).
+// Returns ALL state changes for a single atomic assign so no intermediate
+// state is observable.
+function finishFsScan(
+  context: LibraryState,
+  lib: Item[],
+  fallbackCursor: number
+): Partial<LibraryState> {
+  const newLibraryLoadId = newLoadId();
+  const restoredSortBy = (context.savedSortByDuringStreaming ||
+    'name') as Settings['sortBy'];
+
+  let finalCursor = fallbackCursor;
+  if (Array.isArray(lib) && lib.length > 0) {
+    // Seed with the id the view will actually render under: for
+    // shuffle/battle the order depends on it, so a throwaway id here would
+    // land the cursor on the wrong item. It also warms filter's memo for the
+    // next render.
+    const sorted = filter(
+      newLibraryLoadId,
+      context.textFilter,
+      lib,
+      context.settings.filters,
+      restoredSortBy
+    );
+    const preferredPaths = [
+      context.pinnedPath || undefined,
+      context.library[context.cursor]?.path || undefined,
+    ].filter(Boolean) as string[];
+
+    for (const p of preferredPaths) {
+      const idx = findPathIndex(sorted, p, path.normalize);
+      if (idx !== -1) {
+        finalCursor = idx;
+        break;
+      }
+    }
+    updatePersistedCursor(context, finalCursor);
+  }
+
+  setSessionValues({
+    library: { library: lib, initialFile: context.initialFile },
+    cursor: { cursor: finalCursor },
+  });
+
+  return {
+    library: lib,
+    libraryLoadId: newLibraryLoadId,
+    cursor: finalCursor,
+    settings: {
+      ...context.settings,
+      sortBy: restoredSortBy,
+    },
+    streaming: false,
+    pinnedPath: null,
+    userMovedCursorDuringStreaming: false,
+    savedSortByDuringStreaming: null,
+  };
+}
+
+// Navigating to a specific item must land on it. When the media-type filter
+// (Images / Videos / Audio) hides that item, the jump would silently land on
+// some other item instead — so clear the filter and say so. Only for explicit
+// navigation: reloads and the filter dropdown's own cursor reset keep the
+// user's filter.
+function revealPastTypeFilter(
+  context: LibraryState,
+  itemPath: string | undefined
+): Partial<LibraryState> {
+  if (
+    !itemPath ||
+    !isMediaPath(itemPath) ||
+    passesTypeFilter(context.settings.filters, itemPath)
+  ) {
+    return {};
+  }
+  const filename = itemPath.split(/[\\/]/).pop() || itemPath;
+  return {
+    settings: { ...context.settings, filters: 'all' },
+    toasts: [
+      ...context.toasts,
+      {
+        id: uniqueId(),
+        type: 'info' as const,
+        title: 'Filter cleared',
+        message: `Showing all media types to open ${filename}`,
+        timestamp: Date.now(),
+      },
+    ],
+  };
+}
+
+// For SET_FILE: the path being opened is on the event.
+const revealOpenedFile = assign<LibraryState, AnyEventObject>(
+  (context, event) => revealPastTypeFilter(context, event.path)
+);
+
+// Abandon an in-flight folder scan, keeping the partial library. Runs as the
+// transition action on every way out of loadingFromFS except completion
+// (main is told to stop by loadingFromFS's exit action).
+const finishInterruptedFsScan = assign<LibraryState, AnyEventObject>(
+  (context) => finishFsScan(context, context.library, context.cursor)
+);
+
 const setLibrary = assign<LibraryState, AnyEventObject>({
   library: (context, event) => {
     const library = event.data.library;
@@ -270,7 +386,6 @@ const setLibrary = assign<LibraryState, AnyEventObject>({
     // in the result set; otherwise the loader's cursor stands.
     let cursor: number = event.data.cursor;
     if (context.pinnedPath) {
-      const want = path.normalize(context.pinnedPath).toLowerCase();
       const view = filter(
         loadId,
         context.textFilter,
@@ -278,10 +393,7 @@ const setLibrary = assign<LibraryState, AnyEventObject>({
         context.settings.filters,
         context.settings.sortBy
       );
-      const idx = (view ?? []).findIndex(
-        (it: Item) =>
-          !!it?.path && path.normalize(it.path).toLowerCase() === want
-      );
+      const idx = findPathIndex(view ?? [], context.pinnedPath, path.normalize);
       if (idx >= 0) cursor = idx;
     }
     (event as any).__cursor = cursor;
@@ -461,6 +573,10 @@ const setDB = assign<LibraryState, AnyEventObject>({
 
 const hasInitialFile = (context: LibraryState) => !!context.initialFile;
 const missingDb = (context: LibraryState) => !context.dbPath;
+// Desktop only, once: the web build is served by the server and has its own
+// onboarding (OnboardingGate).
+const showWelcome = (): boolean =>
+  isElectron && !store.get('welcomeShown', false);
 
 // initialFile is whatever the user opened: a media file, a directory, or an
 // archive. Only a media file is itself a library item — a directory/archive is
@@ -548,6 +664,7 @@ const getInitialContext = (): LibraryState => {
     ['showTags', 'all'],
     ['hideSuggestedTags', false],
     ['hidePeopleTags', false],
+    ['showHiddenTagGroups', false],
     ['showFileInfo', 'none'],
     ['showControls', false],
     ['gridSize', [4, 4]],
@@ -690,6 +807,7 @@ const getInitialContext = (): LibraryState => {
       showTags: batched['showTags'] as 'all' | 'list' | 'detail' | 'none',
       hideSuggestedTags: batched['hideSuggestedTags'] as boolean,
       hidePeopleTags: batched['hidePeopleTags'] as boolean,
+      showHiddenTagGroups: batched['showHiddenTagGroups'] as boolean,
       showFileInfo: batched['showFileInfo'] as
         | 'all'
         | 'list'
@@ -791,6 +909,7 @@ const getInitialContext = (): LibraryState => {
     pinnedPath: null,
     savedSortByDuringStreaming: null,
     userMovedCursorDuringStreaming: false,
+    fsScanId: '',
     scrollToCursorEventId: null,
     preserveScrollFromLoadId: null,
     masonryDimensionsCache: {},
@@ -1020,15 +1139,22 @@ export const libraryMachine = createMachine(
       CACHE_MASONRY_DIMENSIONS: {
         actions: assign<LibraryState, AnyEventObject>({
           masonryDimensionsCache: (context, event) => {
-            const { itemKey, width, height } = event;
-            // Only update if we don't already have this item cached
-            if (context.masonryDimensionsCache[itemKey]) {
+            // The grid batches its reports into `entries`; a single
+            // { itemKey, width, height } is still accepted.
+            const entries: [string, { width: number; height: number }][] =
+              event.entries ?? [
+                [event.itemKey, { width: event.width, height: event.height }],
+              ];
+            // Only update if we don't already have these items cached
+            const fresh = entries.filter(
+              ([key]) => !context.masonryDimensionsCache[key]
+            );
+            if (fresh.length === 0) {
               return context.masonryDimensionsCache;
             }
-            return {
-              ...context.masonryDimensionsCache,
-              [itemKey]: { width, height },
-            };
+            const next = { ...context.masonryDimensionsCache };
+            for (const [key, dims] of fresh) next[key] = dims;
+            return next;
           },
         }),
       },
@@ -1041,7 +1167,6 @@ export const libraryMachine = createMachine(
       SET_ACTIVE_CATEGORY: {
         actions: assign<LibraryState, AnyEventObject>({
           activeCategory: (context, event) => {
-            console.log('SET_ACTIVE_CATEGORY', context, event);
             store.set('activeCategory', event.data.category);
             return event.data.category;
           },
@@ -1069,7 +1194,6 @@ export const libraryMachine = createMachine(
           CHANGE_SETTING: {
             actions: assign<LibraryState, AnyEventObject>({
               settings: (context, event) => {
-                console.log('CHANGE_SETTING', context, event);
                 const processedData = { ...event.data };
 
                 // Battle mode drives its own pairing order: entering it
@@ -1089,6 +1213,7 @@ export const libraryMachine = createMachine(
                   processedData.sortBy = 'shuffle';
                 }
 
+                let changed = false;
                 for (const key in processedData) {
                   // Clamp volume to valid range [0, 1]
                   if (
@@ -1098,6 +1223,17 @@ export const libraryMachine = createMachine(
                     processedData[key] = clampVolume(processedData[key]);
                   }
 
+                  // An unchanged value costs nothing: no config write (each
+                  // store.set is a file write on the main process) and no new
+                  // settings object, which would re-render every component
+                  // selecting settings — every visible grid cell included.
+                  if (
+                    processedData[key] ===
+                    (context.settings as Record<string, unknown>)[key]
+                  ) {
+                    continue;
+                  }
+                  changed = true;
                   store.set(key, processedData[key]);
                   // Handle alwaysOnTop setting specially
                   if (key === 'alwaysOnTop') {
@@ -1107,6 +1243,7 @@ export const libraryMachine = createMachine(
                     );
                   }
                 }
+                if (!changed) return context.settings;
                 return {
                   ...context.settings,
                   ...processedData,
@@ -1156,7 +1293,6 @@ export const libraryMachine = createMachine(
           CHANGE_HOTKEY: {
             actions: assign<LibraryState, AnyEventObject>({
               hotKeys: (context, event) => {
-                console.log('CHANGE_HOTKEY', context, event);
                 for (const key in event.data) {
                   store.set(key, event.data[key]);
                 }
@@ -1171,7 +1307,6 @@ export const libraryMachine = createMachine(
             actions: [
               assign<LibraryState, AnyEventObject>({
                 storedCategories: (context, event) => {
-                  console.log('STORE_CATEGORY', context, event);
                   const { category, position } = event.data;
                   store.set(`storedCategories`, {
                     ...context.storedCategories,
@@ -1202,7 +1337,6 @@ export const libraryMachine = createMachine(
             actions: [
               assign<LibraryState, AnyEventObject>({
                 storedTags: (context, event) => {
-                  console.log('STORE_TAG', context, event);
                   const { tags, position } = event.data;
                   store.set(`storedTags`, {
                     ...context.storedTags,
@@ -1237,7 +1371,6 @@ export const libraryMachine = createMachine(
             actions: [
               assign<LibraryState, AnyEventObject>({
                 mostRecentTag: (context, event) => {
-                  console.log('SET_MOST_RECENT_TAG', context, event);
                   const newTag = event.tag;
                   updatePersistedState({
                     ...context,
@@ -1247,7 +1380,6 @@ export const libraryMachine = createMachine(
                   return newTag;
                 },
                 mostRecentCategory: (context, event) => {
-                  console.log('SET_MOST_RECENT_CATEGORY', context, event);
                   return event.category;
                 },
               }),
@@ -1455,7 +1587,6 @@ export const libraryMachine = createMachine(
           SET_VIDEO_LENGTH: {
             actions: assign<LibraryState, AnyEventObject>({
               videoPlayer: (context, event) => {
-                console.log('SET_VIDEO_LENGTH', context, event);
                 return {
                   ...context.videoPlayer,
                   videoLength: event.videoLength,
@@ -1528,80 +1659,97 @@ export const libraryMachine = createMachine(
             }),
           },
           RESET_CURSOR: {
-            actions: assign<LibraryState, AnyEventObject>({
-              cursor: (context, event) => {
-                console.log('RESET_CURSOR', context, event);
-                const cursor = filter(
-                  context.libraryLoadId,
-                  context.textFilter,
-                  context.library,
-                  context.settings.filters,
-                  context.settings.sortBy
-                ).findIndex(
-                  (item: Item) =>
-                    item?.path &&
-                    event.currentItem?.path &&
-                    path.normalize(item?.path).toLowerCase() ===
-                      path.normalize(event.currentItem?.path).toLowerCase()
-                );
-                console.log('index of current item', event.currentItem, cursor);
-                const finalCursor = cursor > -1 ? cursor : 0;
-                updatePersistedCursor(context, finalCursor);
-                return finalCursor;
-              },
-            }),
+            actions: [
+              // `reveal` marks a jump to a specific item (job/toast links);
+              // without it this is the settings menu keeping the current item
+              // in view after a filter/sort change, which must not undo the
+              // filter the user just picked.
+              assign<LibraryState, AnyEventObject>((context, event) =>
+                event.reveal
+                  ? revealPastTypeFilter(context, event.currentItem?.path)
+                  : {}
+              ),
+              assign<LibraryState, AnyEventObject>({
+                cursor: (context, event) => {
+                  const cursor = findPathIndex(
+                    filter(
+                      context.libraryLoadId,
+                      context.textFilter,
+                      context.library,
+                      context.settings.filters,
+                      context.settings.sortBy
+                    ),
+                    event.currentItem?.path,
+                    path.normalize
+                  );
+                  const finalCursor = cursor > -1 ? cursor : 0;
+                  updatePersistedCursor(context, finalCursor);
+                  return finalCursor;
+                },
+              }),
+            ],
           },
           // A file just created by a job (e.g. 4kify output) that the active
           // search/filter/query doesn't include. Add it to the in-memory library
-          // PROVISIONALLY — without touching the query, filters, or history — and
-          // jump the cursor to it so the user can act on it. It is not persisted
-          // anywhere: any reload or re-query drops it if it doesn't match, which
-          // is intended. Items already in the library are just navigated to.
+          // PROVISIONALLY — without touching the query or history — and jump
+          // the cursor to it so the user can act on it. It is not persisted
+          // anywhere: any reload or re-query drops it if it doesn't match,
+          // which is intended. Items already in the library are just
+          // navigated to. A media-type filter that would hide it outright is
+          // cleared (revealPastTypeFilter), or the jump couldn't land.
           ADD_PROVISIONAL_ITEMS: {
-            actions: assign<LibraryState, AnyEventObject>((context, event) => {
-              const paths: string[] = (event.paths || []).filter(Boolean);
-              if (paths.length === 0) return {};
-              const norm = (p: string) => path.normalize(p).toLowerCase();
-              const known = new Set(
-                context.library.map((item) => item?.path && norm(item.path))
-              );
-              const added: Item[] = [];
-              for (const p of paths) {
-                if (known.has(norm(p))) continue;
-                known.add(norm(p));
-                added.push({ path: p, mtimeMs: Date.now() });
-              }
-              const library = added.length
-                ? [...added, ...context.library]
-                : context.library;
-              const loadId = added.length ? newLoadId() : context.libraryLoadId;
-              const view = filter(
-                loadId,
-                context.textFilter,
-                library,
-                context.settings.filters,
-                context.settings.sortBy
-              );
-              const target = norm(paths[0]);
-              const idx = view.findIndex(
-                (item: Item) => item?.path && norm(item.path) === target
-              );
-              if (idx < 0 && !added.length) return {};
-              const cursor = idx > -1 ? idx : context.cursor;
-              updatePersistedCursor(context, cursor);
-              return {
-                library,
-                libraryLoadId: loadId,
-                // In-place edit of the current view, not a navigation: keep
-                // the list's scroll position (same contract as DELETE_FILE).
-                preserveScrollFromLoadId: added.length
-                  ? context.libraryLoadId
-                  : context.preserveScrollFromLoadId,
-                cursor,
-                scrollToCursorEventId: uniqueId(),
-                videoPlayer: { ...context.videoPlayer, loopCount: 0 },
-              };
-            }),
+            actions: [
+              assign<LibraryState, AnyEventObject>((context, event) =>
+                revealPastTypeFilter(
+                  context,
+                  (event.paths || []).filter(Boolean)[0]
+                )
+              ),
+              assign<LibraryState, AnyEventObject>((context, event) => {
+                const paths: string[] = (event.paths || []).filter(Boolean);
+                if (paths.length === 0) return {};
+                const norm = (p: string) => path.normalize(p).toLowerCase();
+                const known = new Set(
+                  context.library.map((item) => item?.path && norm(item.path))
+                );
+                const added: Item[] = [];
+                for (const p of paths) {
+                  if (known.has(norm(p))) continue;
+                  known.add(norm(p));
+                  added.push({ path: p, mtimeMs: Date.now() });
+                }
+                const library = added.length
+                  ? [...added, ...context.library]
+                  : context.library;
+                const loadId = added.length ? newLoadId() : context.libraryLoadId;
+                const view = filter(
+                  loadId,
+                  context.textFilter,
+                  library,
+                  context.settings.filters,
+                  context.settings.sortBy
+                );
+                const target = norm(paths[0]);
+                const idx = view.findIndex(
+                  (item: Item) => item?.path && norm(item.path) === target
+                );
+                if (idx < 0 && !added.length) return {};
+                const cursor = idx > -1 ? idx : context.cursor;
+                updatePersistedCursor(context, cursor);
+                return {
+                  library,
+                  libraryLoadId: loadId,
+                  // In-place edit of the current view, not a navigation: keep
+                  // the list's scroll position (same contract as DELETE_FILE).
+                  preserveScrollFromLoadId: added.length
+                    ? context.libraryLoadId
+                    : context.preserveScrollFromLoadId,
+                  cursor,
+                  scrollToCursorEventId: uniqueId(),
+                  videoPlayer: { ...context.videoPlayer, loopCount: 0 },
+                };
+              }),
+            ],
           },
           INCREMENT_CURSOR: {
             actions: assign<LibraryState, AnyEventObject>((context, event) => {
@@ -1709,7 +1857,6 @@ export const libraryMachine = createMachine(
           selectingDB: {
             invoke: {
               src: (context, event) => {
-                console.log('selecting DB', context, event);
                 const currentDB = context.dbPath;
                 return invoke('select-db', [
                   currentDB,
@@ -1727,7 +1874,6 @@ export const libraryMachine = createMachine(
           loadingDB: {
             invoke: {
               src: (context, event) => {
-                console.log('loading DB', context, event);
                 return invoke('load-db', [
                   context.dbPath,
                 ]);
@@ -1765,6 +1911,7 @@ export const libraryMachine = createMachine(
               { target: 'loadingFromFS', cond: hasInitialFile },
               { target: 'loadingFromPersisted', cond: hasPersistedLibrary },
               { target: 'restoringWebSession', cond: () => !isElectron },
+              { target: 'welcome', cond: showWelcome },
               { target: 'selecting' },
             ],
             entry: assign<LibraryState, AnyEventObject>({
@@ -1836,6 +1983,19 @@ export const libraryMachine = createMachine(
               { target: 'selectingDirectory' },
             ],
           },
+          // First launch ever: a welcome screen (open a folder or files, and
+          // the one-time media server offer) instead of dropping a brand-new
+          // user straight into a native file picker.
+          welcome: {
+            entry: () => {
+              markStartup('waiting-on-welcome');
+              store.set('welcomeShown', true);
+            },
+            on: {
+              SELECT_FILE: { target: 'selecting' },
+              SELECT_DIRECTORY: { target: 'selectingDirectory' },
+            },
+          },
           selecting: {
             // A native dialog means the clock is now measuring the USER, not
             // the app. Marked so a launch that sat on the picker can't be read
@@ -1844,7 +2004,6 @@ export const libraryMachine = createMachine(
             invoke: {
               src: (context, event) => {
                 const currentFile = context.initialFile;
-                console.log('selecting', context, event);
                 return invoke('select-file', [
                   currentFile,
                 ]);
@@ -1863,7 +2022,6 @@ export const libraryMachine = createMachine(
             invoke: {
               src: (context, event) => {
                 const currentFile = context.initialFile;
-                console.log('selecting directory', context, event);
                 return invoke('select-directory', [
                   currentFile,
                 ]);
@@ -1912,119 +2070,105 @@ export const libraryMachine = createMachine(
                 previousLibrary: () => [],
                 previousCursor: () => 0,
                 previousInitialFile: () => '',
+                fsScanId: () => newLoadId(),
               }),
               () => clearSessionKeys(['previous']),
             ],
+            // Every way out — completion, error, or the user navigating away
+            // mid-scan — tells main to stop. After completion main has
+            // already released the scan, so this is a no-op there.
+            exit: (context) => send('cancel-load-files', [context.fsScanId]),
             invoke: {
               src: (context, event) => {
-                console.log('loadingFromFS', context, event);
                 const { recursive } = context.settings;
                 return invoke('load-files', [
                   context.initialFile,
                   // Ask main to sort with original sort once complete
                   context.savedSortByDuringStreaming || 'name',
                   recursive,
-                  { fastest: true },
+                  { fastest: true, scanId: context.fsScanId },
                 ]);
               },
               onDone: {
                 target: 'loadedFromFS',
                 actions: [
-                  // Single atomic assign to prevent intermediate state observations
-                  assign<LibraryState, AnyEventObject>((context, event) => {
-                    const lib = (event.data?.library || []) as Item[];
-                    const newLibraryLoadId = newLoadId();
-                    const restoredSortBy = (context.savedSortByDuringStreaming ||
-                      'name') as Settings['sortBy'];
-
-                    // Calculate final cursor position using pinned path and restored sort
-                    let finalCursor = event.data?.cursor ?? context.cursor;
-                    if (Array.isArray(lib) && lib.length > 0) {
-                      // Seed with the id the view will actually render under:
-                      // for shuffle/battle the order depends on it, so a
-                      // throwaway id here would land the cursor on the wrong
-                      // item. It also warms filter's memo for the next render.
-                      const sorted = filter(
-                        newLibraryLoadId,
-                        context.textFilter,
-                        lib,
-                        context.settings.filters,
-                        restoredSortBy
-                      );
-                      const preferredPaths = [
-                        context.pinnedPath || undefined,
-                        context.library[context.cursor]?.path || undefined,
-                      ].filter(Boolean) as string[];
-
-                      for (const p of preferredPaths) {
-                        const idx = sorted.findIndex(
-                          (it: Item) =>
-                            it?.path &&
-                            path.normalize(it.path).toLowerCase() ===
-                              path.normalize(p).toLowerCase()
-                        );
-                        if (idx !== -1) {
-                          finalCursor = idx;
-                          break;
-                        }
-                      }
-                      updatePersistedCursor(context, finalCursor);
-                    }
-
-                    // Persist library updates
-                    setSessionValues({
-                      library: { library: lib, initialFile: context.initialFile },
-                      cursor: { cursor: finalCursor },
-                    });
-
-                    // Return ALL state changes atomically
-                    return {
-                      library: lib,
-                      libraryLoadId: newLibraryLoadId,
-                      cursor: finalCursor,
-                      settings: {
-                        ...context.settings,
-                        sortBy: restoredSortBy,
-                      },
-                      streaming: false,
-                      pinnedPath: null,
-                      userMovedCursorDuringStreaming: false,
-                      savedSortByDuringStreaming: null,
-                    };
-                  }),
+                  assign<LibraryState, AnyEventObject>((context, event) =>
+                    finishFsScan(
+                      context,
+                      (event.data?.library || []) as Item[],
+                      event.data?.cursor ?? context.cursor
+                    )
+                  ),
                 ],
               },
               onError: {
                 target: 'loadedFromFS',
+                actions: [finishInterruptedFsScan],
               },
             },
             on: {
+              // A big folder can take a long time to scan; none of this waits
+              // for it. Navigating elsewhere abandons the scan (keeping what
+              // streamed in, which a cancelled picker falls back to).
+              SET_FILE: {
+                target: 'loadingFromFS',
+                actions: [
+                  finishInterruptedFsScan,
+                  revealOpenedFile,
+                  assign<LibraryState, AnyEventObject>({
+                    textFilter: () => '',
+                    initialFile: (context, event) => event.path,
+                  }),
+                ],
+              },
+              SELECT_FILE: {
+                target: 'selecting',
+                actions: [finishInterruptedFsScan],
+              },
+              SELECT_DIRECTORY: {
+                target: 'selectingDirectory',
+                actions: [finishInterruptedFsScan],
+              },
+              CANCEL_LOAD: {
+                target: 'loadedFromFS',
+                actions: [finishInterruptedFsScan],
+              },
               LOAD_FILES_BATCH: {
+                cond: (context: LibraryState, event: AnyEventObject) =>
+                  !event.data?.scanId || event.data.scanId === context.fsScanId,
                 actions: assign<LibraryState, AnyEventObject>(
                   (context, event) => {
+                    // Case-insensitive de-dupe (Windows), kept incrementally
+                    // across batches — see scan-index.ts.
+                    const incoming = (event.data?.files || []) as Item[];
+                    const updatedLibrary = appendUnique(
+                      context.library,
+                      incoming
+                    );
+
+                    const nextLibraryLoadId = newLoadId();
+                    let nextCursor = context.cursor;
+                    // Once streaming, the view is in insertion order and a
+                    // batch only appends, so the selected item keeps its
+                    // index: skip the O(library) view rebuild + path search
+                    // that made every batch of a big scan slower than the last.
+                    if (context.streaming) {
+                      return {
+                        library: updatedLibrary,
+                        cursor: nextCursor,
+                        libraryLoadId: nextLibraryLoadId,
+                        streaming: true,
+                      };
+                    }
                     const currentView = filter(
                       context.libraryLoadId,
                       context.textFilter,
                       context.library,
                       context.settings.filters,
-                      (context.streaming
-                        ? 'stream'
-                        : context.settings.sortBy) as any
+                      context.settings.sortBy
                     );
                     const previousSelectedPath =
                       context.pinnedPath || currentView[context.cursor]?.path;
-                    // Use case-insensitive path matching to avoid duplicates on Windows
-                    const existing = new Set(
-                      context.library.map((item) => item.path.toLowerCase())
-                    );
-                    const incoming = (event.data?.files || []) as Item[];
-                    const newItems = incoming.filter(
-                      (f) => f?.path && !existing.has(f.path.toLowerCase())
-                    );
-                    const updatedLibrary = context.library.concat(newItems);
-
-                    const nextLibraryLoadId = newLoadId();
-                    let nextCursor = context.cursor;
                     if (previousSelectedPath) {
                       // Same id the view will render under — see the onDone
                       // handler above.
@@ -2033,15 +2177,12 @@ export const libraryMachine = createMachine(
                         context.textFilter,
                         updatedLibrary,
                         context.settings.filters,
-                        (context.streaming
-                          ? 'stream'
-                          : context.settings.sortBy) as any
+                        context.settings.sortBy
                       );
-                      const newIndex = sorted.findIndex(
-                        (item: Item) =>
-                          item?.path &&
-                          path.normalize(item.path).toLowerCase() ===
-                            path.normalize(previousSelectedPath).toLowerCase()
+                      const newIndex = findPathIndex(
+                        sorted,
+                        previousSelectedPath,
+                        path.normalize
                       );
                       if (newIndex !== -1) {
                         updatePersistedCursor(context, newIndex);
@@ -2281,17 +2422,19 @@ export const libraryMachine = createMachine(
               },
               SET_FILE: {
                 target: 'loadingFromFS',
-                actions: assign<LibraryState, AnyEventObject>({
-                  textFilter: () => '',
-                  initialFile: (context, event) => event.path,
-                }),
+                actions: [
+                  revealOpenedFile,
+                  assign<LibraryState, AnyEventObject>({
+                    textFilter: () => '',
+                    initialFile: (context, event) => event.path,
+                  }),
+                ],
               },
               DELETE_FILE: {
                 cond: (context: LibraryState) => context.canWrite,
                 actions: [
                   assign<LibraryState, AnyEventObject>({
                     library: (context, event) => {
-                      console.log('DELETE_FILE', context, event);
                       try {
                         invoke('delete-file', [
                           event.data.path,
@@ -2417,7 +2560,6 @@ export const libraryMachine = createMachine(
                 target: 'loadingFromFS',
                 actions: assign<LibraryState, AnyEventObject>({
                   settings: (context, event) => {
-                    console.log('CHANGE_SETTING_AND_RELOAD', context, event);
                     const processedData = { ...event.data };
 
                     for (const key in processedData) {
@@ -2452,11 +2594,6 @@ export const libraryMachine = createMachine(
                     persistFsBase,
                     assign<LibraryState, AnyEventObject>({
                       dbQuery: (context, event) => {
-                        console.log(
-                          'SET QUERY TAG TO',
-                          context,
-                          event.data.tag
-                        );
                         return { tags: [event.data.tag] };
                       },
                       // Mirror the tag click into the unified query model.
@@ -2488,7 +2625,6 @@ export const libraryMachine = createMachine(
                   cursor: 0,
                   libraryLoadId: () => newLoadId(),
                   settings: (context, event) => {
-                    console.log('SHUFFLE', context, event);
                     return {
                       ...context.settings,
                       sortBy: 'shuffle',
@@ -2536,82 +2672,23 @@ export const libraryMachine = createMachine(
                     }
                     return library;
                   },
-                  libraryLoadId: () => newLoadId(),
+                  // In battle mode the vote is always followed by NEXT_BATTLE,
+                  // which re-pairs. Minting a load id here too re-ran the
+                  // whole-library pairing once per rating update â€” three
+                  // times per vote. The cached view holds these same item
+                  // objects, so their new ratings show without a re-order.
+                  libraryLoadId: (context) =>
+                    context.settings.sortBy === 'battle'
+                      ? context.libraryLoadId
+                      : newLoadId(),
                 }),
               },
             },
             states: {
               idle: {
                 on: {
-                  LOAD_FILES_BATCH: {
-                    actions: assign<LibraryState, AnyEventObject>({
-                      library: (context, event) => {
-                        // Use the sorted/filtered view to look up the current item,
-                        // since cursor is an index into the sorted view, not the raw library
-                        const currentView = filter(
-                          context.libraryLoadId,
-                          context.textFilter,
-                          context.library,
-                          context.settings.filters,
-                          context.settings.sortBy
-                        );
-                        const previousSelectedPath =
-                          context.pinnedPath ||
-                          currentView[context.cursor]?.path;
-                        // Use case-insensitive path matching to avoid duplicates on Windows
-                        const existing = new Set(
-                          context.library.map((item) => item.path.toLowerCase())
-                        );
-                        const incoming = (event.data?.files || []) as Item[];
-                        const newItems = incoming.filter(
-                          (f) => f?.path && !existing.has(f.path.toLowerCase())
-                        );
-                        const updatedLibrary = context.library.concat(newItems);
-
-                        // Stashed for the libraryLoadId assigner below: the
-                        // cursor lookup must sort under the id the view will
-                        // actually render with, or shuffle/battle order puts
-                        // the cursor on the wrong item.
-                        const nextLibraryLoadId = newLoadId();
-                        (event as any).__newLoadId = nextLibraryLoadId;
-
-                        if (previousSelectedPath) {
-                          const sorted = filter(
-                            nextLibraryLoadId,
-                            context.textFilter,
-                            updatedLibrary,
-                            context.settings.filters,
-                            (context.streaming
-                              ? 'stream'
-                              : context.settings.sortBy) as any
-                          );
-                          const newIndex = sorted.findIndex(
-                            (item: Item) =>
-                              item?.path &&
-                              path.normalize(item.path).toLowerCase() ===
-                                path.normalize(previousSelectedPath).toLowerCase()
-                          );
-                          if (newIndex !== -1) {
-                            updatePersistedCursor(context, newIndex);
-                            (event as any).__newCursor = newIndex;
-                          }
-                        }
-
-                        return updatedLibrary;
-                      },
-                      cursor: (context, event) => {
-                        const computed = (event as any).__newCursor as
-                          | number
-                          | undefined;
-                        return typeof computed === 'number'
-                          ? computed
-                          : context.cursor;
-                      },
-                      libraryLoadId: (_, event) =>
-                        ((event as any).__newLoadId as string) || newLoadId(),
-                      streaming: () => true,
-                    }),
-                  },
+                  // No LOAD_FILES_BATCH here: a scan only streams inside loadingFromFS,
+                  // whose exit cancels it, so a batch arriving now is a stale leftover.
                   SET_SCROLL_POSITION: {
                     actions: assign<LibraryState, AnyEventObject>({
                       scrollPosition: (context, event) => {
@@ -2774,7 +2851,6 @@ export const libraryMachine = createMachine(
             // and search are mutually exclusive). Force textFilter='' on entry
             // so a stale search pill can't surface alongside tag results.
             entry: [
-              (context, event) => console.log('loadedFromDB', context, event),
               assign<LibraryState, AnyEventObject>({
                 currentStateType: () => 'db' as LibraryStateType,
                 textFilter: () => '',
@@ -2793,72 +2869,8 @@ export const libraryMachine = createMachine(
             ],
             on: {
               ...queryMutationOn,
-              LOAD_FILES_BATCH: {
-                actions: assign<LibraryState, AnyEventObject>({
-                  library: (context, event) => {
-                    // Use the sorted/filtered view to look up the current item,
-                    // since cursor is an index into the sorted view, not the raw library
-                    const currentView = filter(
-                      context.libraryLoadId,
-                      context.textFilter,
-                      context.library,
-                      context.settings.filters,
-                      context.settings.sortBy
-                    );
-                    const previousSelectedPath =
-                      context.pinnedPath ||
-                      currentView[context.cursor]?.path;
-                    // Use case-insensitive path matching to avoid duplicates on Windows
-                    const existing = new Set(
-                      context.library.map((item) => item.path.toLowerCase())
-                    );
-                    const incoming = (event.data?.files || []) as Item[];
-                    const newItems = incoming.filter(
-                      (f) => f?.path && !existing.has(f.path.toLowerCase())
-                    );
-                    const updatedLibrary = context.library.concat(newItems);
-                    // Stashed for the libraryLoadId assigner below: the cursor
-                    // lookup must sort under the id the view will actually
-                    // render with, or shuffle/battle order puts the cursor on
-                    // the wrong item.
-                    const nextLibraryLoadId = newLoadId();
-                    (event as any).__newLoadId = nextLibraryLoadId;
-                    if (previousSelectedPath) {
-                      const sorted = filter(
-                        nextLibraryLoadId,
-                        context.textFilter,
-                        updatedLibrary,
-                        context.settings.filters,
-                        (context.streaming
-                          ? 'stream'
-                          : context.settings.sortBy) as any
-                      );
-                      const newIndex = sorted.findIndex(
-                        (item: Item) =>
-                          item?.path &&
-                          path.normalize(item.path).toLowerCase() ===
-                            path.normalize(previousSelectedPath).toLowerCase()
-                      );
-                      if (newIndex !== -1) {
-                        updatePersistedCursor(context, newIndex);
-                        (event as any).__newCursor = newIndex;
-                      }
-                    }
-                    return updatedLibrary;
-                  },
-                  cursor: (context, event) => {
-                    const computed = (event as any).__newCursor as
-                      | number
-                      | undefined;
-                    return typeof computed === 'number'
-                      ? computed
-                      : context.cursor;
-                  },
-                  libraryLoadId: (_, event) =>
-                    ((event as any).__newLoadId as string) || newLoadId(),
-                  streaming: () => true,
-                }),
-              },
+              // No LOAD_FILES_BATCH here: a scan only streams inside loadingFromFS,
+              // whose exit cancels it, so a batch arriving now is a stale leftover.
               SELECT_FILE: {
                 target: 'selecting',
               },
@@ -2872,6 +2884,7 @@ export const libraryMachine = createMachine(
                 // new folder scan starts a fresh base era (loadingFromFS
                 // clears the old snapshot).
                 actions: [
+                  revealOpenedFile,
                   assign<LibraryState, AnyEventObject>({
                     textFilter: () => '',
                     initialFile: (context, event) => event.path,
@@ -2951,7 +2964,6 @@ export const libraryMachine = createMachine(
                   cursor: 0,
                   libraryLoadId: () => newLoadId(),
                   settings: (context, event) => {
-                    console.log('SHUFFLE', context, event);
                     return {
                       ...context.settings,
                       sortBy: 'shuffle',
@@ -2984,7 +2996,6 @@ export const libraryMachine = createMachine(
               UPDATE_MEDIA_ELO: {
                 actions: assign<LibraryState, AnyEventObject>({
                   library: (context, event) => {
-                    console.log('UPDATE_MEDIA_ELO', context, event);
                     const { path, elo, battles } = event;
                     const library = [...context.library];
                     // A tag query can surface the same file more than once
@@ -3003,7 +3014,15 @@ export const libraryMachine = createMachine(
                     }
                     return library;
                   },
-                  libraryLoadId: () => newLoadId(),
+                  // In battle mode the vote is always followed by NEXT_BATTLE,
+                  // which re-pairs. Minting a load id here too re-ran the
+                  // whole-library pairing once per rating update â€” three
+                  // times per vote. The cached view holds these same item
+                  // objects, so their new ratings show without a re-order.
+                  libraryLoadId: (context) =>
+                    context.settings.sortBy === 'battle'
+                      ? context.libraryLoadId
+                      : newLoadId(),
                 }),
               },
               DELETE_FILE: {
@@ -3011,7 +3030,6 @@ export const libraryMachine = createMachine(
                 actions: [
                   assign<LibraryState, AnyEventObject>({
                     library: (context, event) => {
-                      console.log('DELETE_FILE', context, event);
                       try {
                         invoke('delete-file', [
                           event.data.path,
@@ -3140,11 +3158,6 @@ export const libraryMachine = createMachine(
                   actions: [
                     assign<LibraryState, AnyEventObject>({
                       dbQuery: (context, event) => {
-                        console.log(
-                          'SET QUERY TAG TO',
-                          context,
-                          event.data.tags
-                        );
                         // Get active tags and index by tag.
                         const activeTags = context.dbQuery.tags.reduce(
                           (acc, tag) => {
@@ -3308,7 +3321,6 @@ export const libraryMachine = createMachine(
                   SET_VIDEO_LENGTH: {
                     actions: assign<LibraryState, AnyEventObject>({
                       videoPlayer: (context, event) => {
-                        console.log('SET_VIDEO_LENGTH', context, event);
                         return {
                           ...context.videoPlayer,
                           videoLength: event.videoLength,
@@ -3382,8 +3394,8 @@ export const libraryMachine = createMachine(
             },
           },
           loadingError: {
-            entry: (context, event) =>
-              console.log('error loading library', context, event),
+            entry: (_context, event) =>
+              console.error('error loading library', (event as any)?.data),
           },
         },
       },
@@ -3460,7 +3472,7 @@ const GlobalStateProviderInner = (props: Props) => {
         const batch = (args[0] as { path: string; mtimeMs: number }[]) || [];
         libraryService.send({
           type: 'LOAD_FILES_BATCH',
-          data: { files: batch },
+          data: { files: batch, scanId: args[1] as string | undefined },
         });
       }
     );

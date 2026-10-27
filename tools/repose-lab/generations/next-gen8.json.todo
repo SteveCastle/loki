@@ -1,0 +1,3 @@
+{"gen": "gen8", "steps": 4, "seeds": 4,
+ "why": "gen5 showed --ref-resolution trades pose for fidelity, but it sized <image1> too. New engine option sizes each image: the picture at 1024 (more identity detail) with the figure small (384, more pose push), on x1 and the delta-lead line; and the identity <image3> at 1024.",
+ "strategies": ["x1-in1024", "x1-fig384", "x1-in1024-fig384", "xdl-idref-hi", "xdl-in1024-fig384"]}

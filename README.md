@@ -208,7 +208,9 @@ npm test         # builds first, then runs jest
 npm run package  # build a distributable for the current OS
 ```
 
-`npm run package` produces an NSIS installer on Windows, a universal DMG on macOS, and an AppImage on Linux. Artifacts land in `release/build/`. FFmpeg/FFprobe binaries are auto-downloaded as part of packaging.
+`npm run package` produces an NSIS installer on Windows, separate arm64 and x64 DMGs on macOS, and an AppImage on Linux. Artifacts land in `release/build/`. FFmpeg, FFprobe and UnRAR are auto-downloaded as part of packaging (universal binaries on macOS, so both DMGs work on either architecture).
+
+The Linux AppImage needs FUSE 2 (`sudo apt install libfuse2` on Ubuntu 22.04+, `libfuse2t64` on 24.04). On Ubuntu 24.04, AppArmor's unprivileged-namespace restriction can also stop it from starting; run it with `--no-sandbox` or add an AppArmor profile for it.
 
 ### Build & run the server
 

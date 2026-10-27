@@ -563,22 +563,45 @@ function MasonryGrid({
     }
   }, [libraryService]);
 
-  // Callback for ListItem to report dimensions when media loads
+  // Callback for ListItem to report dimensions when media loads. Reports are
+  // batched and applied together a moment later: thumbnails load dozens per
+  // second while scrolling, and each one used to copy the dimensions Map,
+  // re-run the whole layout and send its own machine event (which copied the
+  // persisted cache object again).
+  const pendingDimsRef = useRef(
+    new Map<string, { width: number; height: number }>()
+  );
+  const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (flushTimerRef.current) clearTimeout(flushTimerRef.current);
+    },
+    []
+  );
   const handleDimensionsLoaded = useCallback(
     (itemKey: string, width: number, height: number) => {
-      // Update local state immediately for fast re-render
-      setLocalDimensions((prev) => {
-        if (prev.has(itemKey)) return prev;
-        const next = new Map(prev);
-        next.set(itemKey, { width, height });
-        return next;
-      });
-      // Also persist to state machine for view switch stability
-      libraryService.send('CACHE_MASONRY_DIMENSIONS', {
-        itemKey,
-        width,
-        height,
-      });
+      pendingDimsRef.current.set(itemKey, { width, height });
+      if (flushTimerRef.current) return;
+      flushTimerRef.current = setTimeout(() => {
+        flushTimerRef.current = null;
+        const batch = pendingDimsRef.current;
+        pendingDimsRef.current = new Map();
+        if (batch.size === 0) return;
+        setLocalDimensions((prev) => {
+          let next: Map<string, { width: number; height: number }> | null =
+            null;
+          batch.forEach((dims, key) => {
+            if (prev.has(key)) return;
+            if (!next) next = new Map(prev);
+            next.set(key, dims);
+          });
+          return next ?? prev;
+        });
+        // Also persist to state machine for view switch stability
+        libraryService.send('CACHE_MASONRY_DIMENSIONS', {
+          entries: Array.from(batch.entries()),
+        });
+      }, 32);
     },
     [libraryService]
   );
@@ -595,26 +618,36 @@ function MasonryGrid({
     return () => observer.disconnect();
   }, []);
 
+  // Positions live in typed arrays (`col` is a column index): at a million
+  // items the old array of per-item position objects dominated every
+  // re-layout, and the layout re-runs whenever a batch of dimensions lands.
   const layout = useMemo(() => {
-    if (containerWidth === 0) return { height: 0, items: [] };
+    const n = containerWidth === 0 ? 0 : items.length;
+    const col = new Uint16Array(n);
+    const ys = new Float64Array(n);
+    const hs = new Float32Array(n);
+    if (n === 0) {
+      return { height: 0, count: 0, col, ys, hs, columnWidth: 0, maxItemHeight: 0 };
+    }
     const columnWidth = containerWidth / columns;
-    const colHeights = new Array(columns).fill(0);
+    const colHeights = new Float64Array(columns);
     const minItemHeight = 50;
     const maxItemHeight = columnWidth * 3;
-    const itemPositions = items.map((item, index) => {
-      const minColIndex = colHeights.indexOf(Math.min(...colHeights));
-      const x = minColIndex * columnWidth;
-      const y = colHeights[minColIndex];
+    for (let index = 0; index < n; index++) {
+      const item = items[index];
+      let minColIndex = 0;
+      for (let c = 1; c < columns; c++) {
+        if (colHeights[c] < colHeights[minColIndex]) minColIndex = c;
+      }
 
       let itemHeight = columnWidth; // Default fallback: square
 
       // First try to use pre-calculated dimensions from item
       if (item.width && item.height) {
         itemHeight = columnWidth * (item.height / item.width);
-      } else {
+      } else if (localDimensions.size > 0) {
         // Fall back to local dimensions cache (fast updates + initialized from persisted cache)
-        const itemKey = getItemKey(item);
-        const cached = localDimensions.get(itemKey);
+        const cached = localDimensions.get(getItemKey(item));
         if (cached && cached.width && cached.height) {
           itemHeight = columnWidth * (cached.height / cached.width);
         }
@@ -628,11 +661,14 @@ function MasonryGrid({
       // Clamp to reasonable bounds
       itemHeight = Math.max(minItemHeight, Math.min(maxItemHeight, itemHeight));
 
+      col[index] = minColIndex;
+      ys[index] = colHeights[minColIndex];
+      hs[index] = itemHeight;
       colHeights[minColIndex] += itemHeight;
-
-      return { index, x, y, width: columnWidth, height: itemHeight, item };
-    });
-    return { height: Math.max(...colHeights), items: itemPositions };
+    }
+    let height = 0;
+    for (let c = 0; c < columns; c++) height = Math.max(height, colHeights[c]);
+    return { height, count: n, col, ys, hs, columnWidth, maxItemHeight };
   }, [items, columns, containerWidth, localDimensions]);
 
   const visibleItems = useMemo(() => {
@@ -643,8 +679,42 @@ function MasonryGrid({
     const start = Math.max(0, scrollTop - overscan);
     const end = scrollTop + viewportHeight + overscan;
 
-    return layout.items.filter((p) => p.y + p.height > start && p.y < end);
-  }, [layout.items, scrollTop]);
+    // Each item goes into the currently shortest column, and that minimum
+    // never decreases, so y is non-decreasing in index. Binary-search the
+    // first item that could reach `start` (none is taller than
+    // maxItemHeight), then walk until items begin past `end`: O(log n +
+    // visible) per scroll instead of a filter over every position.
+    const { ys, hs, col, count, columnWidth, maxItemHeight } = layout;
+    const from = start - maxItemHeight;
+    let lo = 0;
+    let hi = count;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (ys[mid] < from) lo = mid + 1;
+      else hi = mid;
+    }
+    const out: {
+      index: number;
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+      item: (typeof items)[number];
+    }[] = [];
+    for (let i = lo; i < count && ys[i] < end; i++) {
+      if (ys[i] + hs[i] > start) {
+        out.push({
+          index: i,
+          x: col[i] * columnWidth,
+          y: ys[i],
+          width: columnWidth,
+          height: hs[i],
+          item: items[i],
+        });
+      }
+    }
+    return out;
+  }, [layout, items, scrollTop]);
 
   const handleScrollLocal = useCallback(
     (e: React.UIEvent<HTMLDivElement>) => {
@@ -703,14 +773,13 @@ function MasonryGrid({
   // Scroll to cursor when explicitly requested via scrollToCursorEventId
   useEffect(() => {
     if (containerWidth === 0) return;
-    if (layout.items.length === 0) return;
+    if (layout.count === 0) return;
     if (!scrollToCursorEventId) return;
 
     // Scroll to cursor item position
-    if (cursor != null && cursor >= 0 && cursor < layout.items.length) {
-      const itemPos = layout.items[cursor];
-      if (itemPos && parentRef.current) {
-        const targetScrollTop = Math.max(0, itemPos.y);
+    if (cursor != null && cursor >= 0 && cursor < layout.count) {
+      if (parentRef.current) {
+        const targetScrollTop = Math.max(0, layout.ys[cursor]);
         parentRef.current.scrollTop = targetScrollTop;
         setScrollTop(targetScrollTop);
       }
@@ -720,7 +789,7 @@ function MasonryGrid({
   }, [
     scrollToCursorEventId,
     libraryService,
-    layout.items,
+    layout,
     containerWidth,
     cursor,
   ]);

@@ -161,3 +161,61 @@ func TestUIContractReshoot(t *testing.T) {
 		}
 	})
 }
+
+func TestUIContractDream(t *testing.T) {
+	parse := func(fields map[string]string) dreamParams {
+		j := &jobqueue.Job{Arguments: uiFieldsToArgs(fields)}
+		return dreamParamsFromOptions(ParseOptions(j, dreamOptions))
+	}
+	joined := func(args []string) string { return "\x00" + strings.Join(args, "\x00") + "\x00" }
+	has := func(t *testing.T, args []string, want ...string) {
+		t.Helper()
+		if !strings.Contains(joined(args), "\x00"+strings.Join(want, "\x00")+"\x00") {
+			t.Errorf("args %q do not contain %q", args, want)
+		}
+	}
+
+	t.Run("generate: prompt, negative, size, steps, seed and count (no input)", func(t *testing.T) {
+		p := parse(map[string]string{"prompt": "a red fox\nin \"snow\"", "negative": "blurry", "size": "1344x768", "steps": "30", "seed": "42", "count": "3"})
+		if p.Prompt != "a red fox\nin \"snow\"" || p.Negative != "blurry" || p.Size != "1344x768" || p.Steps != 30 || p.Seed != 42 || p.Count != 3 || p.Turbo {
+			t.Fatalf("params = %+v", p)
+		}
+		args := buildDreamArgs(p, "", "outdir", "")
+		has(t, args, "--negative", "blurry")
+		has(t, args, "--size", "1344x768")
+		has(t, args, "--steps", "30")
+		has(t, args, "--seed", "42")
+		has(t, args, "--count", "3")
+		if hasArg(args, "--init") || hasArg(args, "--turbo") {
+			t.Errorf("text-to-image args %q", args)
+		}
+	})
+
+	t.Run("generate turbo: turbo=1 and no steps or negative from the UI", func(t *testing.T) {
+		p := parse(map[string]string{"prompt": "x", "turbo": "1", "size": "1024x1024", "seed": "1"})
+		if !p.Turbo || p.Steps != 0 {
+			t.Fatalf("params = %+v", p)
+		}
+		args := buildDreamArgs(p, "", "out.png", "")
+		has(t, args, "--turbo")
+		if hasArg(args, "--steps") || hasArg(args, "--negative") || hasArg(args, "--count") {
+			t.Errorf("turbo args %q", args)
+		}
+	})
+
+	t.Run("reimagine: strength with the input image as init", func(t *testing.T) {
+		p := parse(map[string]string{"prompt": "as an oil painting", "strength": "0.35", "steps": "50", "seed": "7"})
+		if p.Strength != 0.35 {
+			t.Fatalf("strength = %v; want 0.35", p.Strength)
+		}
+		args := buildDreamArgs(p, "in.png", "in_dream.png", "")
+		has(t, args, "--init", "in.png", "--strength", "0.35")
+		has(t, args, "--steps", "50")
+	})
+
+	t.Run("the recipe rides along as --meta", func(t *testing.T) {
+		meta := `{"kind":"loki-transform","v":1,"intent":"generate","paths":[]}`
+		p := parse(map[string]string{"prompt": "x", "meta": meta})
+		has(t, buildDreamArgs(p, "", "out.png", ""), "--meta="+meta)
+	})
+}

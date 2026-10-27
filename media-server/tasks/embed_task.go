@@ -583,6 +583,11 @@ func TextQueryVector(ctx context.Context, text string) ([]float32, EmbedModel, e
 	if !m.Multimodal || m.TextModelFile == "" {
 		return nil, m, fmt.Errorf("model %q does not support text search", m.ID)
 	}
+	// Never block a search on a 1.5 GB download: start it in the background
+	// and say so.
+	if err := startModelInstalls("visual search model", m.ID); err != nil {
+		return nil, m, err
+	}
 	textModel, err := deps.ModelPath(m.ID, m.TextModelFile)
 	if err != nil {
 		return nil, m, fmt.Errorf("text model not installed: %w", err)
@@ -600,7 +605,7 @@ func TextQueryVector(ctx context.Context, text string) ([]float32, EmbedModel, e
 	ortLib := deps.BundledOrEmpty("onnxruntime")
 	embedBin := deps.BundledOrEmpty("embed")
 	if embedBin == "" {
-		return nil, m, fmt.Errorf("embed binary not installed")
+		return nil, m, bundledMissing("embed")
 	}
 	vec, err := runEmbedTextSubprocess(ctx, embedBin, textModel, tokenizer, ortLib, text, m)
 	if err != nil {

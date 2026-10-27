@@ -1,0 +1,72 @@
+# loki-worker on Kubernetes (EKS, GKE, AKS, k3s with the NVIDIA device plugin).
+# One GPU per replica; each replica is a worker node of a pool.
+#
+#   kubectl create secret generic loki-worker --from-literal=token=$(openssl rand -hex 24)
+#   kubectl apply -f tools/worker/k8s/loki-worker.yaml
+#   lokictl pool add-node gpu http://<service-or-ingress>:8080 --token <token>
+#
+# With more than one replica, give each its own address (a StatefulSet with a
+# headless Service, one Service per pod, or an Ingress path per pod): the
+# media server keeps a job on the node it submitted it to.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: loki-models
+spec:
+  accessModes: ["ReadWriteOnce"] # ReadWriteMany (EFS, Filestore) lets replicas share one copy of the models
+  resources:
+    requests:
+      storage: 200Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: loki-worker
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels: { app: loki-worker }
+  template:
+    metadata:
+      labels: { app: loki-worker }
+    spec:
+      containers:
+        - name: loki-worker
+          image: ghcr.io/stevecastle/loki-worker:latest
+          ports:
+            - containerPort: 8080
+          env:
+            - name: LOKI_WORKER_TOKEN
+              valueFrom:
+                secretKeyRef: { name: loki-worker, key: token }
+            - name: LOKI_WORKER_PRELOAD
+              value: "retouch,segment"
+            - name: LOKI_WORKER_NAME
+              valueFrom:
+                fieldRef: { fieldPath: metadata.name }
+          resources:
+            limits:
+              nvidia.com/gpu: 1
+          readinessProbe:
+            httpGet: { path: /ping, port: 8080 }
+            periodSeconds: 10
+            failureThreshold: 360 # first start downloads models
+          volumeMounts:
+            - name: models
+              mountPath: /models
+      volumes:
+        - name: models
+          persistentVolumeClaim:
+            claimName: loki-models
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: loki-worker
+spec:
+  selector: { app: loki-worker }
+  ports:
+    - port: 8080
+      targetPort: 8080

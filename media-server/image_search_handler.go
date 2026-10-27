@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"sort"
 
 	"github.com/stevecastle/shrike/tasks"
 )
@@ -39,8 +40,20 @@ func enrichScoredItems(db *sql.DB, hits []tasks.SimilarHit) ([]map[string]any, e
 		} // a missing media row (orphan embedding) still yields a path+score item
 		items = append(items, item)
 	}
-	sortItemsByScore(items, scoreByPath) // existing helper in loki_api.go
+	sortItemsByScore(items, scoreByPath)
 	return items, nil
+}
+
+func sortItemsByScore(items []map[string]any, scoreByPath map[string]float32) {
+	for _, it := range items {
+		p, _ := it["path"].(string)
+		it["score"] = scoreByPath[p]
+	}
+	sort.SliceStable(items, func(a, b int) bool {
+		pa, _ := items[a]["path"].(string)
+		pb, _ := items[b]["path"].(string)
+		return scoreByPath[pa] > scoreByPath[pb]
+	})
 }
 
 func lokiImageSearchHandler(deps *Dependencies) http.HandlerFunc {

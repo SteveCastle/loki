@@ -1,0 +1,1330 @@
+{
+ "gen": "gen7",
+ "name": "x1idref",
+ "strategy": "x1idref",
+ "extra": [],
+ "seed0": 1000,
+ "steps": 4,
+ "seeds": 4,
+ "n": 164,
+ "pose": 0.6960365853658537,
+ "angle": 0.7484756097560976,
+ "face": 0.8073918165046694,
+ "body": 0.7873433350936168,
+ "zero": 21,
+ "per_case": [
+  {
+   "case": "window-armsup",
+   "seed": 0,
+   "pose": 0.75,
+   "angle": 1.0,
+   "face": 0.8874731846468572,
+   "body": 0.7853574378598648
+  },
+  {
+   "case": "window-armsup",
+   "seed": 1,
+   "pose": 0.5,
+   "angle": 0.75,
+   "face": 0.8730905015639602,
+   "body": 0.9170717918661234
+  },
+  {
+   "case": "window-armsup",
+   "seed": 2,
+   "pose": 0.75,
+   "angle": 1.0,
+   "face": 0.8484324522467864,
+   "body": 0.7662322713096366
+  },
+  {
+   "case": "window-armsup",
+   "seed": 3,
+   "pose": 0.25,
+   "angle": 0.5,
+   "face": 0.8885021557160281,
+   "body": 0.9015470945565572
+  },
+  {
+   "case": "window-wave",
+   "seed": 0,
+   "pose": 0.75,
+   "angle": 0.75,
+   "face": 0.9285752903422558,
+   "body": 0.8600257891359107
+  },
+  {
+   "case": "window-wave",
+   "seed": 1,
+   "pose": 0.25,
+   "angle": 0.25,
+   "face": 0.9230093003974537,
+   "body": 0.9388400292771695
+  },
+  {
+   "case": "window-wave",
+   "seed": 2,
+   "pose": 0.5,
+   "angle": 1.0,
+   "face": 0.9026392741893544,
+   "body": 0.8825836931107182
+  },
+  {
+   "case": "window-wave",
+   "seed": 3,
+   "pose": 0.5,
+   "angle": 0.75,
+   "face": 0.9323728587022395,
+   "body": 0.8735988252295541
+  },
+  {
+   "case": "window-hips",
+   "seed": 0,
+   "pose": 0.5,
+   "angle": 0.5,
+   "face": 0.9273644799844266,
+   "body": 0.9466617872906808
+  },
+  {
+   "case": "window-hips",
+   "seed": 1,
+   "pose": 0.5,
+   "angle": 0.5,
+   "face": 0.9220837896509195,
+   "body": 0.9493064641502276
+  },
+  {
+   "case": "window-hips",
+   "seed": 2,
+   "pose": 0.5,
+   "angle": 0.5,
+   "face": 0.892391845797554,
+   "body": 0.8606515423376101
+  },
+  {
+   "case": "window-hips",
+   "seed": 3,
+   "pose": 0.5,
+   "angle": 0.5,
+   "face": 0.9330735436306291,
+   "body": 0.9263400409501423
+  },
+  {
+   "case": "window-tpose",
+   "seed": 0,
+   "pose": 0.25,
+   "angle": 0.5,
+   "face": 0.9264286172175406,
+   "body": 0.9516937772954276
+  },
+  {
+   "case": "window-tpose",
+   "seed": 1,
+   "pose": 0.25,
+   "angle": 0.5,
+   "face": 0.9232747716332369,
+   "body": 0.9508893432236029
+  },
+  {
+   "case": "window-tpose",
+   "seed": 2,
+   "pose": 0.75,
+   "angle": 1.0,
+   "face": 0.8882788221927944,
+   "body": 0.8463585476634172
+  },
+  {
+   "case": "window-tpose",
+   "seed": 3,
+   "pose": 0.5,
+   "angle": 0.5,
+   "face": 0.9295673555764462,
+   "body": 0.9519637611279496
+  },
+  {
+   "case": "window-knee",
+   "seed": 0,
+   "pose": 1.0,
+   "angle": 1.0,
+   "face": 0.9288368736295871,
+   "body": 0.8549406004239611
+  },
+  {
+   "case": "window-knee",
+   "seed": 1,
+   "pose": 1.0,
+   "angle": 1.0,
+   "face": 0.9255627873581875,
+   "body": 0.8667316394099172
+  },
+  {
+   "case": "window-knee",
+   "seed": 2,
+   "pose": 1.0,
+   "angle": 1.0,
+   "face": 0.9000932057799143,
+   "body": 0.8639915718583562
+  },
+  {
+   "case": "window-knee",
+   "seed": 3,
+   "pose": 1.0,
+   "angle": 1.0,
+   "face": 0.9323971042523062,
+   "body": 0.9238130006147479
+  },
+  {
+   "case": "window-behindhead",
+   "seed": 0,
+   "pose": 0.5,
+   "angle": 0.5,
+   "face": 0.8340187796797176,
+   "body": 0.8997574839029264
+  },
+  {
+   "case": "window-behindhead",
+   "seed": 1,
+   "pose": 0.5,
+   "angle": 0.5,
+   "face": 0.8326805146114864,
+   "body": 0.947991907400557
+  },
+  {
+   "case": "window-behindhead",
+   "seed": 2,
+   "pose": 1.0,
+   "angle": 0.75,
+   "face": 0.7834075418073791,
+   "body": 0.8502638777181842
+  },
+  {
+   "case": "window-behindhead",
+   "seed": 3,
+   "pose": 0.25,
+   "angle": 0.5,
+   "face": 0.863236413661123,
+   "body": 0.9471544015989359
+  },
+  {
+   "case": "window-reach",
+   "seed": 0,
+   "pose": 0.75,
+   "angle": 0.75,
+   "face": 0.9418532614827648,
+   "body": 0.7690609826126434
+  },
+  {
+   "case": "window-reach",
+   "seed": 1,
+   "pose": 0.5,
+   "angle": 0.5,
+   "face": 0.939877464170079,
+   "body": 0.8718545390391574
+  },
+  {
+   "case": "window-reach",
+   "seed": 2,
+   "pose": 0.5,
+   "angle": 0.5,
+   "face": 0.9105931110008112,
+   "body": 0.850323047441022
+  },
+  {
+   "case": "window-reach",
+   "seed": 3,
+   "pose": 0.5,
+   "angle": 0.5,
+   "face": 0.9388851569429515,
+   "body": 0.8540257740760997
+  },
+  {
+   "case": "window-point",
+   "seed": 0,
+   "pose": 1.0,
+   "angle": 0.75,
+   "face": 0.927129838954473,
+   "body": 0.8714454777715661
+  },
+  {
+   "case": "window-point",
+   "seed": 1,
+   "pose": 0,
+   "angle": 0.25,
+   "face": 0.9240674251572802,
+   "body": 0.8897353084702099
+  },
+  {
+   "case": "window-point",
+   "seed": 2,
+   "pose": 0.75,
+   "angle": 0.5,
+   "face": 0.903709429959014,
+   "body": 0.8790799138713425
+  },
+  {
+   "case": "window-point",
+   "seed": 3,
+   "pose": 0.75,
+   "angle": 1.0,
+   "face": 0.9302418683926895,
+   "body": 0.859659314818363
+  },
+  {
+   "case": "window-folded",
+   "seed": 0,
+   "pose": 0.3333333333333333,
+   "angle": 0.6666666666666666,
+   "face": 0.9263261355450508,
+   "body": 0.9310439073859049
+  },
+  {
+   "case": "window-folded",
+   "seed": 1,
+   "pose": 0,
+   "angle": 0.6666666666666666,
+   "face": 0.922674514408127,
+   "body": 0.8879386902306162
+  },
+  {
+   "case": "window-folded",
+   "seed": 2,
+   "pose": 0.3333333333333333,
+   "angle": 0.3333333333333333,
+   "face": 0.8896885224234191,
+   "body": 0.922815483258981
+  },
+  {
+   "case": "window-folded",
+   "seed": 3,
+   "pose": 0,
+   "angle": 0.3333333333333333,
+   "face": 0.9316030650657544,
+   "body": 0.9449846695897746
+  },
+  {
+   "case": "window-step",
+   "seed": 0,
+   "pose": 1.0,
+   "angle": 1.0,
+   "face": 0.9282185978292367,
+   "body": 0.9345993298737744
+  },
+  {
+   "case": "window-step",
+   "seed": 1,
+   "pose": 1.0,
+   "angle": 1.0,
+   "face": 0.925485146994501,
+   "body": 0.928678739539942
+  },
+  {
+   "case": "window-step",
+   "seed": 2,
+   "pose": 1.0,
+   "angle": 1.0,
+   "face": 0.9064374649298141,
+   "body": 0.9247977013691453
+  },
+  {
+   "case": "window-step",
+   "seed": 3,
+   "pose": 1.0,
+   "angle": 1.0,
+   "face": 0.9341725179408494,
+   "body": 0.9283406399089835
+  },
+  {
+   "case": "window-headhand",
+   "seed": 0,
+   "pose": 1.0,
+   "angle": 1.0,
+   "face": 0.9245008581382347,
+   "body": 0.8187981262762722
+  },
+  {
+   "case": "window-headhand",
+   "seed": 1,
+   "pose": 0.75,
+   "angle": 1.0,
+   "face": 0.9206391706425793,
+   "body": 0.8788846287233182
+  },
+  {
+   "case": "window-headhand",
+   "seed": 2,
+   "pose": 0.5,
+   "angle": 1.0,
+   "face": 0.8778553655020014,
+   "body": 0.8704087246874843
+  },
+  {
+   "case": "window-headhand",
+   "seed": 3,
+   "pose": 0.75,
+   "angle": 1.0,
+   "face": 0.9296928822566186,
+   "body": 0.8598896082179561
+  },
+  {
+   "case": "window-combo1",
+   "seed": 0,
+   "pose": 0.4,
+   "angle": 0.3333333333333333,
+   "face": 0.9057379861983249,
+   "body": 0.836224427880626
+  },
+  {
+   "case": "window-combo1",
+   "seed": 1,
+   "pose": 0.2,
+   "angle": 0.3333333333333333,
+   "face": 0.893355105004014,
+   "body": 0.8528849124391855
+  },
+  {
+   "case": "window-combo1",
+   "seed": 2,
+   "pose": 0.6,
+   "angle": 0.6666666666666666,
+   "face": 0.8584673542205394,
+   "body": 0.8042179912852366
+  },
+  {
+   "case": "window-combo1",
+   "seed": 3,
+   "pose": 0.6,
+   "angle": 0.6666666666666666,
+   "face": 0.9124479166998295,
+   "body": 0.9032674017782609
+  },
+  {
+   "case": "window-combo2",
+   "seed": 0,
+   "pose": 0.8,
+   "angle": 1.0,
+   "face": 0.926301413967142,
+   "body": 0.8373908330163096
+  },
+  {
+   "case": "window-combo2",
+   "seed": 1,
+   "pose": 0.6,
+   "angle": 0.6666666666666666,
+   "face": 0.923103837113762,
+   "body": 0.9018657180352493
+  },
+  {
+   "case": "window-combo2",
+   "seed": 2,
+   "pose": 0.4,
+   "angle": 1.0,
+   "face": 0.8995602797899246,
+   "body": 0.8112757006726581
+  },
+  {
+   "case": "window-combo2",
+   "seed": 3,
+   "pose": 0.8,
+   "angle": 1.0,
+   "face": 0.9314324780181066,
+   "body": 0.8370573306236426
+  },
+  {
+   "case": "window-user",
+   "seed": 0,
+   "pose": 0.5,
+   "angle": 1.0,
+   "face": 0.9295779672049604,
+   "body": 0.8540051199132688
+  },
+  {
+   "case": "window-user",
+   "seed": 1,
+   "pose": 0.5,
+   "angle": 1.0,
+   "face": 0.9245642481062473,
+   "body": 0.868778172646062
+  },
+  {
+   "case": "window-user",
+   "seed": 2,
+   "pose": 1.0,
+   "angle": 1.0,
+   "face": 0.8917998718744786,
+   "body": 0.8621812443162071
+  },
+  {
+   "case": "window-user",
+   "seed": 3,
+   "pose": 0.5,
+   "angle": 1.0,
+   "face": 0.9294548677480691,
+   "body": 0.925966785364656
+  },
+  {
+   "case": "pool-armsup",
+   "seed": 0,
+   "pose": 1.0,
+   "angle": 1.0,
+   "face": 0.4259231309413712,
+   "body": 0.8742498392111469
+  },
+  {
+   "case": "pool-armsup",
+   "seed": 1,
+   "pose": 1.0,
+   "angle": 0.75,
+   "face": 0.924702017015981,
+   "body": 0.8953079740448231
+  },
+  {
+   "case": "pool-armsup",
+   "seed": 2,
+   "pose": 1.0,
+   "angle": 0.75,
+   "face": 0.9153485377487075,
+   "body": 0.9009597168119686
+  },
+  {
+   "case": "pool-armsup",
+   "seed": 3,
+   "pose": 1.0,
+   "angle": 1.0,
+   "face": 0.9089250594163423,
+   "body": 0.8976842478482658
+  },
+  {
+   "case": "pool-wave",
+   "seed": 0,
+   "pose": 1.0,
+   "angle": 1.0,
+   "face": 0.9100445896938579,
+   "body": 0.8977258924542522
+  },
+  {
+   "case": "pool-wave",
+   "seed": 1,
+   "pose": 1.0,
+   "angle": 1.0,
+   "face": 0.932278845876147,
+   "body": 0.8716109100054521
+  },
+  {
+   "case": "pool-wave",
+   "seed": 2,
+   "pose": 1.0,
+   "angle": 1.0,
+   "face": 0.9371640083097523,
+   "body": 0.8949515072989209
+  },
+  {
+   "case": "pool-wave",
+   "seed": 3,
+   "pose": 1.0,
+   "angle": 1.0,
+   "face": 0.9389572497322105,
+   "body": 0.900501532950987
+  },
+  {
+   "case": "pool-hips",
+   "seed": 0,
+   "pose": 0.5,
+   "angle": 0.5,
+   "face": 0.91764284732478,
+   "body": 0.895965820729562
+  },
+  {
+   "case": "pool-hips",
+   "seed": 1,
+   "pose": 0.5,
+   "angle": 0.5,
+   "face": 0.9259899545504456,
+   "body": 0.8905059367628753
+  },
+  {
+   "case": "pool-hips",
+   "seed": 2,
+   "pose": 0.5,
+   "angle": 0.5,
+   "face": 0.9350743180536062,
+   "body": 0.9038950822584497
+  },
+  {
+   "case": "pool-hips",
+   "seed": 3,
+   "pose": 1.0,
+   "angle": 0.5,
+   "face": 0.9361744485953643,
+   "body": 0.8972943611966859
+  },
+  {
+   "case": "pool-tpose",
+   "seed": 0,
+   "pose": 0.5,
+   "angle": 0.5,
+   "face": 0.8839511896944623,
+   "body": 0.9094284201356077
+  },
+  {
+   "case": "pool-tpose",
+   "seed": 1,
+   "pose": 0.5,
+   "angle": 0.5,
+   "face": 0.9220050170958888,
+   "body": 0.8956103835640571
+  },
+  {
+   "case": "pool-tpose",
+   "seed": 2,
+   "pose": 0.5,
+   "angle": 0.5,
+   "face": 0.936728326069205,
+   "body": 0.9112243011163701
+  },
+  {
+   "case": "pool-tpose",
+   "seed": 3,
+   "pose": 0.5,
+   "angle": 0.5,
+   "face": 0.9373260998543955,
+   "body": 0.9050190114506189
+  },
+  {
+   "case": "pool-knee",
+   "seed": 0,
+   "pose": 1.0,
+   "angle": 1.0,
+   "face": 0.931971024372912,
+   "body": 0.7278999264894821
+  },
+  {
+   "case": "pool-knee",
+   "seed": 1,
+   "pose": 1.0,
+   "angle": 1.0,
+   "face": 0.9278512632906969,
+   "body": 0.7069373583548425
+  },
+  {
+   "case": "pool-knee",
+   "seed": 2,
+   "pose": 1.0,
+   "angle": 1.0,
+   "face": 0.9364205458701406,
+   "body": 0.7113181452011093
+  },
+  {
+   "case": "pool-knee",
+   "seed": 3,
+   "pose": 1.0,
+   "angle": 1.0,
+   "face": 0.9351556977263769,
+   "body": 0.7132433078274599
+  },
+  {
+   "case": "pool-behindhead",
+   "seed": 0,
+   "pose": 1.0,
+   "angle": 1.0,
+   "face": 0.7724780480481296,
+   "body": 0.9098797978021428
+  },
+  {
+   "case": "pool-behindhead",
+   "seed": 1,
+   "pose": 1.0,
+   "angle": 1.0,
+   "face": 0.8991254679986334,
+   "body": 0.8989871675119038
+  },
+  {
+   "case": "pool-behindhead",
+   "seed": 2,
+   "pose": 1.0,
+   "angle": 1.0,
+   "face": 0.9280682267524191,
+   "body": 0.913882739112653
+  },
+  {
+   "case": "pool-behindhead",
+   "seed": 3,
+   "pose": 1.0,
+   "angle": 0.75,
+   "face": 0.9250739701603243,
+   "body": 0.8963497758967826
+  },
+  {
+   "case": "pool-reach",
+   "seed": 0,
+   "pose": 1.0,
+   "angle": 0.75,
+   "face": 0.8546156880159279,
+   "body": 0.874743515141286
+  },
+  {
+   "case": "pool-reach",
+   "seed": 1,
+   "pose": 1.0,
+   "angle": 0.75,
+   "face": 0.9395848987339133,
+   "body": 0.8712685757973108
+  },
+  {
+   "case": "pool-reach",
+   "seed": 2,
+   "pose": 1.0,
+   "angle": 0.75,
+   "face": 0.9306159671337808,
+   "body": 0.8840930810374056
+  },
+  {
+   "case": "pool-reach",
+   "seed": 3,
+   "pose": 1.0,
+   "angle": 0.75,
+   "face": 0.9200019431830044,
+   "body": 0.8866192976962917
+  },
+  {
+   "case": "pool-point",
+   "seed": 0,
+   "pose": 0.75,
+   "angle": 0.75,
+   "face": 0.8584170120581233,
+   "body": 0.899311816685414
+  },
+  {
+   "case": "pool-point",
+   "seed": 1,
+   "pose": 0.75,
+   "angle": 0.75,
+   "face": 0.9259310798371478,
+   "body": 0.8571537610712178
+  },
+  {
+   "case": "pool-point",
+   "seed": 2,
+   "pose": 1.0,
+   "angle": 1.0,
+   "face": 0.936485812478401,
+   "body": 0.8891767490613499
+  },
+  {
+   "case": "pool-point",
+   "seed": 3,
+   "pose": 1.0,
+   "angle": 1.0,
+   "face": 0.937010452372703,
+   "body": 0.9025199665348277
+  },
+  {
+   "case": "pool-folded",
+   "seed": 0,
+   "pose": 0.75,
+   "angle": 0.75,
+   "face": 0.8614680564550943,
+   "body": 0.8773773869123626
+  },
+  {
+   "case": "pool-folded",
+   "seed": 1,
+   "pose": 0.25,
+   "angle": 0.5,
+   "face": 0.9243057381207155,
+   "body": 0.8918604664075048
+  },
+  {
+   "case": "pool-folded",
+   "seed": 2,
+   "pose": 0.5,
+   "angle": 0.5,
+   "face": 0.937582883791059,
+   "body": 0.893941453632339
+  },
+  {
+   "case": "pool-folded",
+   "seed": 3,
+   "pose": 0.75,
+   "angle": 0.75,
+   "face": 0.9339406807351636,
+   "body": 0.8754581198846267
+  },
+  {
+   "case": "pool-step",
+   "seed": 0,
+   "pose": 1.0,
+   "angle": 1.0,
+   "face": 0.9360544611112511,
+   "body": 0.7835235339827066
+  },
+  {
+   "case": "pool-step",
+   "seed": 1,
+   "pose": 1.0,
+   "angle": 1.0,
+   "face": 0.9269629034753085,
+   "body": 0.7441829882541315
+  },
+  {
+   "case": "pool-step",
+   "seed": 2,
+   "pose": 1.0,
+   "angle": 1.0,
+   "face": 0.934082615477447,
+   "body": 0.7534356844844279
+  },
+  {
+   "case": "pool-step",
+   "seed": 3,
+   "pose": 1.0,
+   "angle": 1.0,
+   "face": 0.9352667046704293,
+   "body": 0.7617519013087432
+  },
+  {
+   "case": "pool-headhand",
+   "seed": 0,
+   "pose": 1.0,
+   "angle": 1.0,
+   "face": 0.8117318981665116,
+   "body": 0.8800466437491377
+  },
+  {
+   "case": "pool-headhand",
+   "seed": 1,
+   "pose": 1.0,
+   "angle": 1.0,
+   "face": 0.9357321491089631,
+   "body": 0.8704424616865901
+  },
+  {
+   "case": "pool-headhand",
+   "seed": 2,
+   "pose": 1.0,
+   "angle": 1.0,
+   "face": 0.9343121493280286,
+   "body": 0.8916782285773267
+  },
+  {
+   "case": "pool-headhand",
+   "seed": 3,
+   "pose": 1.0,
+   "angle": 1.0,
+   "face": 0.8975971574291656,
+   "body": 0.8870368905177649
+  },
+  {
+   "case": "pool-combo1",
+   "seed": 0,
+   "pose": 0.8,
+   "angle": 0.8,
+   "face": 0.6940210125437192,
+   "body": 0.4576915831925778
+  },
+  {
+   "case": "pool-combo1",
+   "seed": 1,
+   "pose": 1.0,
+   "angle": 1.0,
+   "face": 0.9202151487450416,
+   "body": 0.6310668036017263
+  },
+  {
+   "case": "pool-combo1",
+   "seed": 2,
+   "pose": 1.0,
+   "angle": 1.0,
+   "face": 0.9332010112491214,
+   "body": 0.5830792788736426
+  },
+  {
+   "case": "pool-combo1",
+   "seed": 3,
+   "pose": 1.0,
+   "angle": 0.8,
+   "face": 0.9047008671706697,
+   "body": 0.600297688753223
+  },
+  {
+   "case": "pool-combo2",
+   "seed": 0,
+   "pose": 0.6,
+   "angle": 1.0,
+   "face": 0.7930894355731185,
+   "body": 0.3684452645285082
+  },
+  {
+   "case": "pool-combo2",
+   "seed": 1,
+   "pose": 0.8,
+   "angle": 1.0,
+   "face": 0.9272807063573124,
+   "body": 0.6715461559637734
+  },
+  {
+   "case": "pool-combo2",
+   "seed": 2,
+   "pose": 1.0,
+   "angle": 1.0,
+   "face": 0.9364028221168058,
+   "body": 0.6802738409394521
+  },
+  {
+   "case": "pool-combo2",
+   "seed": 3,
+   "pose": 0.8,
+   "angle": 1.0,
+   "face": 0.9350236690438971,
+   "body": 0.6194762967207944
+  },
+  {
+   "case": "pool-user",
+   "seed": 0,
+   "pose": 1.0,
+   "angle": 1.0,
+   "face": 0.2896483786956156,
+   "body": 0.1945526601033936
+  },
+  {
+   "case": "pool-user",
+   "seed": 1,
+   "pose": 1.0,
+   "angle": 1.0,
+   "face": 0.299342457628984,
+   "body": 0.18054373039004146
+  },
+  {
+   "case": "pool-user",
+   "seed": 2,
+   "pose": 1.0,
+   "angle": 1.0,
+   "face": 0.23202289934140946,
+   "body": 0.20763384277502975
+  },
+  {
+   "case": "pool-user",
+   "seed": 3,
+   "pose": 1.0,
+   "angle": 1.0,
+   "face": 0.1492314769902776,
+   "body": 0.19691983693839835
+  },
+  {
+   "case": "suit-armsup",
+   "seed": 0,
+   "pose": 1.0,
+   "angle": 1.0,
+   "face": 0.6065366850061589,
+   "body": 0.6480138477882029
+  },
+  {
+   "case": "suit-armsup",
+   "seed": 1,
+   "pose": 1.0,
+   "angle": 1.0,
+   "face": 0.6611049527132721,
+   "body": 0.6966862749921723
+  },
+  {
+   "case": "suit-armsup",
+   "seed": 2,
+   "pose": 1.0,
+   "angle": 1.0,
+   "face": 0.6890405776650871,
+   "body": 0.7256375705053794
+  },
+  {
+   "case": "suit-armsup",
+   "seed": 3,
+   "pose": 1.0,
+   "angle": 1.0,
+   "face": 0.6553072354844002,
+   "body": 0.7077903817777677
+  },
+  {
+   "case": "suit-wave",
+   "seed": 0,
+   "pose": 0,
+   "angle": 0.5,
+   "face": 0.6196917607809527,
+   "body": 0.6307796781200586
+  },
+  {
+   "case": "suit-wave",
+   "seed": 1,
+   "pose": 0,
+   "angle": 0.5,
+   "face": 0.6285295341446177,
+   "body": 0.6782610236547166
+  },
+  {
+   "case": "suit-wave",
+   "seed": 2,
+   "pose": 0,
+   "angle": 0.5,
+   "face": 0.6315868506197112,
+   "body": 0.7225578234597927
+  },
+  {
+   "case": "suit-wave",
+   "seed": 3,
+   "pose": 0,
+   "angle": 0.5,
+   "face": 0.5775198505640047,
+   "body": 0.672330708516033
+  },
+  {
+   "case": "suit-hips",
+   "seed": 0,
+   "pose": 1.0,
+   "angle": 1.0,
+   "face": 0.6230476157404584,
+   "body": 0.7176436002508655
+  },
+  {
+   "case": "suit-hips",
+   "seed": 1,
+   "pose": 1.0,
+   "angle": 1.0,
+   "face": 0.6197135325795162,
+   "body": 0.6765459655201603
+  },
+  {
+   "case": "suit-hips",
+   "seed": 2,
+   "pose": 1.0,
+   "angle": 1.0,
+   "face": 0.7264522060059423,
+   "body": 0.77881327341787
+  },
+  {
+   "case": "suit-hips",
+   "seed": 3,
+   "pose": 1.0,
+   "angle": 1.0,
+   "face": 0.5890157979018937,
+   "body": 0.6807073757952113
+  },
+  {
+   "case": "suit-tpose",
+   "seed": 0,
+   "pose": 0,
+   "angle": 1.0,
+   "face": 0.5833402273114341,
+   "body": 0.6598039080111178
+  },
+  {
+   "case": "suit-tpose",
+   "seed": 1,
+   "pose": 0,
+   "angle": 0.5,
+   "face": 0.6854461113940229,
+   "body": 0.7287988223526718
+  },
+  {
+   "case": "suit-tpose",
+   "seed": 2,
+   "pose": 0,
+   "angle": 0.5,
+   "face": 0.755343865274561,
+   "body": 0.7690122518188163
+  },
+  {
+   "case": "suit-tpose",
+   "seed": 3,
+   "pose": 0,
+   "angle": 0.5,
+   "face": 0.6418958687502403,
+   "body": 0.7087136106417402
+  },
+  {
+   "case": "suit-knee",
+   "seed": 0,
+   "pose": 0,
+   "angle": 0.0,
+   "face": 0.7531692352194218,
+   "body": 0.7803085690435887
+  },
+  {
+   "case": "suit-knee",
+   "seed": 1,
+   "pose": 0,
+   "angle": 0.0,
+   "face": 0.6524606294064594,
+   "body": 0.7094630216774683
+  },
+  {
+   "case": "suit-knee",
+   "seed": 2,
+   "pose": 0,
+   "angle": 0.0,
+   "face": 0.677989266355798,
+   "body": 0.7087777869943072
+  },
+  {
+   "case": "suit-knee",
+   "seed": 3,
+   "pose": 0,
+   "angle": 0.0,
+   "face": 0.6522809002295863,
+   "body": 0.7179544997833706
+  },
+  {
+   "case": "suit-behindhead",
+   "seed": 0,
+   "pose": 1.0,
+   "angle": 1.0,
+   "face": 0.5891136835714479,
+   "body": 0.6579261840458459
+  },
+  {
+   "case": "suit-behindhead",
+   "seed": 1,
+   "pose": 1.0,
+   "angle": 1.0,
+   "face": 0.6168258666284903,
+   "body": 0.6884301190720657
+  },
+  {
+   "case": "suit-behindhead",
+   "seed": 2,
+   "pose": 1.0,
+   "angle": 1.0,
+   "face": 0.7093736969020329,
+   "body": 0.7417292065177302
+  },
+  {
+   "case": "suit-behindhead",
+   "seed": 3,
+   "pose": 1.0,
+   "angle": 1.0,
+   "face": 0.541733913018387,
+   "body": 0.6669384562277517
+  },
+  {
+   "case": "suit-reach",
+   "seed": 0,
+   "pose": 1.0,
+   "angle": 1.0,
+   "face": 0.6751583595404803,
+   "body": 0.6381373554587564
+  },
+  {
+   "case": "suit-reach",
+   "seed": 1,
+   "pose": 1.0,
+   "angle": 1.0,
+   "face": 0.6921431268187281,
+   "body": 0.6680823968145672
+  },
+  {
+   "case": "suit-reach",
+   "seed": 2,
+   "pose": 1.0,
+   "angle": 0.5,
+   "face": 0.6671437743538657,
+   "body": 0.6924424041175679
+  },
+  {
+   "case": "suit-reach",
+   "seed": 3,
+   "pose": 1.0,
+   "angle": 1.0,
+   "face": 0.7110294370699487,
+   "body": 0.6510003178874244
+  },
+  {
+   "case": "suit-point",
+   "seed": 0,
+   "pose": 1.0,
+   "angle": 0.5,
+   "face": 0.601463030426227,
+   "body": 0.6506132586802653
+  },
+  {
+   "case": "suit-point",
+   "seed": 1,
+   "pose": 1.0,
+   "angle": 0.5,
+   "face": 0.6318690394864975,
+   "body": 0.6941900917855232
+  },
+  {
+   "case": "suit-point",
+   "seed": 2,
+   "pose": 1.0,
+   "angle": 0.5,
+   "face": 0.6442298955748654,
+   "body": 0.7483198153279426
+  },
+  {
+   "case": "suit-point",
+   "seed": 3,
+   "pose": 1.0,
+   "angle": 0.5,
+   "face": 0.5776853429447505,
+   "body": 0.7020267463198824
+  },
+  {
+   "case": "suit-folded",
+   "seed": 0,
+   "pose": 0.3333333333333333,
+   "angle": 0.3333333333333333,
+   "face": 0.5755843684760105,
+   "body": 0.642514230861667
+  },
+  {
+   "case": "suit-folded",
+   "seed": 1,
+   "pose": 0.3333333333333333,
+   "angle": 0.3333333333333333,
+   "face": 0.676054719467764,
+   "body": 0.6913325664096062
+  },
+  {
+   "case": "suit-folded",
+   "seed": 2,
+   "pose": 0.3333333333333333,
+   "angle": 0.3333333333333333,
+   "face": 0.6773365032682345,
+   "body": 0.7234578084548006
+  },
+  {
+   "case": "suit-folded",
+   "seed": 3,
+   "pose": 0.3333333333333333,
+   "angle": 0.3333333333333333,
+   "face": 0.6646887496629184,
+   "body": 0.7132225415065506
+  },
+  {
+   "case": "suit-step",
+   "seed": 0,
+   "pose": 0,
+   "angle": 0.5,
+   "face": 0.718709350359488,
+   "body": 0.7614358071387161
+  },
+  {
+   "case": "suit-step",
+   "seed": 1,
+   "pose": 0,
+   "angle": 0.5,
+   "face": 0.6689300865757974,
+   "body": 0.7284352520367118
+  },
+  {
+   "case": "suit-step",
+   "seed": 2,
+   "pose": 0,
+   "angle": 0.5,
+   "face": 0.6659999732093782,
+   "body": 0.7188239049056665
+  },
+  {
+   "case": "suit-step",
+   "seed": 3,
+   "pose": 0,
+   "angle": 0.5,
+   "face": 0.6525239415594215,
+   "body": 0.724560827153809
+  },
+  {
+   "case": "suit-headhand",
+   "seed": 0,
+   "pose": 1.0,
+   "angle": 1.0,
+   "face": 0.6425918351994094,
+   "body": 0.6451424644186144
+  },
+  {
+   "case": "suit-headhand",
+   "seed": 1,
+   "pose": 1.0,
+   "angle": 1.0,
+   "face": 0.6531891076220231,
+   "body": 0.6724376274362739
+  },
+  {
+   "case": "suit-headhand",
+   "seed": 2,
+   "pose": 1.0,
+   "angle": 1.0,
+   "face": 0.654343101166585,
+   "body": 0.7158413961101003
+  },
+  {
+   "case": "suit-headhand",
+   "seed": 3,
+   "pose": 1.0,
+   "angle": 1.0,
+   "face": 0.5663420508149395,
+   "body": 0.6496415391187303
+  },
+  {
+   "case": "suit-combo1",
+   "seed": 0,
+   "pose": 1.0,
+   "angle": 0.6,
+   "face": 0.5706635670479232,
+   "body": 0.6425671288275894
+  },
+  {
+   "case": "suit-combo1",
+   "seed": 1,
+   "pose": 1.0,
+   "angle": 0.6,
+   "face": 0.6402408780017089,
+   "body": 0.6949035954202161
+  },
+  {
+   "case": "suit-combo1",
+   "seed": 2,
+   "pose": 1.0,
+   "angle": 0.6,
+   "face": 0.7173201849672451,
+   "body": 0.7392982195026292
+  },
+  {
+   "case": "suit-combo1",
+   "seed": 3,
+   "pose": 1.0,
+   "angle": 0.6,
+   "face": 0.6299964741417653,
+   "body": 0.7304768330628137
+  },
+  {
+   "case": "suit-combo2",
+   "seed": 0,
+   "pose": 1.0,
+   "angle": 0.6,
+   "face": 0.6042593036414279,
+   "body": 0.6673347687689124
+  },
+  {
+   "case": "suit-combo2",
+   "seed": 1,
+   "pose": 0,
+   "angle": 0.4,
+   "face": 0.7055196278507584,
+   "body": 0.7112838779549768
+  },
+  {
+   "case": "suit-combo2",
+   "seed": 2,
+   "pose": 0,
+   "angle": 0.4,
+   "face": 0.7306762247704361,
+   "body": 0.7272438898130363
+  },
+  {
+   "case": "suit-combo2",
+   "seed": 3,
+   "pose": 1.0,
+   "angle": 0.6,
+   "face": 0.5935393801991733,
+   "body": 0.6830867443892495
+  }
+ ],
+ "fitness": 0.7598118366800594
+}

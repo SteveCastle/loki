@@ -60,6 +60,7 @@ var reshootOptions = []TaskOption{
 	{Name: "noaudio", Label: "No Audio", Type: "bool", Default: false, Description: "Do not generate/mux audio"},
 	{Name: "novideoaudio", Label: "Ignore Video Soundtracks", Type: "bool", Default: false, Description: "Do not use the soundtracks of reference videos"},
 	{Name: "meta", Label: "Recipe (JSON)", Type: "string", Default: "", Description: "A JSON object stamped verbatim into the result's generation record as `meta` (the Transform flow's intent + settings, to rebuild a saved task from a result); dropped for engines too old to take it"},
+	{Name: "nolibrary", Label: "Keep Out of Library", Type: "bool", Default: false, Description: "Scratch output (the Scene editor's layers): write the result beside the input but don't add it to the library or jump the viewer to it"},
 	{Name: "refs", Label: "Extra References", Type: "string", Default: "", Description: "Extra reference images/videos/audio, one absolute path per line"},
 }
 
@@ -79,6 +80,8 @@ type reshootParams struct {
 	NoAudio      bool
 	NoVideoAudio bool
 	Refs         []string
+	// NoLibrary keeps a finished result out of the library (scratch work).
+	NoLibrary bool
 	// Meta is the caller's recipe (JSON object) for the generation record;
 	// MetaFile, when set by the task, carries a long one instead.
 	Meta     string
@@ -99,6 +102,7 @@ func reshootParamsFromOptions(opts map[string]any) reshootParams {
 		NoAudio:      optBool(opts, "noaudio"),
 		NoVideoAudio: optBool(opts, "novideoaudio"),
 		Refs:         splitPathList(optString(opts, "refs")),
+		NoLibrary:    optBool(opts, "nolibrary"),
 		Meta:         strings.TrimSpace(optString(opts, "meta")),
 	}
 	if v, ok := opts["native"].(bool); ok {
@@ -264,6 +268,8 @@ func planReshootInputs(paths []string, p reshootParams, logf func(string)) (imag
 }
 
 func reshootTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
+	// Selection sessions (loki-segment) let go of their VRAM while this runs.
+	defer beginGPUHeavy()()
 	const tag = "reshoot"
 	ctx := j.Ctx
 	if ctx == nil {
@@ -284,6 +290,7 @@ func reshootTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 	if err != nil {
 		return fail(err.Error(), err)
 	}
+	defer bin.Release()
 	if p.Model == reshootModelFast {
 		if !aiToolHelpHas(ctx, bin, "--model") {
 			return fail("this loki-reshoot is too old for the fast model (FastH3 Omni); update it (Dependencies page, or your own build on PATH) or use the H3 model", nil)
@@ -353,7 +360,7 @@ func reshootTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 	terminal := !q.HasDependents(j.ID)
 	var created []string
 	defer func() {
-		if terminal {
+		if terminal && !p.NoLibrary {
 			broadcastMediaCreated(created)
 		}
 	}()
@@ -413,7 +420,7 @@ func reshootTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 	if statErr != nil {
 		return fail("no output produced", nil)
 	}
-	if terminal {
+	if terminal && !p.NoLibrary {
 		if err := insertMediaRecord(q.Db, output, info.Size()); err != nil {
 			q.PushJobStdout(j.ID, tag+": failed to add to library: "+err.Error())
 		}

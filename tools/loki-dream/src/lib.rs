@@ -1,0 +1,74 @@
+pub mod cli;
+pub mod cuda;
+pub mod dit;
+pub mod genmeta;
+pub mod image;
+pub mod lora;
+pub mod models;
+pub mod ops;
+pub mod pipeline;
+pub mod rng;
+pub mod safetensors;
+pub mod sampler;
+pub mod tensor;
+pub mod text_encoder;
+pub mod tokenizer;
+pub mod vae;
+pub mod weights;
+pub mod worker;
+
+/// Progress/diagnostic output (stderr), silenced by `--quiet`. Results go to stdout, never through this.
+pub mod log {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static QUIET: AtomicBool = AtomicBool::new(false);
+    pub fn set_quiet(q: bool) {
+        QUIET.store(q, Ordering::Relaxed);
+    }
+    pub fn quiet() -> bool {
+        QUIET.load(Ordering::Relaxed)
+    }
+}
+
+#[macro_export]
+macro_rules! info {
+    ($($t:tt)*) => {
+        if !$crate::log::quiet() {
+            eprintln!($($t)*);
+        }
+    };
+}
+
+/// CPU reference helpers shared by tests.
+pub mod reference {
+    /// Normalized regular Hadamard H256 = kron^4(h4) / 16, applied to each 256-group of a row.
+    pub fn hadamard256_rows(x: &[f32], k: usize) -> Vec<f32> {
+        let h4 = [[1.0f32, 1.0, 1.0, -1.0], [1.0, 1.0, -1.0, 1.0], [1.0, -1.0, 1.0, 1.0], [-1.0, 1.0, 1.0, 1.0]];
+        let mut h = vec![vec![1.0f32]];
+        let mut size = 1;
+        while size < 256 {
+            let mut nh = vec![vec![0.0f32; size * 4]; size * 4];
+            for i in 0..size * 4 {
+                for j in 0..size * 4 {
+                    nh[i][j] = h[i / 4][j / 4] * h4[i % 4][j % 4];
+                }
+            }
+            h = nh;
+            size *= 4;
+        }
+        let rows = x.len() / k;
+        let mut out = vec![0.0f32; x.len()];
+        for r in 0..rows {
+            for g in 0..k / 256 {
+                let base = r * k + g * 256;
+                for j in 0..256 {
+                    let mut s = 0.0f64;
+                    for i in 0..256 {
+                        s += (x[base + i] as f64) * (h[i][j] as f64);
+                    }
+                    out[base + j] = (s / 16.0) as f32;
+                }
+            }
+        }
+        out
+    }
+}

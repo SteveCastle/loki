@@ -90,8 +90,38 @@ func isRetouchView(preset string) bool {
 	return ok
 }
 
-// Prompt is the edit instruction for this camera position.
-func (v retouchView) Prompt() string {
+// Prompt is the edit instruction for this camera position when the way the
+// subject faces is not known: the move is said only relatively.
+func (v retouchView) Prompt() string { return v.PromptFacing(0, false) }
+
+// viewOf says how a subject facing deg (subjectFacing's convention, relative
+// to the camera looking at them) is seen.
+func viewOf(deg int) string {
+	deg = ((deg % 360) + 360) % 360
+	side := "right"
+	if deg > 180 {
+		side = "left"
+		deg = 360 - deg
+	}
+	switch deg {
+	case 0:
+		return "from the front, facing the camera"
+	case 45:
+		return fmt.Sprintf("in three-quarter view from the front, turned toward the %s of the picture", side)
+	case 90:
+		return fmt.Sprintf("in full profile, facing the %s of the picture", side)
+	case 135:
+		return fmt.Sprintf("mostly from behind, turned away toward the %s of the picture, their face mostly hidden", side)
+	}
+	return "from directly behind, their back to the camera and their face hidden"
+}
+
+// PromptFacing is the edit instruction for this camera position. With known,
+// facing is the way the subject faces in the picture (subjectFacing) and the
+// prompt also says how they are seen before and after the move: a subject
+// already in profile or facing away is not described as if they faced the
+// camera (the old wording, which left such pictures unchanged).
+func (v retouchView) PromptFacing(facing int, known bool) string {
 	side := "right"
 	if v.Azimuth > 180 {
 		side = "left"
@@ -101,35 +131,40 @@ func (v retouchView) Prompt() string {
 		deg = 360 - deg
 	}
 
-	var where, camera, facing, surfaces string
+	var where, camera, turns, surfaces string
 	switch deg {
 	case 0:
 		camera = "The camera keeps its original direction to the subject"
-		facing = "The subject remains facing the same direction in the scene."
 	case 45:
-		where = fmt.Sprintf("a three-quarter angle, 45 degrees to the %s of the original camera position", side)
+		where = fmt.Sprintf("45 degrees around the subject toward the %s of the original camera position", side)
 		camera = fmt.Sprintf("The camera has orbited 45 degrees around the subject toward the %s of the original frame, still aimed at the subject", side)
-		facing = fmt.Sprintf("The subject remains facing the same direction in the scene, so they are now seen in three-quarter view, with the side that was on the %s of the original frame turned toward the camera.", side)
+		turns = fmt.Sprintf("The side of the subject that was on the %s of the original picture turns partly toward the camera.", side)
 		surfaces = "the surfaces of the subject that this angle turns toward the camera"
 	case 90:
-		where = fmt.Sprintf("directly from the side, 90 degrees to the %s of the original camera position", side)
-		camera = fmt.Sprintf("The camera has orbited a quarter turn around the subject toward the %s of the original frame, still aimed at the subject", side)
-		facing = fmt.Sprintf("The subject remains facing the same direction in the scene, so they are now seen in full profile, with the side that was on the %s of the original frame facing the camera.", side)
-		surfaces = "the side of the subject facing the camera"
+		where = fmt.Sprintf("a quarter turn around the subject toward the %s of the original camera position", side)
+		camera = fmt.Sprintf("The camera has orbited a quarter turn (90 degrees) around the subject toward the %s of the original frame, still aimed at the subject", side)
+		turns = fmt.Sprintf("The side of the subject that was on the %s of the original picture now faces the camera, and the side that faced the original camera is now seen edge-on.", side)
+		surfaces = fmt.Sprintf("the side of the subject that was on the %s of the original picture", side)
 	case 135:
-		where = fmt.Sprintf("behind at a three-quarter angle, 135 degrees to the %s of the original camera position", side)
-		camera = fmt.Sprintf("The camera has orbited 135 degrees around the subject toward the %s of the original frame, past their side and around toward their back, still aimed at the subject", side)
-		facing = fmt.Sprintf("The subject remains facing the same direction in the scene, so they are now seen mostly from behind, with their back and the side that was on the %s of the original frame toward the camera and their face mostly hidden.", side)
-		surfaces = "the rear and side surfaces of the subject"
+		where = fmt.Sprintf("135 degrees around the subject toward the %s of the original camera position", side)
+		camera = fmt.Sprintf("The camera has orbited 135 degrees around the subject toward the %s of the original frame, most of the way around them, still aimed at the subject", side)
+		turns = fmt.Sprintf("What faced away from the original camera, and the side that was on the %s of the original picture, now face the camera; what faced the original camera is now mostly hidden.", side)
+		surfaces = "the surfaces of the subject that faced away from the original camera"
 	default: // 180
-		where = "directly behind"
-		camera = "The camera is now positioned on the opposite side of the subject from its original position"
-		facing = "The subject remains facing the same direction in the scene, so their back faces the camera and their face is hidden."
-		surfaces = "the rear surfaces of the subject"
+		where = "the opposite side of the subject from the original camera"
+		camera = "The camera has orbited halfway around the subject (180 degrees) to the opposite side from its original position, still aimed at the subject"
+		turns = "Everything that faced away from the original camera now faces the camera, and everything that faced the original camera is now hidden. Left and right in the picture swap."
+		surfaces = "the surfaces of the subject that faced away from the original camera"
 	}
 
 	var b strings.Builder
-	b.WriteString("Edit <image1> to show the same subject photographed from ")
+	if known && deg != 0 {
+		// The engine follows a named result far better than camera geometry: with
+		// only the orbit it left subjects already facing away unchanged.
+		fmt.Fprintf(&b, "Edit <image1> so the same subject is now seen %s, instead of %s as in <image1>. This is a new camera position, not a new pose: the same subject photographed from ", viewOf(facing-v.Azimuth), viewOf(facing))
+	} else {
+		b.WriteString("Edit <image1> to show the same subject photographed from ")
+	}
 	switch {
 	case where != "" && v.Elevation == "high":
 		b.WriteString(where + ", from a high angle")
@@ -150,8 +185,15 @@ func (v retouchView) Prompt() string {
 	case "low":
 		b.WriteString(", and it is lowered close to the ground, looking up at them at about 30 degrees")
 	}
-	b.WriteString(". ")
-	b.WriteString(facing)
+	b.WriteString(".")
+	// The move is relative to the camera, whichever way the subject faces.
+	if turns != "" {
+		b.WriteString(" " + turns)
+	}
+	if known && deg != 0 {
+		before, after := viewOf(facing), viewOf(facing-v.Azimuth)
+		fmt.Fprintf(&b, " In <image1> the subject is seen %s; from the new camera position they are seen %s.", before, after)
+	}
 	// Anchor: the model's failure mode is turning (or mirroring) the subject
 	// toward the new camera, or redrawing someone else, instead of moving
 	// the camera around an unchanged subject.
@@ -161,7 +203,7 @@ func (v retouchView) Prompt() string {
 	if deg == 0 {
 		b.WriteString(", foreshortened by the new camera height.")
 	} else {
-		b.WriteString(", with limbs that were toward the original camera now seen from the side or behind accordingly.")
+		b.WriteString(", every part of the body seen from the new camera position.")
 	}
 	b.WriteString("\n\n")
 

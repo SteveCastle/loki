@@ -216,3 +216,19 @@ func netParse(s string) net.IP { return net.ParseIP(s) }
 func newReqNoAuth() *http.Request {
 	return httptest.NewRequest(http.MethodGet, "/", nil)
 }
+
+// /api/media/metadata reads the file itself, so anonymous visitors are held
+// to library paths like every other file-reading endpoint.
+func TestMediaMetadataScopedForAnon(t *testing.T) {
+	deps := newAPIKeyTestDeps(t)
+	deps.DB.Exec(`CREATE TABLE IF NOT EXISTS media (path TEXT PRIMARY KEY, width INTEGER, height INTEGER, size INTEGER, description TEXT, transcript TEXT, hash TEXT)`)
+	deps.DB.Exec(`INSERT INTO media (path) VALUES ('/curated/local/item.jpg')`)
+	h := lokiMediaMetadataHandler(deps)
+
+	if rr := postJSON(h, pathRequest{Path: "C:/Windows/win.ini"}); rr.Code != http.StatusForbidden {
+		t.Fatalf("anon arbitrary path: status %d, want 403", rr.Code)
+	}
+	if rr := postJSON(h, pathRequest{Path: "/curated/local/item.jpg"}); rr.Code != http.StatusOK {
+		t.Fatalf("anon library row: status %d, want 200 (%s)", rr.Code, rr.Body.String())
+	}
+}

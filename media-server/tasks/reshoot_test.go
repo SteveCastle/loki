@@ -273,7 +273,7 @@ func TestReshootTaskMissingBinary(t *testing.T) {
 	if err := reshootTask(j, q, &sync.Mutex{}); err == nil {
 		t.Fatal("expected error")
 	}
-	if !strings.Contains(jobLog(q, j.ID), "reshoot: could not install loki-reshoot") {
+	if !strings.Contains(jobLog(q, j.ID), "reshoot: could not install the AI video from references engine (loki-reshoot)") {
 		t.Errorf("log:\n%s", jobLog(q, j.ID))
 	}
 }

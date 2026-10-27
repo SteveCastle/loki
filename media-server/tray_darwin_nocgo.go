@@ -10,13 +10,10 @@ package main
 import (
 	"log"
 	"os"
-
-	"github.com/pkg/browser"
-	"github.com/stevecastle/shrike/appconfig"
 )
 
 func runDarwinUI(sigChan <-chan os.Signal) {
-	_ = browser.OpenURL(appconfig.Get().LocalBaseURL() + "/")
+	openUIOnLaunch()
 	sig := <-sigChan
 	log.Printf("Received signal %v, shutting down...", sig)
 	onExit()

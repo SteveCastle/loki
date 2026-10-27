@@ -1,12 +1,19 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { DREAM_ENABLED } from '../../features';
 import {
+  DREAM_ASPECTS,
   FAST_STEPS,
   INTENTS,
   MAX_DURATION,
-  MAX_VARIATIONS,
   MIN_DURATION,
+  STRENGTH_PRESETS,
   availability,
+  dreamSize,
+  maxVariations,
+  qualityLabel,
+  strengthOf,
+  usesSelection,
   classify,
   estimateSeconds,
   formatDuration,
@@ -28,6 +35,8 @@ import {
   tokenIssues,
   usesReferences,
   type IntentId,
+  type DreamAspect,
+  type EngineId,
   type IntentKind,
   type Quality,
   type ReshootModel,
@@ -35,7 +44,7 @@ import {
   type TransformSettings,
 } from './intents';
 import { deleteTemplate, saveTemplate, templateSettings, templateSummary, useAllTemplates, useLastRun, useTemplates, type FlowPhase, type LastRun, type PromptTemplate } from './store';
-import { GlyphCheck, GlyphDie, GlyphMusic, GlyphPin, IntentIcon } from './icons';
+import { GlyphCheck, GlyphDie, GlyphMusic, GlyphPin, GlyphScene, IntentIcon } from './icons';
 import { markUsed, savedTransformKey } from '../../saved-recent';
 import CameraRig from './camera-rig';
 import './transform-flow.css';
@@ -116,6 +125,24 @@ const STYLE_CHIPS: Array<{ label: string; text: string }> = [
   { label: 'Cinematic', text: 'with a cinematic color grade' },
   { label: 'Remove people', text: 'remove the people and fill in the background' },
 ];
+
+// Style chips for a new picture (Generate, Reimagine).
+const DREAM_STYLE_CHIPS: Array<{ label: string; text: string }> = [
+  { label: 'Photo', text: 'a photograph, natural light, sharp focus' },
+  { label: 'Cinematic', text: 'cinematic still, dramatic lighting, film grain' },
+  { label: 'Golden hour', text: 'lit by warm golden-hour sunlight' },
+  { label: 'Oil painting', text: 'as an oil painting with visible brush strokes' },
+  { label: 'Watercolor', text: 'as a soft watercolor illustration' },
+  { label: 'Anime', text: 'in a clean anime illustration style' },
+  { label: '3D render', text: 'as a detailed 3D render, soft studio lighting' },
+];
+
+/** The local engine an intent runs on, by its executable's name. */
+export function engineName(engine: EngineId): string {
+  if (engine === 'retouch') return 'loki-retouch';
+  if (engine === 'reshoot') return 'loki-reshoot';
+  return 'loki-dream';
+}
 
 function appendPhrase(prompt: string, phrase: string): string {
   const base = prompt.trim();
@@ -599,6 +626,8 @@ export interface FlowViewProps {
   onTemplate?: (id: IntentId, t: PromptTemplate) => void;
   /** Load the last run (its intent and every setting) to adjust and run again. */
   onLoadRun?: (run: LastRun) => void;
+  /** Open the Scene editor on the single image / video (absent when the selection can't start a scene). */
+  onOpenScene?: () => void;
   onPhase: (p: FlowPhase) => void;
   onRun: () => void;
   onClose: () => void;
@@ -607,6 +636,10 @@ export interface FlowViewProps {
   onMakeFirst?: (p: string) => void;
   /** Pin / unpin a reference (Edit, Direct). */
   onPin?: (p: string, on: boolean) => void;
+  /** Pick more references from the library in a picker window (Edit, Direct). */
+  onAddReferences?: () => void;
+  /** A picker window is open for onAddReferences. */
+  pickingReferences?: boolean;
   onAgain: () => void;
   /** The engine-expanded prompt, fetched for the review step. */
   preview?: PromptPreviewState;
@@ -668,7 +701,7 @@ export function TransformFlowView(props: FlowViewProps) {
           <div className="ts-title">
             <span className="ts-title-main">Transform</span>
             <span className="ts-title-sub">
-              {summarizeInputs(paths)}
+              {intent && !usesSelection(intent) ? 'a new picture' : summarizeInputs(paths)}
               {intent && activePins(intent, props.settings.pinned).length ? ` · ${activePins(intent, props.settings.pinned).length} pinned` : ''}
             </span>
           </div>
@@ -717,13 +750,25 @@ function ChooseView(props: FlowViewProps & { inputs: ReturnType<typeof classify>
   const last = useLastRun();
   const lastOk = last ? availability(last.intent, inputs) : null;
   const saved = useAllTemplates().filter(({ intent: id }) => availability(id, inputs).ok);
-  const groups: Array<{ id: 'image' | 'video'; title: string; sub: string }> = [
+  const create = { id: 'create' as const, title: 'New pictures', sub: 'loki-dream · Kromoss · from a description' };
+  const groups: Array<{ id: 'image' | 'video' | 'create'; title: string; sub: string }> = [
     { id: 'image', title: 'Images', sub: 'loki-retouch · Qwen Image 2.1' },
     { id: 'video', title: 'Video', sub: 'loki-reshoot · MiniMax H3, with sound' },
   ];
+  // With nothing selected, making something new is all there is to do: it comes first.
+  if (!DREAM_ENABLED) {
+    // No loki-dream in this build: nothing to make from a description.
+  } else if (props.paths.length === 0) groups.unshift(create);
+  else groups.push(create);
   return (
     <div className="ts-choose">
-      <p className="ts-lead">What do you want to do with {summarizeInputs(props.paths)}?</p>
+      <p className="ts-lead">
+        {props.paths.length > 0
+          ? `What do you want to do with ${summarizeInputs(props.paths)}?`
+          : DREAM_ENABLED
+            ? 'Nothing is selected: make a new picture from a description.'
+            : 'Nothing is selected: select images or video to transform.'}
+      </p>
       <p className="ts-legend">
         <span>
           <KindBadge kind="preset" /> built-in prompt, ready to run
@@ -799,6 +844,25 @@ function ChooseView(props: FlowViewProps & { inputs: ReturnType<typeof classify>
           </div>
         </section>
       ))}
+      {props.onOpenScene && (
+        <section className="ts-group">
+          <div className="ts-group-head">
+            <h3>Scene</h3>
+            <span>opens in its own window · both engines, one region at a time</span>
+          </div>
+          <div className="ts-cards">
+            <button type="button" className="ts-card ts-card-scene" onClick={props.onOpenScene} data-intent="scene">
+              <span className="ts-card-icon">
+                <GlyphScene />
+              </span>
+              <span className="ts-card-text">
+                <strong>Scene editor</strong>
+                <small>Mask parts of the picture, edit them, then animate them one by one into a living scene</small>
+              </span>
+            </button>
+          </div>
+        </section>
+      )}
       {saved.length > 0 && (
         <section className="ts-group">
           <div className="ts-group-head">
@@ -837,16 +901,44 @@ const SCALE_OPTIONS: Array<SegOption<number>> = [
   { value: 4, label: '4×' },
 ];
 
-const QUALITY_OPTIONS = (engine: 'retouch' | 'reshoot'): Array<SegOption<Quality>> => [
-  { value: 'draft', label: 'Draft', sub: 'fast' },
-  { value: 'balanced', label: 'Balanced', sub: engine === 'retouch' ? '25 steps' : '20 steps' },
-  { value: 'fine', label: 'Fine', sub: 'slow' },
+const QUALITY_OPTIONS = (engine: EngineId): Array<SegOption<Quality>> =>
+  engine === 'dream'
+    ? [
+        { value: 'draft', label: 'Turbo', sub: '8 steps, fast' },
+        { value: 'balanced', label: 'Balanced', sub: '30 steps' },
+        { value: 'fine', label: 'Fine', sub: '50 steps, slow' },
+      ]
+    : [
+        { value: 'draft', label: 'Draft', sub: 'fast' },
+        { value: 'balanced', label: 'Balanced', sub: engine === 'retouch' ? '25 steps' : '20 steps' },
+        { value: 'fine', label: 'Fine', sub: 'slow' },
+      ];
+
+const ASPECT_OPTIONS: Array<SegOption<DreamAspect>> = [
+  ...DREAM_ASPECTS.map((a) => ({ value: a.id, label: a.label, sub: `${a.width}×${a.height}` })),
+  { value: 'custom', label: 'Custom' },
 ];
 
 const MODEL_OPTIONS: Array<SegOption<ReshootModel>> = [
   { value: 'h3', label: 'H3', sub: 'best quality' },
   { value: 'fast', label: 'Fast', sub: `${FAST_STEPS} steps, ~4x faster` },
 ];
+
+function promptLabel(id: IntentId, shared: boolean, stills: number): string {
+  if (id === 'direct') return 'Describe the scene';
+  if (id === 'generate') return 'Describe the picture';
+  if (id === 'reimagine') return 'Describe the result';
+  return shared ? `What should change? Refer to the ${stills} images by their tokens` : 'What should change?';
+}
+
+/** Under Generate's custom size: what the model will actually make (snapped to its grid and pixel budget). */
+function customSizeNote(raw: string, snapped: [number, number] | null): string {
+  const rule = 'the model works in multiples of 16, up to about a megapixel';
+  const typed = parseSize(raw);
+  if (!snapped || !typed) return `width × height: ${rule}`;
+  if (typed[0] === snapped[0] && typed[1] === snapped[1]) return rule;
+  return `makes ${snapped[0]}×${snapped[1]}: ${rule}`;
+}
 
 function ShapeView(props: FlowViewProps & { def: ReturnType<typeof intentById> }) {
   const { def, settings: s, onSettings, source, paths } = props;
@@ -861,12 +953,14 @@ function ShapeView(props: FlowViewProps & { def: ReturnType<typeof intentById> }
   const plan = planFor(def.id, s, paths, source);
   const eta = estimateSeconds(plan);
   const isRetouch = def.engine === 'retouch';
+  const isReshoot = def.engine === 'reshoot';
+  const isDream = def.engine === 'dream';
   const manual = s.manualPrompt !== null;
   const pins = activePins(def.id, s.pinned);
   const groups = runGroups(def.id, paths, s.pinned);
   const roles = referenceTokens(def.id, paths, manual, s.pinned);
   // The selection, then pins that are not part of it.
-  const shown = [...(Object.keys(roles).length ? paths.filter((p) => p in roles) : paths), ...pins.filter((p) => !paths.includes(p))];
+  const shown = usesSelection(def.id) ? [...(Object.keys(roles).length ? paths.filter((p) => p in roles) : paths), ...pins.filter((p) => !paths.includes(p))] : [];
   const stills = inputs.images.length;
   const shared = usesReferences(def.id, inputs) || !!groups;
   const refs = refItems(def.id, paths, manual, s.pinned);
@@ -907,7 +1001,7 @@ function ShapeView(props: FlowViewProps & { def: ReturnType<typeof intentById> }
 
         {def.needsText === 'prompt' && (
           <Field
-            label={def.id === 'direct' ? 'Describe the scene' : shared ? `What should change? Refer to the ${stills} images by their tokens` : 'What should change?'}
+            label={promptLabel(def.id, shared, stills)}
             hint="sent as written · Enter ▸ review"
             action={<SavePrompt intent={def.id} settings={s} />}
           >
@@ -916,7 +1010,7 @@ function ShapeView(props: FlowViewProps & { def: ReturnType<typeof intentById> }
               rows={3}
               value={s.prompt}
               placeholder={examples[0]}
-              label={def.id === 'direct' ? 'Describe the scene' : 'What should change?'}
+              label={promptLabel(def.id, false, stills)}
               onChange={(v) => onSettings({ prompt: v })}
               submitOnEnter
               onSubmit={() => props.onPhase('review')}
@@ -951,9 +1045,9 @@ function ShapeView(props: FlowViewProps & { def: ReturnType<typeof intentById> }
                 ))}
               </ChipRow>
             )}
-            {def.id === 'edit' && (
+            {(def.id === 'edit' || isDream) && (
               <ChipRow label="Add" hint="Click to add the phrase to the end of the prompt">
-                {STYLE_CHIPS.map((c) => (
+                {(isDream ? DREAM_STYLE_CHIPS : STYLE_CHIPS).map((c) => (
                   <button key={c.label} type="button" className="ts-chip" title={`Add “${c.text}”`} onClick={() => onSettings({ prompt: appendPhrase(s.prompt, c.text) })}>
                     + {c.label}
                   </button>
@@ -991,6 +1085,59 @@ function ShapeView(props: FlowViewProps & { def: ReturnType<typeof intentById> }
               Use the preset prompt again
             </button>
           </p>
+        )}
+
+        {isDream && s.quality !== 'draft' && (
+          <Field label="Avoid" hint="optional · what the picture should not have">
+            <textarea
+              className="ts-text"
+              rows={1}
+              value={s.negative}
+              placeholder="e.g. blurry, watermark, extra fingers"
+              aria-label="Negative prompt"
+              onChange={(e) => onSettings({ negative: e.target.value })}
+            />
+          </Field>
+        )}
+
+        {def.id === 'generate' && (
+          <Field label="Shape" hint={plan.outWidth ? `${plan.outWidth}×${plan.outHeight}` : undefined}>
+            <Segmented<DreamAspect>
+              label="Shape"
+              value={s.aspect}
+              options={ASPECT_OPTIONS}
+              onChange={(v) => onSettings(v === 'custom' ? { aspect: v, customSize: parseSize(s.customSize) ? s.customSize : '1152x896' } : { aspect: v })}
+            />
+            {s.aspect === 'custom' && (
+              <div className="ts-size-inputs">
+                <input type="number" inputMode="numeric" min={256} value={customW} placeholder="width" onChange={(e) => onSettings({ customSize: `${e.target.value}x${customH}` })} />
+                <span>×</span>
+                <input type="number" inputMode="numeric" min={256} value={customH} placeholder="height" onChange={(e) => onSettings({ customSize: `${customW}x${e.target.value}` })} />
+                <small>{customSizeNote(s.customSize, dreamSize(s))}</small>
+              </div>
+            )}
+          </Field>
+        )}
+
+        {def.id === 'reimagine' && (
+          <Field label="How much to change" hint={`strength ${strengthOf(s).toFixed(2)}`}>
+            <Segmented<number> label="How much to change" value={strengthOf(s)} options={STRENGTH_PRESETS} onChange={(v) => onSettings({ strength: v })} />
+            <input
+              className="ts-range"
+              type="range"
+              min={0.05}
+              max={1}
+              step={0.05}
+              value={strengthOf(s)}
+              onChange={(e) => onSettings({ strength: parseFloat(e.target.value) })}
+              style={{ ['--ts-fill' as string]: `${((strengthOf(s) - 0.05) / 0.95) * 100}%` }}
+              aria-label="Strength"
+            />
+            <div className="ts-range-ticks">
+              <span>keep more</span>
+              <span>redraw more</span>
+            </div>
+          </Field>
         )}
 
         {def.id === 'angle' && (
@@ -1087,7 +1234,7 @@ function ShapeView(props: FlowViewProps & { def: ReturnType<typeof intentById> }
           </Field>
         )}
 
-        {!isRetouch && (
+        {isReshoot && (
           <Field label="Length" hint={`${s.duration.toFixed(1)} s · ${plan.frames} frames`}>
             <input
               className="ts-range"
@@ -1109,28 +1256,31 @@ function ShapeView(props: FlowViewProps & { def: ReturnType<typeof intentById> }
           </Field>
         )}
 
-        {!isRetouch && (
+        {isReshoot && (
           <Field label="Model">
             <Segmented<ReshootModel> label="Model" value={s.reshootModel} options={MODEL_OPTIONS} onChange={(v) => onSettings({ reshootModel: v })} />
           </Field>
         )}
 
-        {isRetouch || s.reshootModel !== 'fast' ? (
+        {!isReshoot || s.reshootModel !== 'fast' ? (
           <Field label="Quality">
             <Segmented<Quality> label="Quality" value={s.quality} options={QUALITY_OPTIONS(def.engine)} onChange={(v) => onSettings({ quality: v })} />
+            {isDream && s.quality === 'draft' ? (
+              <p className="ts-note">Turbo runs the distilled 8-step model without guidance: several times faster, a little less detail, and no “Avoid” prompt.</p>
+            ) : null}
           </Field>
         ) : (
           <p className="ts-note">The fast model always runs {FAST_STEPS} steps, the count it was distilled for: there is no quality setting. It may look less refined than H3.</p>
         )}
 
         <div className="ts-row2">
-          <Field label="Variations" hint={s.variations > 1 ? `${s.variations} results` : undefined}>
+          <Field label="Variations" hint={s.variations > 1 ? `${s.variations} results${def.id === 'generate' ? ', consecutive seeds' : ''}` : undefined}>
             <div className="ts-stepper-num">
               <button type="button" onClick={() => onSettings({ variations: Math.max(1, s.variations - 1) })} aria-label="Fewer variations">
                 −
               </button>
               <span>{s.variations}</span>
-              <button type="button" onClick={() => onSettings({ variations: Math.min(MAX_VARIATIONS, s.variations + 1) })} aria-label="More variations">
+              <button type="button" onClick={() => onSettings({ variations: Math.min(maxVariations(def.id), s.variations + 1) })} aria-label="More variations">
                 +
               </button>
             </div>
@@ -1163,7 +1313,7 @@ function ShapeView(props: FlowViewProps & { def: ReturnType<typeof intentById> }
         </button>
         {more && (
           <div className="ts-more">
-            {!isRetouch && (
+            {isReshoot && (
               <>
                 <Field label="Reference image detail">
                   <Segmented<'match' | 'max'>
@@ -1188,9 +1338,10 @@ function ShapeView(props: FlowViewProps & { def: ReturnType<typeof intentById> }
                 )}
               </>
             )}
-            {isRetouch && stills > 1 && !shared && !groups && (
+            {(isRetouch || def.id === 'reimagine') && stills > 1 && !shared && !groups && (
               <p className="ts-note">{stills} images → {stills} separate results, each processed on its own with these settings.</p>
             )}
+            {isDream && <p className="ts-note">A fixed seed with the same prompt and settings makes the same picture again.</p>}
           </div>
         )}
       </div>
@@ -1204,7 +1355,7 @@ function ShapeView(props: FlowViewProps & { def: ReturnType<typeof intentById> }
             {source && isRetouch && plan.outWidth && (plan.outWidth !== source.width || plan.outHeight !== source.height) ? (
               <span className="muted">from {source.width}×{source.height}</span>
             ) : null}
-            {!isRetouch ? <span>{plan.frames} frames · {s.duration.toFixed(1)} s</span> : null}
+            {isReshoot ? <span>{plan.frames} frames · {s.duration.toFixed(1)} s</span> : null}
           </div>
           <div className="ts-preview-eta">
             <span>≈ {formatDuration(eta)}</span>
@@ -1213,6 +1364,11 @@ function ShapeView(props: FlowViewProps & { def: ReturnType<typeof intentById> }
         </div>
         <div className="ts-preview-inputs">
           <div className="ts-preview-title">Inputs{promptField && Object.values(roles).some((r) => r.startsWith('<')) ? ' · click one to insert its token' : ''}</div>
+          {!usesSelection(def.id) ? (
+            <p className="ts-note">
+              None: a new picture from your description{paths.length ? ', the selection is left alone' : ''}. It goes into the Generated folder of your library.
+            </p>
+          ) : null}
           <div className="ts-thumbs">
             {shown.slice(0, 8).map((p) => {
               const isPin = pins.includes(p);
@@ -1233,6 +1389,16 @@ function ShapeView(props: FlowViewProps & { def: ReturnType<typeof intentById> }
             })}
             {shown.length > 8 ? <div className="ts-thumb ts-thumb-more">+{shown.length - 8}</div> : null}
           </div>
+          {pinnable(def.id) && props.onAddReferences ? (
+            <button
+              type="button"
+              className="ts-btn ts-add-refs"
+              onClick={props.onAddReferences}
+              title={`Browse and search the library for ${def.id === 'edit' ? 'images' : 'images, clips or audio'} to add as references, in a window of its own that closes when you're done`}
+            >
+              {props.pickingReferences ? 'Choosing in the picker window…' : '+ Add references…'}
+            </button>
+          ) : null}
           {pinnable(def.id) && props.onPin ? (
             <p className="ts-pin-hint">
               {pins.length
@@ -1282,7 +1448,7 @@ function PromptPanel(props: FlowViewProps & { def: ReturnType<typeof intentById>
   const insert = useTokenInsert(textRef, value, setValue);
 
   const data = preview?.status === 'ok' ? preview.data : undefined;
-  const engine = def.engine === 'retouch' ? 'loki-retouch' : 'loki-reshoot';
+  const engine = engineName(def.engine);
   const local = refItems(def.id, paths, true, s.pinned);
   // The engine's list when we have it (it is what the run will use); with a manual prompt the photo of Bring to
   // life is a plain <Picture 1> either way.
@@ -1395,7 +1561,7 @@ function ReviewView(props: FlowViewProps & { def: ReturnType<typeof intentById> 
   const eta = estimateSeconds(plan);
   const manual = s.manualPrompt !== null;
   const roles = referenceTokens(def.id, paths, manual, s.pinned);
-  const shown = Object.keys(roles).length ? Object.keys(roles) : paths;
+  const shown = !usesSelection(def.id) ? [] : Object.keys(roles).length ? Object.keys(roles) : paths;
   const total = eta * plan.outputs;
   const groups = runGroups(def.id, paths, s.pinned);
   const pins = activePins(def.id, s.pinned).length;
@@ -1435,12 +1601,22 @@ function ReviewView(props: FlowViewProps & { def: ReturnType<typeof intentById> 
             <strong>{plan.outputName}</strong>
             {plan.outWidth ? ` · ${plan.outWidth}×${plan.outHeight}` : ''}
             {def.engine === 'reshoot' ? ` · ${s.duration.toFixed(1)} s with sound` : ''}
-            <span className="muted"> — saved beside the original{plan.outputs > 1 ? 's' : ''}</span>
+            <span className="muted">
+              {def.id === 'generate' ? ' — added to your library, in its Generated folder' : ` — saved beside the original${plan.outputs > 1 ? 's' : ''}`}
+            </span>
           </dd>
+          {def.engine === 'dream' && s.quality !== 'draft' && s.negative.trim() ? (
+            <>
+              <dt>Avoid</dt>
+              <dd className="ts-quote">{s.negative.trim()}</dd>
+            </>
+          ) : null}
           <dt>Settings</dt>
           <dd>
-            {def.engine === 'reshoot' && s.reshootModel === 'fast' ? 'fast model' : `${s.quality} quality`} ({plan.steps} steps) · {s.seedMode === 'fixed' ? `seed ${s.seed}` : 'random seed'}
-            {s.variations > 1 ? ` · ${s.variations} variations` : ''}
+            {def.engine === 'reshoot' && s.reshootModel === 'fast' ? 'fast model' : `${qualityLabel(def.engine, s.quality)} quality`} ({plan.steps} steps) ·{' '}
+            {s.seedMode === 'fixed' ? `seed ${s.seed}` : 'random seed'}
+            {def.id === 'reimagine' ? ` · strength ${strengthOf(s).toFixed(2)}` : ''}
+            {s.variations > 1 ? ` · ${Math.min(s.variations, maxVariations(def.id))} variations` : ''}
             {def.id === 'alive' && !manual ? ` · camera ${s.shake === 'none' ? 'locked' : s.shake}` : ''}
           </dd>
           <dt>Time</dt>
@@ -1454,13 +1630,14 @@ function ReviewView(props: FlowViewProps & { def: ReturnType<typeof intentById> 
       </div>
       <aside className="ts-review-side">
         <div className="ts-preview-title">Inputs</div>
+        {!usesSelection(def.id) ? <p className="ts-note">None: a new picture from your description.</p> : null}
         <div className="ts-thumbs big">
           {shown.slice(0, 6).map((p) => (
             <Thumb key={p} path={p} role={roles[p]} thumbUrl={props.thumbUrl} />
           ))}
           {shown.length > 6 ? <div className="ts-thumb ts-thumb-more">+{shown.length - 6}</div> : null}
         </div>
-        <p className="ts-note">Uses the local GPU engine <code>{def.engine === 'retouch' ? 'loki-retouch' : 'loki-reshoot'}</code>. Nothing leaves your machine.</p>
+        <p className="ts-note">Uses the local GPU engine <code>{engineName(def.engine)}</code>. Nothing leaves your machine.</p>
         <div className="ts-footer">
           <button type="button" className="ts-btn ghost" onClick={() => props.onPhase('shape')} disabled={busy}>
             ← Adjust
@@ -1486,7 +1663,10 @@ function DoneView(props: FlowViewProps) {
       </span>
       <h2>{n > 1 ? `${n} jobs queued` : 'Queued'}</h2>
       <p>
-        The results appear next to the originals when they finish, and the library jumps to the first new file. Follow progress in the job queue.
+        {props.intent && !usesSelection(props.intent)
+          ? 'The new pictures are added to your library (in its Generated folder) when they finish, and the library jumps to the first one.'
+          : 'The results appear next to the originals when they finish, and the library jumps to the first new file.'}{' '}
+        Follow progress in the job queue.
         This run is remembered as your <strong>last run</strong>: re-run it on other files from the palette’s “{props.intent ? intentById(props.intent).title : 'Last run'} again” chip.
       </p>
       {custom && props.intent ? (
@@ -1526,7 +1706,12 @@ export function validateShape(id: IntentId, s: TransformSettings, paths: string[
   if (groups && !groups.length) return NO_TARGET;
   const def = intentById(id);
   if (s.manualPrompt === null) {
-    if (def.needsText === 'prompt' && !s.prompt.trim()) return def.id === 'direct' ? 'Describe the scene to continue' : 'Describe what should change';
+    if (def.needsText === 'prompt' && !s.prompt.trim()) {
+      if (def.id === 'direct') return 'Describe the scene to continue';
+      if (def.id === 'generate') return 'Describe the picture';
+      if (def.id === 'reimagine') return 'Describe the result';
+      return 'Describe what should change';
+    }
     if (promptIsVerbatim(id)) {
       const bad = unknownTokenProblem(s.prompt, id, paths, false, s.pinned);
       if (bad) return bad;
@@ -1534,6 +1719,7 @@ export function validateShape(id: IntentId, s: TransformSettings, paths: string[
   }
   if (id === 'angle' && s.manualPrompt === null && !retouchPreset(id, s)) return SAME_VIEW;
   if (s.sizeMode === 'custom' && def.engine === 'retouch' && def.id !== 'wallpaper' && !parseSize(s.customSize)) return 'Enter a width and height';
+  if (id === 'generate' && !dreamSize(s)) return 'Enter a width and height';
   return null;
 }
 

@@ -2,10 +2,12 @@ package runners
 
 import (
 	"database/sql"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/stevecastle/shrike/jobqueue"
+	"github.com/stevecastle/shrike/tasks"
 	_ "modernc.org/sqlite"
 )
 
@@ -281,4 +283,53 @@ func TestRunnersWithDependencies(t *testing.T) {
 			}
 		}
 	}
+}
+
+func waitForState(t *testing.T, q *jobqueue.Queue, id string, want jobqueue.JobState) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if snap, _, ok := q.JobSnapshot(id, 0); ok && snap.State == want {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	snap, _, _ := q.JobSnapshot(id, 0)
+	t.Fatalf("job %s: state %v, want %v", id, snap.State, want)
+}
+
+// A panicking task must error its job instead of crashing the process.
+func TestRunnersRecoverTaskPanic(t *testing.T) {
+	tasks.RegisterTask("test-panics", "Panics", nil, func(j *jobqueue.Job, q *jobqueue.Queue, r *sync.Mutex) error {
+		var m map[string]int
+		m["boom"] = 1 // nil map write
+		return nil
+	})
+	q := setupTestQueue(t)
+	r := New(q)
+	defer r.Shutdown()
+
+	id, _ := q.AddJob("", "test-panics", nil, "", nil)
+	waitForState(t, q, id, jobqueue.StateError)
+
+	// The runner must still be alive and able to run the next job.
+	tasks.RegisterTask("test-quick", "Quick", nil, func(j *jobqueue.Job, q *jobqueue.Queue, r *sync.Mutex) error {
+		return q.CompleteJob(j.ID)
+	})
+	id2, _ := q.AddJob("", "test-quick", nil, "", nil)
+	waitForState(t, q, id2, jobqueue.StateCompleted)
+}
+
+// A task that returns nil without completing its job must not leave it
+// InProgress (holding its concurrency bucket) forever.
+func TestRunnersFinalizeForgottenJob(t *testing.T) {
+	tasks.RegisterTask("test-forgets", "Forgets", nil, func(j *jobqueue.Job, q *jobqueue.Queue, r *sync.Mutex) error {
+		return nil
+	})
+	q := setupTestQueue(t)
+	r := New(q)
+	defer r.Shutdown()
+
+	id, _ := q.AddJob("", "test-forgets", nil, "", nil)
+	waitForState(t, q, id, jobqueue.StateCompleted)
 }

@@ -5,6 +5,8 @@ import cancel from '../../../../assets/cancel.svg';
 import useOnClickOutside from '../../hooks/useOnClickOutside';
 import { invoke } from '../../platform';
 import { GlobalStateContext } from '../../state';
+import { TagGrouping } from './tag-groups';
+import { setCategoryTagGrouping } from './tag-group-actions';
 
 import './new-modal.css';
 
@@ -23,6 +25,7 @@ type Props = {
   currentValue?: string;
   currentDescription?: string;
   currentTagViewMode?: TagViewMode;
+  currentTagGrouping?: TagGrouping;
 };
 
 export default function NewCategoryModal({
@@ -31,6 +34,7 @@ export default function NewCategoryModal({
   currentValue = '',
   currentDescription = '',
   currentTagViewMode = 'card',
+  currentTagGrouping = 'on',
 }: Props) {
   const [newLabel, setNewLabel] = useState<string>(currentValue);
   const [description, setDescription] = useState<string>(currentDescription);
@@ -110,6 +114,11 @@ export default function NewCategoryModal({
         },
       });
     }
+  }
+
+  function handleSetTagGrouping(mode: TagGrouping) {
+    if (!currentValue || mode === currentTagGrouping) return;
+    setCategoryTagGrouping(queryClient, libraryService, currentValue, mode);
   }
 
   async function handleResetOrdering() {
@@ -241,6 +250,28 @@ export default function NewCategoryModal({
                     onClick={() => handleSetTagViewMode('list')}
                   >
                     List
+                  </button>
+                </div>
+              </div>
+              <div className="action-row">
+                <div className="action-row-text">
+                  <div className="action-row-title">Tag Groups</div>
+                  <div className="action-row-description">
+                    Show tags under their groups, or as one list ignoring them
+                  </div>
+                </div>
+                <div className="segmented">
+                  <button
+                    className={currentTagGrouping === 'on' ? 'selected' : ''}
+                    onClick={() => handleSetTagGrouping('on')}
+                  >
+                    On
+                  </button>
+                  <button
+                    className={currentTagGrouping === 'off' ? 'selected' : ''}
+                    onClick={() => handleSetTagGrouping('off')}
+                  >
+                    Off
                   </button>
                 </div>
               </div>

@@ -54,6 +54,7 @@ jest.mock('../renderer/platform', () => ({
 jest.mock('../renderer/search/tag-search-service', () => ({
   __esModule: true,
   indexTags: jest.fn(),
+  cancelTagSearches: jest.fn(),
   searchTags: (_q: string, _limit: number, cb: (items: unknown[]) => void) =>
     cb([]),
   // The results subtree reports whether the scope's index exists so a cold

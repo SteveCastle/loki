@@ -1,6 +1,7 @@
 import React from 'react';
 import { render, fireEvent, act } from '@testing-library/react';
 import GenerationInfo from '../renderer/components/metadata/generation-info';
+import { loadTemplates } from '../renderer/components/transform/store';
 
 const comfyPrompt = {
   '4': { class_type: 'CheckpointLoaderSimple', inputs: { ckpt_name: 'flux1-dev.safetensors' } },
@@ -91,7 +92,7 @@ describe('Save as Transform task', () => {
     fireEvent.change(name, { target: { value: 'Jacket swap' } });
     fireEvent.keyDown(name, { key: 'Enter' });
     expect(getByText(/Saved as “Jacket swap”/)).toBeTruthy();
-    const saved = JSON.parse(window.localStorage.getItem('loki.transform.templates.v1') || '{}').edit;
+    const saved = loadTemplates('edit');
     expect(saved).toHaveLength(1);
     expect(saved[0]).toMatchObject({ name: 'Jacket swap', prompt: 'put the jacket of <image2> on <image1>' });
     expect(saved[0].settings).toMatchObject({ quality: 'fine', variations: 2, pinned: ['C:/m/jacket.png'] });

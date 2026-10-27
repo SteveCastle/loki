@@ -15,7 +15,7 @@ on:
       - '.erb/**' # webpack / build configuration
       - 'scripts/**' # build helpers (build-server.js, etc.)
       - 'media-server/**' # Go media server
-      - 'tools/**' # standalone CUDA CLIs (loki-retouch, loki-reshoot)
+      - 'tools/**' # standalone CUDA CLIs (loki-retouch, loki-reshoot, loki-segment, loki-dream)
       - '.github/actions/**' # composite actions the jobs below use
       - 'package.json'
       - 'package-lock.json'
@@ -29,6 +29,13 @@ on:
 permissions:
   contents: write
   pull-requests: write
+
+# Text-to-image (loki-dream / Kromoss) is left out of released builds unless
+# the repository variable LOKI_DREAM is "1": webpack bakes it into the
+# renderer (Electron app and the SPA the server embeds) and the server is
+# built with `-tags dream`. Image and video editing ship either way.
+env:
+  LOKI_DREAM: ${{ vars.LOKI_DREAM }}
 
 jobs:
   test-electron:
@@ -142,6 +149,8 @@ jobs:
           path: |
             release/build/*.exe
             release/build/*.zip
+            release/build/latest.yml
+            release/build/*.blockmap
           if-no-files-found: warn
 
   build-electron-macos:
@@ -220,6 +229,8 @@ jobs:
           path: |
             release/build/*.dmg
             release/build/*.zip
+            release/build/latest-mac.yml
+            release/build/*.blockmap
           if-no-files-found: warn
 
   build-electron-linux:
@@ -251,6 +262,7 @@ jobs:
           path: |
             release/build/*.AppImage
             release/build/*.zip
+            release/build/latest-linux.yml
           if-no-files-found: warn
 
   # Bundled media-server archives: server binary + bin/ (ffmpeg, ffprobe,
@@ -355,7 +367,9 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: ${{ matrix.server_cgo }}
-        run: go build -ldflags="${{ matrix.ldflags }}" -o lowkeymediaserver${{ matrix.ext }} .
+        # main.Version feeds /health, which the desktop viewer compares
+        # against its own version to offer a server upgrade.
+        run: go build -tags "${{ vars.LOKI_DREAM == '1' && 'dream' || '' }}" -ldflags="${{ matrix.ldflags }} -X main.Version=${{ needs.version-and-tag.outputs.version }}" -o lowkeymediaserver${{ matrix.ext }} .
 
       - name: Build lokictl
         working-directory: ./media-server
@@ -546,6 +560,10 @@ jobs:
           - { tool: loki-retouch, os: ubuntu-latest, target: linux-amd64 }
           - { tool: loki-reshoot, os: windows-2022, target: windows-amd64 }
           - { tool: loki-reshoot, os: ubuntu-latest, target: linux-amd64 }
+          - { tool: loki-segment, os: windows-2022, target: windows-amd64 }
+          - { tool: loki-segment, os: ubuntu-latest, target: linux-amd64 }
+          - { tool: loki-dream, os: windows-2022, target: windows-amd64 }
+          - { tool: loki-dream, os: ubuntu-latest, target: linux-amd64 }
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout code
@@ -566,6 +584,32 @@ jobs:
             tools/${{ matrix.tool }}/dist/${{ steps.tool.outputs.archive }}
             tools/${{ matrix.tool }}/dist/${{ steps.tool.outputs.archive }}.sha256
           if-no-files-found: error
+
+  # The GPU worker image (tools/worker/README.md): the Linux engine builds of build-tools above, packaged with
+  # loki-worker and ffmpeg — the engines are not compiled again. Non-blocking like build-tools; needs all four
+  # Linux builds, so a failed tool build skips the image for that release.
+  publish-worker-image:
+    name: Publish worker image
+    needs: [version-and-tag, build-tools]
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build, smoke-test, push
+        uses: ./.github/actions/worker-image
+        with:
+          version: ${{ needs.version-and-tag.outputs.version }}
+          push: 'true'
+          token: ${{ secrets.GITHUB_TOKEN }}
+          tags: |
+            ghcr.io/stevecastle/loki-worker:latest
+            ghcr.io/stevecastle/loki-worker:${{ needs.version-and-tag.outputs.version }}
+            ghcr.io/stevecastle/loki-worker:sha-${{ github.sha }}
 
   # Container image — the easiest install path for Linux/NAS users. Publishes
   # to GHCR with both a version tag and :latest.
@@ -700,7 +744,7 @@ jobs:
       - name: Prepare release assets
         run: |
           mkdir -p release-assets
-          find artifacts -type f \( -name "*.dmg" -o -name "*.AppImage" -o -name "*.exe" -o -name "*.zip" -o -name "*.zip.sha256" -o -name "*.tar.gz" \) -exec cp {} release-assets/ \;
+          find artifacts -type f \( -name "*.dmg" -o -name "*.AppImage" -o -name "*.exe" -o -name "*.zip" -o -name "*.zip.sha256" -o -name "*.tar.gz" -o -name "latest*.yml" -o -name "*.blockmap" \) -exec cp {} release-assets/ \;
           ls -lh release-assets/
 
       # v2: re-running for an existing tag must replace assets. v1's

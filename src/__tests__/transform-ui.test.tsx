@@ -27,6 +27,7 @@ import {
   NO_TARGET,
   referenceTokens,
   remapTokens,
+  runReferences,
   runSummary,
   settingsFor,
   type IntentId,
@@ -67,11 +68,37 @@ describe('TransformSection (palette chips)', () => {
     expect(screen.queryByRole('button', { name: /Combine/ })).toBeNull();
   });
 
-  it('renders nothing for a selection no intent can use', () => {
-    const { container } = render(
-      <TransformSection paths={['C:/media/notes.txt']} authToken="tok" getVideoTime={() => undefined} onDone={() => {}} notify={() => {}} />
-    );
-    expect(container.firstChild).toBeNull();
+  it('offers only Generate for a selection no other intent can use', () => {
+    setup(['C:/media/notes.txt']);
+    expect(Array.from(document.querySelectorAll('.transform-chip')).map((c) => c.textContent)).toEqual(['Generate…']);
+  });
+
+  it('with nothing selected, Generate is there and opens the flow at its prompt', () => {
+    const { onDone } = setup([]);
+    expect(screen.queryByRole('button', { name: /Restore/ })).toBeNull();
+    expect(screen.getByText(/nothing selected/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /Generate…/ }));
+    expect(getFlowRequest()).toMatchObject({ paths: [], intent: 'generate', phase: 'shape' });
+    expect(onDone).toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('with a selection, Generate is offered beside the image chips (and Reimagine for images)', () => {
+    setup([IMG]);
+    expect(screen.getByRole('button', { name: /Generate…/ })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Reimagine…/ })).toBeTruthy();
+  });
+
+  it('"Generate again" re-runs the last generation with nothing selected, as a job with no input', async () => {
+    saveLastRun('generate', { ...settingsFor('generate'), prompt: 'a red fox', variations: 2 });
+    setup([]);
+    fireEvent.click(screen.getByRole('button', { name: /Generate again/ }));
+    const created = () => fetchMock.mock.calls.filter((c) => /\/create$/.test(String(c[0])));
+    await waitFor(() => expect(created()).toHaveLength(1));
+    const body = JSON.parse(created()[0][1].body);
+    expect(body.input).toBe('dream');
+    expect(body.fields).toMatchObject({ prompt: 'a red fox', count: '2', size: '1024x1024', steps: '30' });
+    expect(JSON.parse(body.fields.meta)).toMatchObject({ kind: 'loki-transform', intent: 'generate', paths: [] });
   });
 
   it('a preset chip queues a retouch job straight away and closes the palette', async () => {
@@ -500,7 +527,7 @@ describe('TransformFlowView: saved prompts', () => {
     // Already saved: the button says so while the prompt matches.
     expect(screen.queryByText(/Save prompt/)).toBeNull();
     expect(screen.getByText('★ Saved')).toBeTruthy();
-    expect(JSON.parse(window.localStorage.getItem('loki.transform.templates.v1') || '{}').edit).toEqual([
+    expect(loadTemplates('edit')).toEqual([
       expect.objectContaining({ name: 'Watercolor', prompt: 'turn it into a watercolor painting with soft edges and paper texture' }),
     ]);
     unmount();
@@ -674,6 +701,32 @@ describe('Transform: the last run', () => {
     expect(screen.getByText('Last run')).toBeTruthy();
     fireEvent.click(screen.getByText(/“make it night” · fine/).closest('button') as HTMLButtonElement);
     expect(onLoadRun).toHaveBeenCalledWith(expect.objectContaining({ intent: 'edit', settings: expect.objectContaining({ prompt: 'make it night' }) }));
+  });
+
+  it('remembers every reference the run used, and re-runs with all of them', async () => {
+    const R1 = 'C:/refs/style.png';
+    const R2 = 'C:/refs/face.jpg';
+    // One combined Edit: IMG is <image1>, the two references ride along as <image2>/<image3>.
+    saveLastRun('edit', { ...editRun(), prompt: '<image1> in the style of <image2> with <image3>' }, [IMG, R1, R2]);
+    expect(loadLastRun()?.settings.pinned).toEqual([R1, R2]);
+    expect(runSummary('edit', loadLastRun()!.settings)).toContain('2 references');
+
+    render(<TransformSection paths={[IMG2]} authToken="tok" getVideoTime={() => undefined} onDone={() => {}} notify={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: /^Edit again$/ }));
+    const created = () => fetchMock.mock.calls.filter((c) => /\/create$/.test(String(c[0])));
+    await waitFor(() => expect(created()).toHaveLength(2));
+    const body = JSON.parse(created()[0][1].body);
+    expect((body.input.match(/"([^"]*)"/) as RegExpMatchArray)[1].split(String.fromCharCode(10))).toEqual([IMG2, R1, R2]);
+    expect(body.fields).toMatchObject({ combine: '1', prompt: '<image1> in the style of <image2> with <image3>' });
+  });
+
+  it('runReferences: pins, else the inputs riding along with the first', () => {
+    const R1 = 'C:/refs/style.png';
+    expect(runReferences('edit', [IMG, IMG2], [])).toEqual([IMG2]);
+    expect(runReferences('edit', [IMG, IMG2], [R1])).toEqual([R1]); // with pins, the others are targets of their own
+    expect(runReferences('direct', [VID, IMG], undefined)).toEqual([IMG]);
+    expect(runReferences('edit', [IMG], undefined)).toEqual([]);
+    expect(runReferences('restore', [IMG, IMG2], [R1])).toEqual([]);
   });
 
   it('done: offers to save the prompt that just ran', () => {
@@ -856,7 +909,99 @@ describe('Transform: pinned references', () => {
     expect(onPin).toHaveBeenCalledWith(IMG, true);
   });
 
-  it('runSummary mentions the pins', () => {
-    expect(runSummary('edit', editWith([R1, R2], 'x'))).toMatch(/2 pinned$/);
+  it('runSummary counts the pinned references', () => {
+    expect(runSummary('edit', editWith([R1, R2], 'x'))).toMatch(/2 references$/);
+  });
+});
+
+describe('Transform: Generate and Reimagine (loki-dream)', () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    resetTemplateCache();
+    resetLastRunCache();
+    closeTransformFlow();
+  });
+
+  const props = (over: Partial<React.ComponentProps<typeof TransformFlowView>> = {}) => ({
+    paths: [] as string[],
+    intent: null as any,
+    phase: 'choose' as const,
+    settings: settingsFor('generate'),
+    source: null,
+    queueAhead: 0,
+    status: 'idle' as const,
+    thumbUrl: (p: string) => p,
+    onSettings: jest.fn(),
+    onIntent: jest.fn(),
+    onPhase: jest.fn(),
+    onRun: jest.fn(),
+    onClose: jest.fn(),
+    onRemovePath: jest.fn(),
+    onAgain: jest.fn(),
+    ...over,
+  });
+
+  it('choose with nothing selected: New pictures comes first and Generate is the one thing to pick', () => {
+    const p = props();
+    render(<TransformFlowView {...p} />);
+    expect(screen.getByText(/Nothing is selected/)).toBeTruthy();
+    expect(screen.getAllByRole('heading', { level: 3 })[0].textContent).toBe('New pictures');
+    const card = (title: string) => screen.getByText(title, { exact: false, selector: 'strong' }).closest('button') as HTMLButtonElement;
+    expect(card('Generate').disabled).toBe(false);
+    expect(card('Reimagine').disabled).toBe(true);
+    expect(card('Restore').disabled).toBe(true);
+    fireEvent.click(card('Generate'));
+    expect(p.onIntent).toHaveBeenCalledWith('generate');
+  });
+
+  it('shape (generate): shape picks a size, Avoid is hidden in turbo, the selection is left alone', () => {
+    const p = props({ paths: [IMG], intent: 'generate', phase: 'shape', settings: { ...settingsFor('generate'), prompt: 'a fox' } });
+    const { rerender } = render(<TransformFlowView {...p} />);
+    expect(screen.getAllByText('Describe the picture').length).toBeGreaterThan(0);
+    expect(screen.getByText(/the selection is left alone/)).toBeTruthy();
+    expect(document.querySelectorAll('.ts-thumb')).toHaveLength(0);
+    fireEvent.click(screen.getByRole('radio', { name: /Landscape/ }));
+    expect(p.onSettings).toHaveBeenCalledWith({ aspect: 'landscape' });
+    expect(screen.getByLabelText('Negative prompt')).toBeTruthy();
+    fireEvent.click(screen.getByRole('radio', { name: /Turbo/ }));
+    expect(p.onSettings).toHaveBeenCalledWith({ quality: 'draft' });
+    rerender(<TransformFlowView {...p} settings={{ ...p.settings, quality: 'draft' }} />);
+    expect(screen.queryByLabelText('Negative prompt')).toBeNull();
+    // no video controls on an image engine
+    expect(screen.queryByText('Length')).toBeNull();
+    expect(screen.queryByRole('radiogroup', { name: 'Model' })).toBeNull();
+  });
+
+  it('shape (generate): a custom size shows what the model will make; an empty prompt blocks the review', () => {
+    render(<TransformFlowView {...props({ intent: 'generate', phase: 'shape', settings: { ...settingsFor('generate'), aspect: 'custom', customSize: '1000x700' } })} />);
+    expect(screen.getByText(/makes 1008×704/)).toBeTruthy();
+    expect(validateShape('generate', { ...settingsFor('generate'), prompt: '' }, [])).toBe('Describe the picture');
+    expect(validateShape('generate', { ...settingsFor('generate'), prompt: 'x', aspect: 'custom', customSize: '' }, [])).toBe('Enter a width and height');
+    expect(validateShape('generate', { ...settingsFor('generate'), prompt: 'x' }, [])).toBeNull();
+  });
+
+  it('shape (reimagine): strength presets and slider', () => {
+    const p = props({ paths: [IMG], intent: 'reimagine', phase: 'shape', settings: { ...settingsFor('reimagine'), prompt: 'x' } });
+    render(<TransformFlowView {...p} />);
+    expect(screen.getByRole('radio', { name: /Medium/ }).getAttribute('aria-checked')).toBe('true');
+    fireEvent.click(screen.getByRole('radio', { name: /Strong/ }));
+    expect(p.onSettings).toHaveBeenCalledWith({ strength: 0.9 });
+    fireEvent.change(screen.getByLabelText('Strength'), { target: { value: '0.45' } });
+    expect(p.onSettings).toHaveBeenCalledWith({ strength: 0.45 });
+    expect(validateShape('reimagine', { ...settingsFor('reimagine'), prompt: 'x' }, [])).toBe('Select an image');
+  });
+
+  it('review (generate): says where the pictures go and which engine runs', () => {
+    render(<TransformFlowView {...props({ intent: 'generate', phase: 'review', settings: { ...settingsFor('generate'), prompt: 'a fox', negative: 'blurry', variations: 3 } })} />);
+    expect(screen.getByText(/added to your library, in its Generated folder/)).toBeTruthy();
+    expect(screen.getByText('loki-dream')).toBeTruthy();
+    expect(screen.getByText('blurry')).toBeTruthy();
+    expect(screen.getByText(/balanced quality \(30 steps\)/)).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Queue it/ })).toBeTruthy();
+  });
+
+  it('done (generate): the new pictures land in the library', () => {
+    render(<TransformFlowView {...props({ intent: 'generate', phase: 'review', status: 'done', settings: { ...settingsFor('generate'), prompt: 'a fox' } })} />);
+    expect(screen.getByText(/new pictures are added to your library/)).toBeTruthy();
   });
 });

@@ -1,0 +1,75 @@
+/* The viewer's picking banner (Scene editor references). Palette tokens:
+   flat black, hairline border, the #00c896 accent. */
+
+.scene-pick-banner {
+  position: fixed;
+  top: 12px;
+  left: 50%;
+  z-index: 9998; /* above the panels, below the palettes (9999) it works with */
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: min(920px, calc(100vw - 32px));
+  padding: 8px 10px 8px 14px;
+  color: #fff;
+  font-size: 13px;
+  line-height: 1.35;
+  background: rgba(0, 0, 0, 0.9);
+  border: 1px solid rgba(0, 200, 150, 0.55);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+
+.scene-pick-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  background: #00c896;
+  border-radius: 50%;
+  animation: scene-pick-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes scene-pick-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.scene-pick-text {
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.scene-pick-text strong {
+  color: #fff;
+}
+
+.scene-pick-btn {
+  flex: none;
+  height: 28px;
+  padding: 0 10px;
+  color: #fff;
+  font: inherit;
+  white-space: nowrap;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.scene-pick-btn:hover:not(:disabled) {
+  background: rgba(0, 200, 150, 0.15);
+  border-color: #00c896;
+}
+
+.scene-pick-btn.primary {
+  color: #001a12;
+  font-weight: 600;
+  background: #00c896;
+  border-color: #00c896;
+}
+
+.scene-pick-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}

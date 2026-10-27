@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
 )
@@ -82,5 +83,68 @@ func TestTaxonomyCategoryFlag(t *testing.T) {
 	got := (*reqs)[0]
 	if got.Path != "/api/taxonomy/tags" {
 		t.Errorf("path = %s", got.Path)
+	}
+}
+
+func TestBulkPathsStripsStdinBOM(t *testing.T) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	orig := os.Stdin
+	os.Stdin = r
+	defer func() { os.Stdin = orig }()
+	w.WriteString("\ufeffC:/a.mp4\r\nC:/b.mp4\n")
+	w.Close()
+	paths, err := bulkPaths(nil, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(paths) != 2 || paths[0] != "C:/a.mp4" || paths[1] != "C:/b.mp4" {
+		t.Errorf("paths = %q", paths)
+	}
+}
+
+func TestCategoryDeleteRefusesToUntagWithoutAllowNonEmpty(t *testing.T) {
+	srv, reqs := newRecordingServer(t, http.StatusOK, `{"label":"Anime","exists":true,"tags":0,"groups":0,"assignments":148,"media":140}`)
+	a, _, _ := appForServer(srv.URL)
+	if code := cmdCategoryDelete(a, []string{"Anime", "--yes"}); code != 2 {
+		t.Fatalf("exit = %d, want 2", code)
+	}
+	for _, r := range *reqs {
+		if r.Method == "DELETE" {
+			t.Fatal("deleted a category that still owns assignments")
+		}
+	}
+	if code := cmdCategoryDelete(a, []string{"Anime", "--yes", "--allow-nonempty"}); code != 0 {
+		t.Fatalf("with --allow-nonempty exit = %d", code)
+	}
+	if last := (*reqs)[len(*reqs)-1]; last.Method != "DELETE" || last.Path != "/api/categories" {
+		t.Errorf("last request = %+v", last)
+	}
+}
+
+func TestCategoryDeleteRefusesWhenServerCannotPreview(t *testing.T) {
+	srv, reqs := newRecordingServer(t, http.StatusNotFound, `404 page not found`)
+	a, _, _ := appForServer(srv.URL)
+	if code := cmdCategoryDelete(a, []string{"Anime", "--yes", "--allow-nonempty"}); code != 1 {
+		t.Fatalf("exit = %d, want 1", code)
+	}
+	if len(*reqs) != 1 || (*reqs)[0].Method != "GET" {
+		t.Fatalf("requests = %+v, want only the preview", *reqs)
+	}
+}
+
+func TestCategoryDeleteEmptyNeedsOnlyYes(t *testing.T) {
+	srv, reqs := newRecordingServer(t, http.StatusOK, `{"label":"Empty","exists":true}`)
+	a, _, _ := appForServer(srv.URL)
+	if code := cmdCategoryDelete(a, []string{"Empty", "--dry-run"}); code != 0 || len(*reqs) != 1 {
+		t.Fatalf("dry run exit = %d, requests = %d", code, len(*reqs))
+	}
+	if code := cmdCategoryDelete(a, []string{"Empty"}); code != 2 {
+		t.Fatalf("without --yes exit = %d", code)
+	}
+	if code := cmdCategoryDelete(a, []string{"Empty", "--yes"}); code != 0 {
+		t.Fatalf("exit = %d", code)
 	}
 }

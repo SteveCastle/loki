@@ -5,6 +5,7 @@ pub mod safetensors;
 pub mod tensor;
 pub mod tokenizer;
 pub mod weights;
+pub mod worker;
 
 // H3 engine components (one workstream each)
 pub mod dit_h3;

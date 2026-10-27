@@ -1,20 +1,26 @@
-import React, { useContext, useMemo } from 'react';
+import React, { useContext, useEffect, useMemo } from 'react';
 import { useSelector } from '@xstate/react';
 import { GlobalStateContext } from './state';
+import { isPickerWindow } from './platform';
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { DndProvider } from 'react-dnd';
 import { HTML5Backend } from 'react-dnd-html5-backend';
 import { SetupWizard } from './components/controls/setup-wizard';
+import { Welcome } from './components/controls/welcome';
+import { useServerAuthSync } from './hooks/useServerAuthSync';
+import { setTemplateLibrary } from './components/transform/store';
 import { Panels } from './components/layout/panels';
 import './App.css';
 import { Loader } from './components/layout/loader';
 import HotKeyController from './components/controls/hotkey-controller';
 import DragChipLayer from './components/controls/drag-layer';
 import { ToastSystem } from './components/controls/toast-system';
+import ScenePickBanner from './components/scene/pick-banner';
 import AutoPlayController from './components/controls/autoplay-controller';
 import { PERFORMANCE_CONSTANTS } from './constants/performance';
 import { OnboardingGate } from './onboarding/OnboardingGate';
+import { ServerInstallPrompt } from './components/controls/server-install';
 import {
   useLongPressContextMenu,
   useBlockBrowserPinchZoom,
@@ -51,6 +57,10 @@ export default function App(): JSX.Element {
   // two = context palette), and the browser never zooms the page itself.
   useLongPressContextMenu();
   useBlockBrowserPinchZoom();
+  useServerAuthSync();
+  // Saved Transform tasks belong to the open library.
+  const dbPath = useSelector(libraryService, (s) => s.context.dbPath);
+  useEffect(() => setTemplateLibrary(dbPath), [dbPath]);
 
   const isLoadingState = useMemo(() => {
     return (
@@ -60,20 +70,31 @@ export default function App(): JSX.Element {
       state.matches({ library: 'loadingDB' })
     );
   }, [state]);
-  console.log('state', state);
+  const isScanningFolder = state.matches({ library: 'loadingFromFS' });
   if (state.matches({ library: 'manualSetup' })) return <SetupWizard />;
+  if (state.matches({ library: 'welcome' })) return <Welcome />;
 
-  console.log('rendering app');
   return (
     <QueryClientProvider client={queryClient}>
       <DndProvider backend={HTML5Backend}>
         <Panels />
-        {isLoadingState && <Loader />}
+        {isLoadingState && (
+          <Loader
+            onStop={
+              isScanningFolder
+                ? () => libraryService.send('CANCEL_LOAD')
+                : undefined
+            }
+          />
+        )}
         <HotKeyController />
         {autoPlay && <AutoPlayController />}
         <DragChipLayer />
         <ToastSystem />
-        <OnboardingGate />
+        <ScenePickBanner />
+        {/* A picker window is only for choosing media: no first-run prompts. */}
+        {!isPickerWindow && <OnboardingGate />}
+        {!isPickerWindow && <ServerInstallPrompt />}
       </DndProvider>
     </QueryClientProvider>
   );

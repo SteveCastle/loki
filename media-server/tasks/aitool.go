@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/stevecastle/shrike/appconfig"
 	"github.com/stevecastle/shrike/deps"
 	"github.com/stevecastle/shrike/deps/models"
 	"github.com/stevecastle/shrike/jobqueue"
@@ -49,14 +50,34 @@ func reshootSpec(model string) aiToolSpec {
 	return reshootTool
 }
 
-// installAIDep installs a dependency on demand; a variable so tests never touch the network.
+// installAIDep installs one dependency on demand (EnsureModels' downloader);
+// a variable so tests never touch the network.
 var installAIDep = installDep
 
-// aiToolRun is what a task needs to launch an engine.
+// aiToolRun is what a task needs to launch an engine: a local executable, or
+// a lease on a remote GPU worker (engines.go) that runs the same command line.
 type aiToolRun struct {
 	Bin string
 	Env []string // extra environment (LOKI_MODELS, PATH with the bundled ffmpeg)
+
+	lease *engineLease // nil: a local run outside the dispatcher (strategy local)
+	light bool         // a model-free call (--show-prompt): not queued on the worker
 }
+
+// Remote reports whether the engine runs on a worker of a pool.
+func (t aiToolRun) Remote() bool { return t.lease != nil && !t.lease.local() }
+
+// Where names the place the engine runs, for job logs.
+func (t aiToolRun) Where() string {
+	if !t.Remote() {
+		return "this machine"
+	}
+	return t.lease.t.key
+}
+
+// Release frees the run's worker slot; call it when the task is done with
+// the engine (a deferred call right after resolveAITool).
+func (t aiToolRun) Release() { t.lease.Release() }
 
 // resolveAITool finds (and if necessary installs) an engine so the task just
 // works:
@@ -73,9 +94,36 @@ type aiToolRun struct {
 // Whenever the model dependencies are installed, LOKI_MODELS lists their
 // folders so the engine and the Dependencies page share one copy of the
 // weights.
+//
+// With worker pools configured (Config.Engines) the run may go to a remote
+// worker instead: the lease is taken here and held until Release.
 func resolveAITool(ctx context.Context, q *jobqueue.Queue, jobID, tag string, spec aiToolSpec) (aiToolRun, error) {
 	run := aiToolRun{}
 	logf := func(format string, a ...any) { q.PushJobStdout(jobID, tag+": "+fmt.Sprintf(format, a...)) }
+
+	if !engineRunsLocalOnly(spec.Bin) {
+		lease, err := acquireEngine(ctx, spec.Bin, func(s string) { logf("%s", s) }, nil)
+		if err != nil {
+			return run, err
+		}
+		if !lease.local() {
+			logf("running on GPU worker %s", lease.t.key)
+			return aiToolRun{Bin: spec.Bin, lease: lease}, nil
+		}
+		run.lease = lease
+		r, err := resolveLocalAITool(ctx, logf, spec)
+		if err != nil {
+			lease.Release()
+			return run, err
+		}
+		r.lease = lease
+		return r, nil
+	}
+	return resolveLocalAITool(ctx, logf, spec)
+}
+
+func resolveLocalAITool(ctx context.Context, logf func(string, ...any), spec aiToolSpec) (aiToolRun, error) {
+	run := aiToolRun{}
 
 	if p, err := exec.LookPath(spec.Bin); err == nil {
 		run.Bin = p
@@ -86,9 +134,8 @@ func resolveAITool(ctx context.Context, q *jobqueue.Queue, jobID, tag string, sp
 		exe := spec.Bin + platform.BinaryExtension()
 		p, err := deps.ModelPath(spec.Bin, exe)
 		if err != nil {
-			logf("installing %s (one-time)", spec.Bin)
-			if ierr := installAIDep(ctx, logf, spec.Bin); ierr != nil {
-				return run, fmt.Errorf("could not install %s: %w (it can also be put on PATH)", spec.Bin, ierr)
+			if ierr := EnsureModels(ctx, func(s string) { logf("%s", s) }, spec.Bin); ierr != nil {
+				return run, fmt.Errorf("%w (%s can also be put on PATH)", ierr, spec.Bin)
 			}
 			if p, err = deps.ModelPath(spec.Bin, exe); err != nil {
 				return run, fmt.Errorf("%s was installed but %s is missing", spec.Bin, exe)
@@ -96,15 +143,8 @@ func resolveAITool(ctx context.Context, q *jobqueue.Queue, jobID, tag string, sp
 		}
 		run.Bin = p
 
-		for _, id := range spec.modelIDs() {
-			if dirHasModel(id) {
-				continue
-			}
-			m, _ := models.Lookup(id)
-			logf("downloading the %s model files (%.0f GB, one-time; resumable, also available on the Dependencies page)", m.Name, float64(m.EffectiveSizeBytes())/1e9)
-			if ierr := installAIDep(ctx, logf, id); ierr != nil {
-				return run, fmt.Errorf("could not install %s: %w", m.Name, ierr)
-			}
+		if err := EnsureModels(ctx, func(s string) { logf("%s", s) }, spec.modelIDs()...); err != nil {
+			return run, err
 		}
 	}
 
@@ -136,29 +176,34 @@ func aiToolEnv(spec aiToolSpec) []string {
 // locateAITool finds an engine the way resolveAITool does but never installs
 // anything: for quick, side-effect-free calls such as the prompt preview. A
 // variable so tests can stand in a fake engine.
+// With pools, an engine routed away from this machine (or missing here) is
+// answered by a reachable worker node.
 var locateAITool = func(spec aiToolSpec) (aiToolRun, bool) {
+	if engineDisp.route(spec.Bin) == appconfig.EngineStrategyPool {
+		if t, ok := remotePreviewTool(spec); ok {
+			return t, true
+		}
+	}
 	if p, err := exec.LookPath(spec.Bin); err == nil {
 		return aiToolRun{Bin: p, Env: aiToolEnv(spec)}, true
 	}
 	if p, err := deps.ModelPath(spec.Bin, spec.Bin+platform.BinaryExtension()); err == nil {
 		return aiToolRun{Bin: p, Env: aiToolEnv(spec)}, true
 	}
-	return aiToolRun{}, false
+	return remotePreviewTool(spec)
 }
 
 // dirHasModel reports whether a model dependency is completely installed.
-func dirHasModel(id string) bool {
-	models.RebuildState()
-	return models.Cached()[id] == models.StatusInstalled
-}
+func dirHasModel(id string) bool { return modelInstalled(id) }
 
 // installDep installs one dependency synchronously, logging progress roughly
-// every 5% (and never more often than every 2 s) to the job.
+// every 5% (and never more often than every 2 s) to the job. It runs as a
+// tracked install, so the Dependencies page shows it (see EnsureModels).
 func installDep(ctx context.Context, logf func(string, ...any), id string) error {
 	var lastPct int64 = -5
 	var lastFile string
 	var lastAt time.Time
-	err := models.InstallModel(ctx, id, func(file string, done, total int64) {
+	err := models.Tracker.InstallSync(ctx, id, func(file string, done, total int64) {
 		pct := int64(0)
 		if total > 0 {
 			pct = done * 100 / total
@@ -205,6 +250,10 @@ func aiToolSupportsMeta(ctx context.Context, tool aiToolRun) bool {
 // reject flags they do not know, so newer ones are only passed when listed).
 // A failed probe reports false and is not cached, so it is retried next job.
 func aiToolHelpHas(ctx context.Context, tool aiToolRun, flag string) bool {
+	if tool.Remote() {
+		help, err := remoteHelp(ctx, tool)
+		return err == nil && helpListsFlag(help, flag)
+	}
 	key := tool.Bin
 	if st, err := os.Stat(tool.Bin); err == nil {
 		key = fmt.Sprintf("%s|%d|%d", tool.Bin, st.Size(), st.ModTime().UnixNano())

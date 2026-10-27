@@ -52,20 +52,56 @@ var Tracker = &tracker{
 // StartInstall launches an install for id in a goroutine. If one is already
 // active for id, returns the existing one without starting another.
 func (t *tracker) StartInstall(id string) (*Install, error) {
+	row, ctx, started := t.begin(context.Background(), id)
+	if started {
+		go t.run(ctx, id, nil)
+	}
+	return row, nil
+}
+
+// InstallSync installs id on the caller's goroutine — a job installing a
+// model on first use — as an ordinary tracked install: the Dependencies page
+// shows it downloading (and can cancel it), and its Install button joins it
+// instead of starting a parallel download. When an install of id is already
+// in flight the caller waits for it (InstallModel serializes per id and
+// returns at once once the model is in), then still gets an error if that
+// install failed and its own attempt fails too. Returns when ctx ends.
+func (t *tracker) InstallSync(ctx context.Context, id string, progress ProgressFn) error {
+	_, ctx, started := t.begin(ctx, id)
+	if !started {
+		return InstallModel(ctx, id, progress)
+	}
+	return t.run(ctx, id, progress)
+}
+
+// Active reports whether an install of id is in flight.
+func (t *tracker) Active(id string) bool {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	row, ok := t.rows[id]
+	return ok && row.State.active()
+}
+
+func (s InstallState) active() bool {
+	return s == StateDownloading || s == StateExtracting || s == StateQueued || s == StateVerifying
+}
+
+// begin registers a new queued install of id under a cancellable child of
+// parent, or reports (started=false) the one already in flight.
+func (t *tracker) begin(parent context.Context, id string) (*Install, context.Context, bool) {
 	t.mu.Lock()
-	if row, ok := t.rows[id]; ok && (row.State == StateDownloading || row.State == StateExtracting || row.State == StateQueued || row.State == StateVerifying) {
+	if row, ok := t.rows[id]; ok && row.State.active() {
 		t.mu.Unlock()
-		return row, nil
+		return row, parent, false
 	}
 	row := &Install{ID: id, State: StateQueued, StartedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()}
 	t.rows[id] = row
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(parent)
 	t.cancels[id] = cancel
 	t.mu.Unlock()
 
 	t.broadcast(*row)
-	go t.run(ctx, id)
-	return row, nil
+	return row, ctx, true
 }
 
 // Cancel cancels the in-flight install for id if any.
@@ -142,9 +178,13 @@ func (t *tracker) update(id string, f func(*Install)) {
 	t.broadcast(snap)
 }
 
-func (t *tracker) run(ctx context.Context, id string) {
+// run performs a begun install, also feeding extra (a job's log) when set.
+func (t *tracker) run(ctx context.Context, id string, extra ProgressFn) error {
 	t.update(id, func(r *Install) { r.State = StateDownloading })
 	progressFn := func(file string, done, total int64) {
+		if extra != nil {
+			extra(file, done, total)
+		}
 		t.update(id, func(r *Install) {
 			r.CurrentFile = file
 			r.BytesDone = done
@@ -160,19 +200,24 @@ func (t *tracker) run(ctx context.Context, id string) {
 		})
 	}
 	err := InstallModel(ctx, id, progressFn)
+	cancelled := err != nil && ctx.Err() != nil
 	t.mu.Lock()
-	delete(t.cancels, id)
+	if cancel, ok := t.cancels[id]; ok {
+		cancel() // release the context's resources
+		delete(t.cancels, id)
+	}
 	t.mu.Unlock()
 	t.update(id, func(r *Install) {
 		switch {
 		case err == nil:
 			r.State = StateInstalled
 			r.Error = ""
-		case ctx.Err() != nil:
+		case cancelled:
 			r.State = StateCancelled
 		default:
 			r.State = StateFailed
 			r.Error = err.Error()
 		}
 	})
+	return err
 }

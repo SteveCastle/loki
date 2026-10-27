@@ -957,6 +957,10 @@
   border-color: var(--ts-accent);
 }
 
+.ts-add-refs {
+  margin-top: 8px;
+}
+
 .ts-pin-hint {
   margin: 6px 0 0;
   font-size: 11px;

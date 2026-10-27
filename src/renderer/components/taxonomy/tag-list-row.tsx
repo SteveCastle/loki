@@ -16,6 +16,7 @@ type Concept = {
   label: string;
   weight: number;
   category: string;
+  group?: string | null;
 };
 
 type Props = {
@@ -25,6 +26,8 @@ type Props = {
   tags: Concept[];
   handleEditAction: (tag: string) => void;
   disableReorder?: boolean;
+  // The group this row sits under in the grouped view (see tag.tsx).
+  group?: string | null;
 };
 
 function TagListRow({
@@ -34,6 +37,7 @@ function TagListRow({
   handleEditAction,
   isDisabled,
   disableReorder = false,
+  group,
 }: Props) {
   const { libraryService } = useContext(GlobalStateContext);
   const showTagCount = useSelector(
@@ -104,13 +108,20 @@ function TagListRow({
           const newWeight = above
             ? (previousItemWeight + targetWeight) / 2
             : (nextItemWeight + targetWeight) / 2;
+          if (
+            group !== undefined &&
+            droppedTag.category === tag.category &&
+            (droppedTag.group ?? null) !== group
+          ) {
+            await invoke('set-tag-group', [droppedTag.label, group]);
+          }
           await invoke('update-tag-weight', [droppedTag.label, newWeight]);
           queryClient.invalidateQueries({ queryKey: ['taxonomy'] });
         }
         updateWeight();
       },
     }),
-    [tag, tags, disableReorder]
+    [tag, tags, disableReorder, group]
   );
   drag(drop(ref));
 
@@ -205,6 +216,8 @@ export default React.memo(TagListRow, (prev, next) => {
     prev.tag.label === next.tag.label &&
     prev.tag.weight === next.tag.weight &&
     prev.tag.category === next.tag.category &&
+    prev.tag.group === next.tag.group &&
+    prev.group === next.group &&
     prev.active === next.active &&
     prev.isDisabled === next.isDisabled &&
     prev.tags === next.tags &&

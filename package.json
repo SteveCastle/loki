@@ -1,6 +1,6 @@
 {
   "name": "loki",
-  "version": "2.35.0",
+  "version": "2.36.0",
   "type": "commonjs",
   "productName": "Lowkey Media Viewer",
   "description": "A Media library for quick curation.",
@@ -88,7 +88,8 @@
       "\\.(css|less|sass|scss)$": "identity-obj-proxy"
     },
     "setupFiles": [
-      "./.erb/scripts/check-build-exists.ts"
+      "./.erb/scripts/check-build-exists.ts",
+      "./.erb/scripts/jest-features.ts"
     ],
     "testEnvironment": "jsdom",
     "testEnvironmentOptions": {
@@ -268,7 +269,8 @@
             "**/*"
           ]
         }
-      ]
+      ],
+      "artifactName": "Lowkey.Media.Viewer-${version}-${arch}-mac.${ext}"
     },
     "fileAssociations": [
       {
@@ -379,7 +381,8 @@
           "type": "link",
           "path": "/Applications"
         }
-      ]
+      ],
+      "artifactName": "Lowkey.Media.Viewer-${version}-${arch}.${ext}"
     },
     "win": {
       "target": [
@@ -424,6 +427,12 @@
       "provider": "github",
       "owner": "stevecastle",
       "repo": "loki"
+    },
+    "nsis": {
+      "artifactName": "Lowkey.Media.Viewer.Setup.${version}.${ext}"
+    },
+    "appImage": {
+      "artifactName": "Lowkey.Media.Viewer-${version}.${ext}"
     }
   },
   "electronmon": {

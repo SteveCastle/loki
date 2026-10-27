@@ -100,7 +100,8 @@ func TestDownloadFile_ChecksumMismatchDeletesPartial(t *testing.T) {
 	}
 }
 
-func TestDownloadFile_CancelDeletesPartial(t *testing.T) {
+// A cancelled download keeps its partial so the next attempt resumes it.
+func TestDownloadFile_CancelKeepsPartial(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Length", "1000000")
 		w.WriteHeader(http.StatusOK)
@@ -122,8 +123,8 @@ func TestDownloadFile_CancelDeletesPartial(t *testing.T) {
 	if err := <-errCh; err == nil {
 		t.Fatal("expected cancellation error")
 	}
-	if _, err := os.Stat(dst + ".partial"); !os.IsNotExist(err) {
-		t.Errorf(".partial not cleaned up after cancel")
+	if _, err := os.Stat(dst + ".partial"); err != nil {
+		t.Errorf(".partial removed after cancel: %v", err)
 	}
 }
 

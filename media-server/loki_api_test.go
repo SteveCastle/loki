@@ -368,6 +368,13 @@ func TestLokiTaxonomyTagsHandlerStaysThin(t *testing.T) {
 
 func TestLokiTaxonomyTagHandler(t *testing.T) {
 	deps := testDeps(t)
+	// setupTestDB is the pre-tag-groups schema; InitializeSchema adds this.
+	if _, err := deps.DB.Exec(`ALTER TABLE tag ADD COLUMN group_label TEXT`); err != nil {
+		t.Fatalf("add group_label: %v", err)
+	}
+	if _, err := deps.DB.Exec(`UPDATE tag SET group_label = 'Lighting' WHERE label = 'moody'`); err != nil {
+		t.Fatalf("set group: %v", err)
+	}
 
 	rr := getJSON(lokiTaxonomyTagHandler(deps), "/api/taxonomy/tag?label=moody")
 	if rr.Code != http.StatusOK {
@@ -379,9 +386,13 @@ func TestLokiTaxonomyTagHandler(t *testing.T) {
 		Weight      float64 `json:"weight"`
 		Description string  `json:"description"`
 		Thumbnail   *string `json:"thumbnail_path_600"`
+		Group       *string `json:"group"`
 	}
 	if err := json.Unmarshal(rr.Body.Bytes(), &tag); err != nil {
 		t.Fatalf("decode: %v", err)
+	}
+	if tag.Group == nil || *tag.Group != "Lighting" {
+		t.Errorf("expected group Lighting, got %v", tag.Group)
 	}
 	if tag.Label != "moody" || tag.Category != "Style" {
 		t.Errorf("unexpected tag identity: %+v", tag)

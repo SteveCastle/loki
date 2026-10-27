@@ -1,0 +1,3 @@
+{"gen": "gen4", "steps": 8, "seeds": 2,
+ "why": "gen3 leaders v2lead / v2only / v4 within 0.01: cross them (x1 = lead words + only-moved-limbs; x2 = x1 + body-type list); mutate x1 (delta words for moved limbs only; looser 'take the pose'); new idea: the picture again as <image3> identity reference. Controls: v2lead re-run is cached.",
+ "strategies": ["x1", "x2", "x1delta", "x1loose", "x1idref"]}

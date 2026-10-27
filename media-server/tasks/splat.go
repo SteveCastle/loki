@@ -96,6 +96,8 @@ func classifySplatInputs(paths []string) (images, videos, skipped []string) {
 }
 
 func splatTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
+	// Selection sessions (loki-segment) let go of their VRAM while this runs.
+	defer beginGPUHeavy()()
 	const tag = "splat"
 	ctx := j.Ctx
 	if ctx == nil {
@@ -109,6 +111,14 @@ func splatTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 		}
 		return err
 	}
+
+	// Splat training runs here whatever the engines strategy: with worker
+	// pools the gpu-diffusion bucket is wider than this GPU, so take it.
+	releaseGPU, gerr := holdLocalGPU(ctx)
+	if gerr != nil {
+		return fail("task canceled", gerr)
+	}
+	defer releaseGPU()
 
 	p := splatParamsFromOptions(ParseOptions(j, splatOptions))
 

@@ -148,8 +148,10 @@ func executeCommand(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 	go scanAndPush(stdoutPipe)
 	go scanAndPush(stderrPipe)
 
-	err = cmd.Wait()
+	// Drain both pipes before Wait: Wait closes them, so waiting first drops
+	// the final lines (e.g. yt-dlp's after_move path) and can fail a read.
 	<-doneReading
+	err = cmd.Wait()
 
 	select {
 	case <-ctx.Done():

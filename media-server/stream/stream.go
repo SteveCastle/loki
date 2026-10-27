@@ -34,6 +34,12 @@ type Client struct {
 	UserAgent    string
 	Connected    int64 // Unix timestamp when connected
 	MessagesSent int64
+
+	// done is closed (once) when the client is removed. The message channel
+	// itself is never closed: the broadcast loop may hold it mid-send, and a
+	// send on a closed channel panics the whole server.
+	done     chan struct{}
+	doneOnce sync.Once
 }
 
 // ConnectionManager manages SSE client connections with production-ready features
@@ -81,14 +87,19 @@ func GetConnectionStats() map[string]interface{} {
 
 // AddClient registers a new client connection with production safeguards
 func AddClient(c clientChan, remoteAddr, userAgent string) bool {
+	return addClient(c, remoteAddr, userAgent) != nil
+}
+
+func addClient(c clientChan, remoteAddr, userAgent string) *Client {
 	// Check connection limit
 	if atomic.LoadInt64(&manager.activeCount) >= MaxConcurrentConnections {
 		atomic.AddInt64(&manager.rejectedConns, 1)
 		log.Printf("Connection limit reached (%d), rejecting new client from %s", MaxConcurrentConnections, remoteAddr)
-		return false
+		return nil
 	}
 
 	client := &Client{
+		done:       make(chan struct{}),
 		ID:         fmt.Sprintf("%d-%s", time.Now().UnixNano(), remoteAddr),
 		Channel:    c,
 		LastSeen:   time.Now().Unix(),
@@ -101,7 +112,7 @@ func AddClient(c clientChan, remoteAddr, userAgent string) bool {
 	atomic.AddInt64(&manager.activeCount, 1)
 
 	log.Printf("Client connected: %s (total: %d)", client.ID, atomic.LoadInt64(&manager.activeCount))
-	return true
+	return client
 }
 
 // RemoveClient removes a client connection and cleans up resources
@@ -110,12 +121,8 @@ func RemoveClient(c clientChan) {
 		clientData := client.(*Client)
 		atomic.AddInt64(&manager.activeCount, -1)
 
-		// Safely close the channel
-		select {
-		case <-c: // Drain any remaining messages
-		default:
-		}
-		close(c)
+		// Signal the handler to stop; never close c itself (see Client.done).
+		clientData.doneOnce.Do(func() { close(clientData.done) })
 
 		log.Printf("Client disconnected: %s (total: %d)", clientData.ID, atomic.LoadInt64(&manager.activeCount))
 	}
@@ -245,7 +252,8 @@ func StreamHandler(w http.ResponseWriter, r *http.Request) {
 	userAgent := r.UserAgent()
 
 	// Try to add the client
-	if !AddClient(messageChan, remoteAddr, userAgent) {
+	client := addClient(messageChan, remoteAddr, userAgent)
+	if client == nil {
 		http.Error(w, "Server at capacity", http.StatusServiceUnavailable)
 		return
 	}
@@ -272,6 +280,10 @@ func StreamHandler(w http.ResponseWriter, r *http.Request) {
 			// Client disconnected
 			return
 
+		case <-client.done:
+			// Removed by the stale reaper or shutdown
+			return
+
 		case msg := <-messageChan:
 			// Send message to client
 			if _, err := io.WriteString(w, formatSSEResponse(msg)); err != nil {
@@ -285,6 +297,9 @@ func StreamHandler(w http.ResponseWriter, r *http.Request) {
 				return // Connection broken
 			}
 			flusher.Flush()
+			// A delivered keep-alive proves the client is alive; without this
+			// an idle server (no broadcasts) reaps every tab after 2 minutes.
+			atomic.StoreInt64(&client.LastSeen, time.Now().Unix())
 		}
 	}
 }

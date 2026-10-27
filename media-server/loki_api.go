@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,7 +16,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -160,49 +161,54 @@ func httpError(w http.ResponseWriter, msg string, code int) {
 	http.Error(w, fmt.Sprintf(`{"error":%q}`, msg), code)
 }
 
-// ---- Media handlers ----
+// ---- Transactions ----
 
-// scanMediaItem scans a row from a media query with tag join into a map
-// matching the Electron Item type: { path, weight, mtimeMs, timeStamp, elo, battles, tagLabel, height, width }
-func scanMediaItem(rows *sql.Rows) (map[string]any, error) {
-	var path string
-	var tagLabel, categoryLabel sql.NullString
-	var weight, timeStamp sql.NullFloat64
-	var createdAt sql.NullInt64
-	var height, width sql.NullInt64
-	var elo sql.NullFloat64
-	var battles sql.NullInt64
-	err := rows.Scan(&path, &tagLabel, &categoryLabel, &weight, &timeStamp, &createdAt, &height, &width, &elo, &battles)
-	if err != nil {
-		return nil, err
-	}
-	item := map[string]any{
-		"path":    path,
-		"mtimeMs": createdAt.Int64,
-	}
-	if tagLabel.Valid {
-		item["tagLabel"] = tagLabel.String
-	}
-	if weight.Valid {
-		item["weight"] = weight.Float64
-	}
-	if timeStamp.Valid {
-		item["timeStamp"] = timeStamp.Float64
-	}
-	if height.Valid {
-		item["height"] = height.Int64
-	}
-	if width.Valid {
-		item["width"] = width.Int64
-	}
-	if elo.Valid {
-		item["elo"] = elo.Float64
-	}
-	if battles.Valid {
-		item["battles"] = battles.Int64
-	}
-	return item, nil
+type sqlStmt struct {
+	query string
+	args  []any
 }
+
+func stmt(query string, args ...any) sqlStmt { return sqlStmt{query, args} }
+
+func execEach(tx *sql.Tx, stmts ...sqlStmt) error {
+	for _, s := range stmts {
+		if _, err := tx.Exec(s.query, s.args...); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// runTx runs fn in a transaction and commits only if every statement
+// succeeded; otherwise it rolls back and writes the error response
+// (409 for a uniqueness conflict, e.g. renaming onto an existing label).
+// Reports whether the transaction committed. The multi-statement handlers
+// used to ignore each Exec and commit regardless, so a rename onto an
+// existing label could move the assignments while the label update failed,
+// and still answer 200.
+func runTx(w http.ResponseWriter, db *sql.DB, fn func(tx *sql.Tx) error) bool {
+	tx, err := db.Begin()
+	if err != nil {
+		httpError(w, err.Error(), http.StatusInternalServerError)
+		return false
+	}
+	if err := fn(tx); err != nil {
+		_ = tx.Rollback()
+		code := http.StatusInternalServerError
+		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
+			code = http.StatusConflict
+		}
+		httpError(w, err.Error(), code)
+		return false
+	}
+	if err := tx.Commit(); err != nil {
+		httpError(w, err.Error(), http.StatusInternalServerError)
+		return false
+	}
+	return true
+}
+
+// ---- Media handlers ----
 
 func lokiMediaHandler(deps *Dependencies) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -214,7 +220,7 @@ func lokiMediaHandler(deps *Dependencies) http.HandlerFunc {
 
 		if len(req.Tags) == 0 {
 			// No tags: return all media with full item fields
-			rows, err := deps.DB.Query(`
+			rows, err := deps.DB.QueryContext(r.Context(), `
 				SELECT m.path, '' AS tag_label, '' AS category_label,
 					0 AS weight, 0 AS time_stamp, 0 AS created_at,
 					m.height, m.width, m.elo, m.battles
@@ -224,19 +230,7 @@ func lokiMediaHandler(deps *Dependencies) http.HandlerFunc {
 				return
 			}
 			defer rows.Close()
-
-			var items []map[string]any
-			for rows.Next() {
-				item, err := scanMediaItem(rows)
-				if err != nil {
-					continue
-				}
-				items = append(items, item)
-			}
-			if items == nil {
-				items = []map[string]any{}
-			}
-			writeJSON(w, items)
+			streamMediaRows(w, rows, scanTagJoinItem)
 			return
 		}
 
@@ -278,25 +272,13 @@ func lokiMediaHandler(deps *Dependencies) http.HandlerFunc {
 				ORDER BY mtbc.media_path`, ph)
 		}
 
-		rows, err := deps.DB.Query(query, args...)
+		rows, err := deps.DB.QueryContext(r.Context(), query, args...)
 		if err != nil {
 			httpError(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		defer rows.Close()
-
-		var items []map[string]any
-		for rows.Next() {
-			item, err := scanMediaItem(rows)
-			if err != nil {
-				continue
-			}
-			items = append(items, item)
-		}
-		if items == nil {
-			items = []map[string]any{}
-		}
-		writeJSON(w, items)
+		streamMediaRows(w, rows, scanTagJoinItem)
 	}
 }
 
@@ -312,25 +294,13 @@ func lokiMediaSearchHandler(deps *Dependencies) http.HandlerFunc {
 			0 AS weight, 0 AS time_stamp, 0 AS created_at,
 			m.height, m.width, m.elo, m.battles
 			FROM media m WHERE m.description LIKE ? ORDER BY m.path`
-		rows, err := deps.DB.Query(query, "%"+req.Description+"%")
+		rows, err := deps.DB.QueryContext(r.Context(), query, "%"+req.Description+"%")
 		if err != nil {
 			httpError(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		defer rows.Close()
-
-		var items []map[string]any
-		for rows.Next() {
-			item, err := scanMediaItem(rows)
-			if err != nil {
-				continue
-			}
-			items = append(items, item)
-		}
-		if items == nil {
-			items = []map[string]any{}
-		}
-		writeJSON(w, items)
+		streamMediaRows(w, rows, scanTagJoinItem)
 	}
 }
 
@@ -463,18 +433,6 @@ func searchComposite(ctx context.Context, db *sql.DB, p Predicate, terms []tasks
 
 // sortItemsByScore orders items (each a map with "path") by descending score
 // from scoreByPath, attaching item["score"]. Stable for equal scores.
-func sortItemsByScore(items []map[string]any, scoreByPath map[string]float32) {
-	for _, it := range items {
-		p, _ := it["path"].(string)
-		it["score"] = scoreByPath[p]
-	}
-	sort.SliceStable(items, func(a, b int) bool {
-		pa, _ := items[a]["path"].(string)
-		pb, _ := items[b]["path"].(string)
-		return scoreByPath[pa] > scoreByPath[pb]
-	})
-}
-
 // isVisualPredicate reports whether p is resolved via the embedding backend —
 // the same guard the resolution loop and platform.ts use: a visual type with a
 // non-empty value.
@@ -693,60 +651,28 @@ func lokiMediaQueryHandler(deps *Dependencies) http.HandlerFunc {
 		}
 
 		querySQL, params := BuildMediaQuery(req.Predicates, req.Mode)
-		rows, err := deps.DB.Query(querySQL, params...)
+		// QueryContext: a superseded query (the user edited a chip) stops
+		// scanning when its client goes away instead of running to the end.
+		rows, err := deps.DB.QueryContext(r.Context(), querySQL, params...)
 		if err != nil {
 			httpError(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		defer rows.Close()
 
-		items := []map[string]any{}
-		for rows.Next() {
-			var path string
-			var elo sql.NullFloat64
-			var height, width sql.NullInt64
-			var weight sql.NullFloat64
-			var tagLabel sql.NullString
-			var timeStamp sql.NullFloat64
-			var createdAt sql.NullInt64
-			var battles sql.NullInt64
-			// 9 columns, matching BuildMediaQuery — description is filtered but
-			// never selected: path, elo, height, width, weight, tag_label,
-			// time_stamp, created_at, battles.
-			if err := rows.Scan(&path, &elo, &height, &width,
-				&weight, &tagLabel, &timeStamp, &createdAt, &battles); err != nil {
-				continue
-			}
-			item := map[string]any{"path": path, "mtimeMs": createdAt.Int64}
-			if elo.Valid {
-				item["elo"] = elo.Float64
-			}
-			if battles.Valid {
-				item["battles"] = battles.Int64
-			}
-			if height.Valid {
-				item["height"] = height.Int64
-			}
-			if width.Valid {
-				item["width"] = width.Int64
-			}
-			if weight.Valid {
-				item["weight"] = weight.Float64
-			}
-			if tagLabel.Valid {
-				item["tagLabel"] = tagLabel.String
-			}
-			if timeStamp.Valid {
-				item["timeStamp"] = timeStamp.Float64
-			}
-			items = append(items, item)
+		if !hasVisual {
+			// Plain SQL order: stream it, so a million-row result never sits
+			// in memory.
+			streamMediaRows(w, rows, scanQueryItem)
+			return
 		}
-
-		if hasVisual {
-			sortItemsByScore(items, scoreByPath)
+		items, err := collectMediaRows(rows, scanQueryItem)
+		if err != nil {
+			httpError(w, err.Error(), http.StatusInternalServerError)
+			return
 		}
-
-		writeJSON(w, items)
+		sortMediaItemsByScore(items, scoreByPath)
+		writeMediaItems(w, items)
 	}
 }
 
@@ -755,6 +681,13 @@ func lokiMediaMetadataHandler(deps *Dependencies) http.HandlerFunc {
 		var req pathRequest
 		if err := readJSON(r, &req); err != nil {
 			httpError(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		// Opens the file itself (generation text chunks): scope it for
+		// public visitors like the preview and file handlers, or any local
+		// path on the server is readable.
+		if !mediaReadAllowed(deps, r, req.Path) {
+			httpError(w, "path is not within any configured storage root", http.StatusForbidden)
 			return
 		}
 
@@ -955,7 +888,7 @@ func lokiMediaPreviewHandler(deps *Dependencies) http.HandlerFunc {
 			return
 		}
 
-		generated, err := generateThumbnailThrottled(req.Path, basePath, cache, req.TimeStamp)
+		generated, err := generateThumbnailThrottled(r.Context(), req.Path, basePath, cache, req.TimeStamp)
 		if err != nil {
 			log.Printf("Thumbnail generation failed for %s: %v", req.Path, err)
 			httpError(w, fmt.Sprintf("thumbnail generation failed: %v", err), http.StatusInternalServerError)
@@ -1091,7 +1024,7 @@ func mediaThumbnailHandler(deps *Dependencies) http.HandlerFunc {
 			}
 
 			// Generate the thumbnail
-			generated, genErr := generateThumbnailThrottled(filePath, basePath, cache, timeStamp)
+			generated, genErr := generateThumbnailThrottled(r.Context(), filePath, basePath, cache, timeStamp)
 			if genErr != nil {
 				log.Printf("Thumbnail generation failed for %s: %v", filePath, genErr)
 				http.Error(w, "Thumbnail generation failed", http.StatusInternalServerError)
@@ -1444,7 +1377,8 @@ func lokiCategoriesHandler(deps *Dependencies) http.HandlerFunc {
 			SELECT label,
 			       COALESCE(weight, 0) AS weight,
 			       COALESCE(description, '') AS description,
-			       COALESCE(tag_view_mode, 'card') AS tag_view_mode
+			       COALESCE(tag_view_mode, 'card') AS tag_view_mode,
+			       CASE WHEN tag_grouping = 'off' THEN 'off' ELSE 'on' END AS tag_grouping
 			FROM category
 			ORDER BY weight`)
 		if err != nil {
@@ -1458,11 +1392,12 @@ func lokiCategoriesHandler(deps *Dependencies) http.HandlerFunc {
 			Weight      float64 `json:"weight"`
 			Description string  `json:"description"`
 			TagViewMode string  `json:"tagViewMode"`
+			TagGrouping string  `json:"tagGrouping"`
 		}
 		result := []categoryInfo{}
 		for rows.Next() {
 			var c categoryInfo
-			if err := rows.Scan(&c.Label, &c.Weight, &c.Description, &c.TagViewMode); err != nil {
+			if err := rows.Scan(&c.Label, &c.Weight, &c.Description, &c.TagViewMode, &c.TagGrouping); err != nil {
 				httpError(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
@@ -1489,17 +1424,16 @@ func lokiTaxonomyTagsHandler(deps *Dependencies) http.HandlerFunc {
 			}
 		}
 
+		// One category's tags also carry the tag group each is listed under.
+		// The all-tags list (search index, ~190K rows) stays thin.
+		if category != "" {
+			lokiCategoryTags(w, deps, category)
+			return
+		}
+
 		var rows *sql.Rows
 		var err error
 		switch {
-		case category != "":
-			rows, err = deps.DB.Query(`
-				SELECT label,
-				       COALESCE(category_label, '') AS category_label,
-				       COALESCE(weight, 0) AS weight
-				FROM tag
-				WHERE category_label = ?
-				ORDER BY weight`, category)
 		case len(exclude) > 0:
 			rows, err = deps.DB.Query(`
 				SELECT label,
@@ -1541,6 +1475,44 @@ func lokiTaxonomyTagsHandler(deps *Dependencies) http.HandlerFunc {
 	}
 }
 
+func lokiCategoryTags(w http.ResponseWriter, deps *Dependencies, category string) {
+	rows, err := deps.DB.Query(`
+		SELECT label,
+		       COALESCE(category_label, '') AS category_label,
+		       COALESCE(weight, 0) AS weight,
+		       group_label
+		FROM tag
+		WHERE category_label = ?
+		ORDER BY weight`, category)
+	if err != nil {
+		httpError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	type tagInfo struct {
+		Label    string  `json:"label"`
+		Category string  `json:"category"`
+		Weight   float64 `json:"weight"`
+		Group    *string `json:"group"`
+	}
+	result := []tagInfo{}
+	for rows.Next() {
+		var t tagInfo
+		var group sql.NullString
+		if err := rows.Scan(&t.Label, &t.Category, &t.Weight, &group); err != nil {
+			httpError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if group.Valid && group.String != "" {
+			g := group.String
+			t.Group = &g
+		}
+		result = append(result, t)
+	}
+	writeJSON(w, result)
+}
+
 // lokiTaxonomyTagHandler returns full detail for a SINGLE tag.
 //
 // The counterpart to /api/taxonomy/tags staying thin (label/category/weight for
@@ -1560,14 +1532,16 @@ func lokiTaxonomyTagHandler(deps *Dependencies) http.HandlerFunc {
 			weight      float64
 			description string
 			thumbnail   string
+			group       string
 		)
 		err := deps.DB.QueryRow(`
 			SELECT COALESCE(category_label, '') AS category_label,
 			       COALESCE(weight, 0) AS weight,
 			       COALESCE(description, '') AS description,
-			       COALESCE(thumbnail_path_600, '') AS thumbnail_path_600
+			       COALESCE(thumbnail_path_600, '') AS thumbnail_path_600,
+			       COALESCE(group_label, '') AS group_label
 			FROM tag
-			WHERE label = ?`, label).Scan(&category, &weight, &description, &thumbnail)
+			WHERE label = ?`, label).Scan(&category, &weight, &description, &thumbnail, &group)
 		if err == sql.ErrNoRows {
 			httpError(w, "tag not found", http.StatusNotFound)
 			return
@@ -1581,18 +1555,24 @@ func lokiTaxonomyTagHandler(deps *Dependencies) http.HandlerFunc {
 		if thumbnail != "" {
 			thumbnailPath = &thumbnail
 		}
+		var groupLabel *string
+		if group != "" {
+			groupLabel = &group
+		}
 		writeJSON(w, struct {
 			Label       string  `json:"label"`
 			Category    string  `json:"category"`
 			Weight      float64 `json:"weight"`
 			Description string  `json:"description"`
 			Thumbnail   *string `json:"thumbnail_path_600"`
+			Group       *string `json:"group"`
 		}{
 			Label:       label,
 			Category:    category,
 			Weight:      weight,
 			Description: description,
 			Thumbnail:   thumbnailPath,
+			Group:       groupLabel,
 		})
 	}
 }
@@ -1688,14 +1668,13 @@ func lokiRenameTagHandler(deps *Dependencies) http.HandlerFunc {
 			httpError(w, "bad request", http.StatusBadRequest)
 			return
 		}
-		tx, err := deps.DB.Begin()
-		if err != nil {
-			httpError(w, err.Error(), http.StatusInternalServerError)
+		if !runTx(w, deps.DB, func(tx *sql.Tx) error {
+			return execEach(tx,
+				stmt("UPDATE tag SET label = ? WHERE label = ?", req.NewLabel, req.Label),
+				stmt("UPDATE media_tag_by_category SET tag_label = ? WHERE tag_label = ?", req.NewLabel, req.Label))
+		}) {
 			return
 		}
-		tx.Exec("UPDATE tag SET label = ? WHERE label = ?", req.NewLabel, req.Label)
-		tx.Exec("UPDATE media_tag_by_category SET tag_label = ? WHERE tag_label = ?", req.NewLabel, req.Label)
-		tx.Commit()
 		writeJSON(w, map[string]string{})
 	}
 }
@@ -1707,29 +1686,60 @@ func lokiMoveTagHandler(deps *Dependencies) http.HandlerFunc {
 			httpError(w, "bad request", http.StatusBadRequest)
 			return
 		}
-		deps.DB.Exec("UPDATE tag SET category_label = ? WHERE label = ?", req.CategoryLabel, req.Label)
+		// Groups belong to a category, so a tag leaves its group when it moves.
+		// Its assignments move with it: deleting the old category would
+		// otherwise delete them by their stale category_label.
+		if !runTx(w, deps.DB, func(tx *sql.Tx) error {
+			return execEach(tx,
+				stmt("UPDATE tag SET category_label = ?, group_label = NULL WHERE label = ?", req.CategoryLabel, req.Label),
+				stmt("UPDATE media_tag_by_category SET category_label = ? WHERE tag_label = ?", req.CategoryLabel, req.Label))
+		}) {
+			return
+		}
 		writeJSON(w, map[string]string{})
 	}
 }
 
+// DELETE /api/tags {label, categoryLabel?} — a categoryLabel that isn't the
+// tag's own is a 409, so a caller working from a stale view of the taxonomy
+// can't delete a tag it thinks lives elsewhere.
 func lokiDeleteTagHandler(deps *Dependencies) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		var req labelRequest
-		if err := readJSON(r, &req); err != nil {
+		var req struct {
+			Label         string `json:"label"`
+			CategoryLabel string `json:"categoryLabel"`
+		}
+		if err := readJSON(r, &req); err != nil || req.Label == "" {
 			httpError(w, "bad request", http.StatusBadRequest)
 			return
 		}
-		tx, err := deps.DB.Begin()
-		if err != nil {
-			httpError(w, err.Error(), http.StatusInternalServerError)
+		if req.CategoryLabel != "" {
+			var owner sql.NullString
+			err := deps.DB.QueryRow("SELECT category_label FROM tag WHERE label = ?", req.Label).Scan(&owner)
+			if err != nil && err != sql.ErrNoRows {
+				httpError(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			if err == nil && owner.String != req.CategoryLabel {
+				httpError(w, fmt.Sprintf("tag %q belongs to category %q, not %q", req.Label, owner.String, req.CategoryLabel), http.StatusConflict)
+				return
+			}
+		}
+		var removed int64
+		if !runTx(w, deps.DB, func(tx *sql.Tx) error {
+			res, err := tx.Exec("DELETE FROM media_tag_by_category WHERE tag_label = ?", req.Label)
+			if err != nil {
+				return err
+			}
+			removed, _ = res.RowsAffected()
+			_, err = tx.Exec("DELETE FROM tag WHERE label = ?", req.Label)
+			return err
+		}) {
 			return
 		}
-		tx.Exec("DELETE FROM media_tag_by_category WHERE tag_label = ?", req.Label)
-		tx.Exec("DELETE FROM tag WHERE label = ?", req.Label)
-		tx.Commit()
 		// Cascade may have removed paths from the swipe pool.
 		media.InvalidateRandomSampleCache()
-		writeJSON(w, map[string]string{})
+		writeJSON(w, map[string]any{"label": req.Label, "assignments": removed})
 	}
 }
 
@@ -1740,15 +1750,16 @@ func lokiOrderTagsHandler(deps *Dependencies) http.HandlerFunc {
 			httpError(w, "bad request", http.StatusBadRequest)
 			return
 		}
-		tx, err := deps.DB.Begin()
-		if err != nil {
-			httpError(w, err.Error(), http.StatusInternalServerError)
+		if !runTx(w, deps.DB, func(tx *sql.Tx) error {
+			for i, label := range req.Labels {
+				if _, err := tx.Exec("UPDATE tag SET weight = ? WHERE label = ?", float64(i), label); err != nil {
+					return err
+				}
+			}
+			return nil
+		}) {
 			return
 		}
-		for i, label := range req.Labels {
-			tx.Exec("UPDATE tag SET weight = ? WHERE label = ?", float64(i), label)
-		}
-		tx.Commit()
 		writeJSON(w, map[string]string{})
 	}
 }
@@ -1888,15 +1899,18 @@ func lokiRenameCategoryHandler(deps *Dependencies) http.HandlerFunc {
 			httpError(w, "bad request", http.StatusBadRequest)
 			return
 		}
-		tx, err := deps.DB.Begin()
-		if err != nil {
-			httpError(w, err.Error(), http.StatusInternalServerError)
+		// tag.category_label references category(label); with foreign keys on,
+		// renaming the parent first fails unless the check waits for commit.
+		if !runTx(w, deps.DB, func(tx *sql.Tx) error {
+			return execEach(tx,
+				stmt("PRAGMA defer_foreign_keys = ON"),
+				stmt("UPDATE category SET label = ? WHERE label = ?", req.NewLabel, req.Label),
+				stmt("UPDATE tag SET category_label = ? WHERE category_label = ?", req.NewLabel, req.Label),
+				stmt("UPDATE tag_group SET category_label = ? WHERE category_label = ?", req.NewLabel, req.Label),
+				stmt("UPDATE media_tag_by_category SET category_label = ? WHERE category_label = ?", req.NewLabel, req.Label))
+		}) {
 			return
 		}
-		tx.Exec("UPDATE category SET label = ? WHERE label = ?", req.NewLabel, req.Label)
-		tx.Exec("UPDATE tag SET category_label = ? WHERE category_label = ?", req.NewLabel, req.Label)
-		tx.Exec("UPDATE media_tag_by_category SET category_label = ? WHERE category_label = ?", req.NewLabel, req.Label)
-		tx.Commit()
 		writeJSON(w, map[string]string{})
 	}
 }
@@ -1926,24 +1940,357 @@ func lokiUpdateCategoryTagViewModeHandler(deps *Dependencies) http.HandlerFunc {
 	}
 }
 
-func lokiDeleteCategoryHandler(deps *Dependencies) http.HandlerFunc {
+func lokiUpdateCategoryTagGroupingHandler(deps *Dependencies) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		var req labelRequest
+		var req struct {
+			Label string `json:"label"`
+			Mode  string `json:"mode"`
+		}
 		if err := readJSON(r, &req); err != nil {
 			httpError(w, "bad request", http.StatusBadRequest)
 			return
 		}
-		tx, err := deps.DB.Begin()
+		if req.Label == "" {
+			httpError(w, "missing label", http.StatusBadRequest)
+			return
+		}
+		mode := "on"
+		if req.Mode == "off" {
+			mode = "off"
+		}
+		if _, err := deps.DB.Exec(
+			"UPDATE category SET tag_grouping = ? WHERE label = ?",
+			mode, req.Label,
+		); err != nil {
+			httpError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, map[string]string{})
+	}
+}
+
+// categoryAssignmentsWhere selects the assignments a category owns: those of
+// tags filed under it, plus rows still labelled with it whose tag no longer
+// exists. Never a row whose tag now lives in another category — keying off
+// media_tag_by_category.category_label alone would delete those.
+const categoryAssignmentsWhere = `(tag_label IN (SELECT label FROM tag WHERE category_label = ?)
+	OR (category_label = ? AND tag_label NOT IN (SELECT label FROM tag)))`
+
+// categoryImpact is what deleting a category removes.
+type categoryImpact struct {
+	Label       string `json:"label"`
+	Exists      bool   `json:"exists"`
+	Tags        int64  `json:"tags"`
+	Groups      int64  `json:"groups"`
+	Assignments int64  `json:"assignments"`
+	Media       int64  `json:"media"`
+}
+
+func readCategoryImpact(q interface {
+	QueryRow(string, ...any) *sql.Row
+}, label string) (categoryImpact, error) {
+	im := categoryImpact{Label: label}
+	var n int64
+	if err := q.QueryRow("SELECT COUNT(*) FROM category WHERE label = ?", label).Scan(&n); err != nil {
+		return im, err
+	}
+	im.Exists = n > 0
+	if err := q.QueryRow("SELECT COUNT(*) FROM tag WHERE category_label = ?", label).Scan(&im.Tags); err != nil {
+		return im, err
+	}
+	if err := q.QueryRow("SELECT COUNT(*) FROM tag_group WHERE category_label = ?", label).Scan(&im.Groups); err != nil {
+		return im, err
+	}
+	if err := q.QueryRow("SELECT COUNT(*), COUNT(DISTINCT media_path) FROM media_tag_by_category WHERE "+categoryAssignmentsWhere,
+		label, label).Scan(&im.Assignments, &im.Media); err != nil {
+		return im, err
+	}
+	return im, nil
+}
+
+// GET /api/categories/impact?label=<label> — what DELETE /api/categories
+// would remove, without removing it.
+func lokiCategoryImpactHandler(deps *Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		label := r.URL.Query().Get("label")
+		if label == "" {
+			httpError(w, "missing label", http.StatusBadRequest)
+			return
+		}
+		im, err := readCategoryImpact(deps.DB, label)
 		if err != nil {
 			httpError(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		tx.Exec("DELETE FROM media_tag_by_category WHERE category_label = ?", req.Label)
-		tx.Exec("DELETE FROM tag WHERE category_label = ?", req.Label)
-		tx.Exec("DELETE FROM category WHERE label = ?", req.Label)
-		tx.Commit()
+		writeJSON(w, im)
+	}
+}
+
+// DELETE /api/categories {label} — removes the category, its tags, groups and
+// their assignments; responds with what was removed.
+func lokiDeleteCategoryHandler(deps *Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req labelRequest
+		if err := readJSON(r, &req); err != nil || req.Label == "" {
+			httpError(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		var im categoryImpact
+		if !runTx(w, deps.DB, func(tx *sql.Tx) error {
+			var err error
+			if im, err = readCategoryImpact(tx, req.Label); err != nil {
+				return err
+			}
+			return execEach(tx,
+				stmt("DELETE FROM media_tag_by_category WHERE "+categoryAssignmentsWhere, req.Label, req.Label),
+				stmt("DELETE FROM tag WHERE category_label = ?", req.Label),
+				stmt("DELETE FROM tag_group WHERE category_label = ?", req.Label),
+				stmt("DELETE FROM category WHERE label = ?", req.Label))
+		}) {
+			return
+		}
 		// Cascade may have removed paths from the swipe pool.
 		media.InvalidateRandomSampleCache()
+		writeJSON(w, im)
+	}
+}
+
+// ---- Tag group handlers ----
+//
+// Tag groups are a visual level between a category and its tags: a tag_group
+// row per (category, label) and tag.group_label on each grouped tag. Nothing
+// in the query paths reads them. Mirrors the tag-group IPC handlers in the
+// desktop viewer (src/main/taxonomy.ts).
+
+type tagGroupRequest struct {
+	CategoryLabel string  `json:"categoryLabel"`
+	Label         string  `json:"label"`
+	NewLabel      string  `json:"newLabel"`
+	Weight        float64 `json:"weight"`
+	Hidden        bool    `json:"hidden"`
+	ViewMode      string  `json:"viewMode"`
+}
+
+func readTagGroupRequest(w http.ResponseWriter, r *http.Request) (tagGroupRequest, bool) {
+	var req tagGroupRequest
+	if err := readJSON(r, &req); err != nil {
+		httpError(w, "bad request", http.StatusBadRequest)
+		return req, false
+	}
+	if req.CategoryLabel == "" || req.Label == "" {
+		httpError(w, "missing categoryLabel or label", http.StatusBadRequest)
+		return req, false
+	}
+	return req, true
+}
+
+// GET /api/taxonomy/groups?category=<label> — the category's groups in order.
+func lokiTagGroupsHandler(deps *Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		category := r.URL.Query().Get("category")
+		type groupInfo struct {
+			Label    string  `json:"label"`
+			Weight   float64 `json:"weight"`
+			Hidden   bool    `json:"hidden"`
+			ViewMode *string `json:"viewMode"`
+		}
+		result := []groupInfo{}
+		if category == "" {
+			writeJSON(w, result)
+			return
+		}
+		rows, err := deps.DB.Query(`
+			SELECT label, COALESCE(weight, 0), COALESCE(hidden, 0) != 0,
+			       CASE WHEN view_mode IN ('card', 'list') THEN view_mode END
+			FROM tag_group
+			WHERE category_label = ?
+			ORDER BY weight, label`, category)
+		if err != nil {
+			httpError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var g groupInfo
+			var viewMode sql.NullString
+			if err := rows.Scan(&g.Label, &g.Weight, &g.Hidden, &viewMode); err != nil {
+				httpError(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			if viewMode.Valid {
+				g.ViewMode = &viewMode.String
+			}
+			result = append(result, g)
+		}
+		writeJSON(w, result)
+	}
+}
+
+func lokiCreateTagGroupHandler(deps *Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		req, ok := readTagGroupRequest(w, r)
+		if !ok {
+			return
+		}
+		// New groups go to the end of the category's list.
+		if _, err := deps.DB.Exec(`
+			INSERT INTO tag_group (category_label, label, weight)
+			VALUES (?, ?, (SELECT COALESCE(MAX(weight), 0) + 1
+			               FROM tag_group WHERE category_label = ?))
+			ON CONFLICT(category_label, label) DO NOTHING`,
+			req.CategoryLabel, req.Label, req.CategoryLabel); err != nil {
+			httpError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, map[string]string{"label": req.Label})
+	}
+}
+
+func lokiRenameTagGroupHandler(deps *Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		req, ok := readTagGroupRequest(w, r)
+		if !ok {
+			return
+		}
+		if req.NewLabel == "" || req.NewLabel == req.Label {
+			writeJSON(w, map[string]string{})
+			return
+		}
+		if !runTx(w, deps.DB, func(tx *sql.Tx) error {
+			return execEach(tx,
+				stmt("UPDATE tag_group SET label = ? WHERE category_label = ? AND label = ?", req.NewLabel, req.CategoryLabel, req.Label),
+				stmt("UPDATE tag SET group_label = ? WHERE category_label = ? AND group_label = ?", req.NewLabel, req.CategoryLabel, req.Label))
+		}) {
+			return
+		}
+		writeJSON(w, map[string]string{})
+	}
+}
+
+// Deleting a group never deletes its tags — they become ungrouped.
+func lokiDeleteTagGroupHandler(deps *Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		req, ok := readTagGroupRequest(w, r)
+		if !ok {
+			return
+		}
+		if !runTx(w, deps.DB, func(tx *sql.Tx) error {
+			return execEach(tx,
+				stmt("DELETE FROM tag_group WHERE category_label = ? AND label = ?", req.CategoryLabel, req.Label),
+				stmt("UPDATE tag SET group_label = NULL WHERE category_label = ? AND group_label = ?", req.CategoryLabel, req.Label))
+		}) {
+			return
+		}
+		writeJSON(w, map[string]string{})
+	}
+}
+
+func lokiUpdateTagGroupWeightHandler(deps *Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		req, ok := readTagGroupRequest(w, r)
+		if !ok {
+			return
+		}
+		if _, err := deps.DB.Exec(
+			"UPDATE tag_group SET weight = ? WHERE category_label = ? AND label = ?",
+			req.Weight, req.CategoryLabel, req.Label); err != nil {
+			httpError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, map[string]string{})
+	}
+}
+
+// PUT /api/tag-groups/hidden {categoryLabel, label, hidden} — a hidden group
+// is left out of the taxonomy panel unless the viewer shows hidden groups.
+func lokiUpdateTagGroupHiddenHandler(deps *Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		req, ok := readTagGroupRequest(w, r)
+		if !ok {
+			return
+		}
+		hidden := 0
+		if req.Hidden {
+			hidden = 1
+		}
+		if _, err := deps.DB.Exec(
+			"UPDATE tag_group SET hidden = ? WHERE category_label = ? AND label = ?",
+			hidden, req.CategoryLabel, req.Label); err != nil {
+			httpError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, map[string]string{})
+	}
+}
+
+// PUT /api/tag-groups/view-mode {categoryLabel, label, viewMode} — 'card' or
+// 'list' overrides the category's tag view mode for this group; anything else
+// (usually "") clears the override.
+func lokiUpdateTagGroupViewModeHandler(deps *Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		req, ok := readTagGroupRequest(w, r)
+		if !ok {
+			return
+		}
+		var mode any
+		if req.ViewMode == "card" || req.ViewMode == "list" {
+			mode = req.ViewMode
+		}
+		if _, err := deps.DB.Exec(
+			"UPDATE tag_group SET view_mode = ? WHERE category_label = ? AND label = ?",
+			mode, req.CategoryLabel, req.Label); err != nil {
+			httpError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, map[string]string{})
+	}
+}
+
+// PUT /api/tags/group {label, groupLabel} — an empty groupLabel ungroups.
+// A group not yet in the tag's category is created at the end of its list, so
+// a grouped tag always has a tag_group row to render under.
+func lokiSetTagGroupHandler(deps *Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Label      string `json:"label"`
+			GroupLabel string `json:"groupLabel"`
+		}
+		if err := readJSON(r, &req); err != nil || req.Label == "" {
+			httpError(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		var category sql.NullString
+		if err := deps.DB.QueryRow("SELECT category_label FROM tag WHERE label = ?", req.Label).Scan(&category); err != nil {
+			if err == sql.ErrNoRows {
+				httpError(w, "tag not found", http.StatusNotFound)
+				return
+			}
+			httpError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if req.GroupLabel == "" {
+			if _, err := deps.DB.Exec("UPDATE tag SET group_label = NULL WHERE label = ?", req.Label); err != nil {
+				httpError(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			writeJSON(w, map[string]string{})
+			return
+		}
+		if !category.Valid || category.String == "" {
+			httpError(w, "tag has no category to group under", http.StatusBadRequest)
+			return
+		}
+		if !runTx(w, deps.DB, func(tx *sql.Tx) error {
+			return execEach(tx,
+				stmt(`INSERT INTO tag_group (category_label, label, weight)
+					VALUES (?, ?, (SELECT COALESCE(MAX(weight), 0) + 1
+					               FROM tag_group WHERE category_label = ?))
+					ON CONFLICT(category_label, label) DO NOTHING`,
+					category.String, req.GroupLabel, category.String),
+				stmt("UPDATE tag SET group_label = ? WHERE label = ?", req.GroupLabel, req.Label))
+		}) {
+			return
+		}
 		writeJSON(w, map[string]string{})
 	}
 }
@@ -1997,7 +2344,7 @@ func resolveThumbnailPath(ctx context.Context, deps *Dependencies, mediaPath, ca
 	generated := getThumbnailPath(mediaPath, basePath, cache, timeStamp)
 	if !thumbnailFileValid(generated) {
 		var genErr error
-		generated, genErr = generateThumbnailThrottled(mediaPath, basePath, cache, timeStamp)
+		generated, genErr = generateThumbnailThrottled(ctx, mediaPath, basePath, cache, timeStamp)
 		if genErr != nil {
 			return "", genErr
 		}
@@ -2024,23 +2371,42 @@ func lokiCreateAssignmentHandler(deps *Dependencies) http.HandlerFunc {
 			httpError(w, "missing required fields", http.StatusBadRequest)
 			return
 		}
-		tx, err := deps.DB.Begin()
+		// An assignment's category_label always mirrors its tag's category:
+		// category deletes and counts key off it, so a stale or mismatched
+		// value silently misfiles (or later deletes) the assignment.
+		createTag, status, err := resolveAssignmentCategory(deps.DB, &req)
 		if err != nil {
-			httpError(w, err.Error(), http.StatusInternalServerError)
+			httpError(w, err.Error(), status)
 			return
 		}
-		// Get current count for weight calculation
+		// Get current count for weight calculation. Read outside the write
+		// transaction: a read-then-write transaction in WAL fails with
+		// SQLITE_BUSY_SNAPSHOT (no busy wait) if another writer commits between.
 		var count int
 		deps.DB.QueryRow("SELECT COUNT(*) FROM media_tag_by_category WHERE tag_label = ?", req.TagLabel).Scan(&count)
-		for _, p := range paths {
-			tx.Exec(`INSERT INTO media_tag_by_category
-				(media_path, tag_label, category_label, weight, time_stamp, created_at)
-				VALUES (?, ?, ?, ?, ?, strftime('%s','now'))
-				ON CONFLICT(media_path, tag_label, category_label, time_stamp) DO NOTHING`,
-				p, req.TagLabel, req.CategoryLabel, count, req.TimeStamp)
-			count++
+		if !runTx(w, deps.DB, func(tx *sql.Tx) error {
+			if createTag {
+				if _, err := tx.Exec(`INSERT INTO tag (label, category_label, weight)
+					VALUES (?, ?, (SELECT COALESCE(MAX(weight), 0) + 1 FROM tag WHERE category_label = ?))
+					ON CONFLICT(label) DO NOTHING`,
+					req.TagLabel, req.CategoryLabel, req.CategoryLabel); err != nil {
+					return err
+				}
+			}
+			for _, p := range paths {
+				if _, err := tx.Exec(`INSERT INTO media_tag_by_category
+					(media_path, tag_label, category_label, weight, time_stamp, created_at)
+					VALUES (?, ?, ?, ?, ?, strftime('%s','now'))
+					ON CONFLICT(media_path, tag_label, category_label, time_stamp) DO NOTHING`,
+					p, req.TagLabel, req.CategoryLabel, count, req.TimeStamp); err != nil {
+					return err
+				}
+				count++
+			}
+			return nil
+		}) {
+			return
 		}
-		tx.Commit()
 		// New assignments may add previously-untagged paths to the swipe pool.
 		media.InvalidateRandomSampleCache()
 
@@ -2062,6 +2428,37 @@ func lokiCreateAssignmentHandler(deps *Dependencies) http.HandlerFunc {
 		}
 		writeJSON(w, map[string]string{})
 	}
+}
+
+// resolveAssignmentCategory pins req.CategoryLabel to the tag's own category.
+// A tag that doesn't exist yet is created in the requested category (which
+// must exist); naming a different category than the tag's is a 409 rather
+// than a second, divergent filing of the same tag.
+func resolveAssignmentCategory(db *sql.DB, req *assignmentRequest) (createTag bool, status int, err error) {
+	var owner sql.NullString
+	switch err := db.QueryRow("SELECT category_label FROM tag WHERE label = ?", req.TagLabel).Scan(&owner); {
+	case err == sql.ErrNoRows:
+		if req.CategoryLabel == "" {
+			return false, http.StatusBadRequest, fmt.Errorf("tag %q does not exist; pass categoryLabel to create it", req.TagLabel)
+		}
+		var n int
+		if err := db.QueryRow("SELECT COUNT(*) FROM category WHERE label = ?", req.CategoryLabel).Scan(&n); err != nil {
+			return false, http.StatusInternalServerError, err
+		}
+		if n == 0 {
+			return false, http.StatusBadRequest, fmt.Errorf("category %q does not exist", req.CategoryLabel)
+		}
+		return true, 0, nil
+	case err != nil:
+		return false, http.StatusInternalServerError, err
+	}
+	if owner.Valid && owner.String != "" {
+		if req.CategoryLabel != "" && req.CategoryLabel != owner.String {
+			return false, http.StatusConflict, fmt.Errorf("tag %q belongs to category %q, not %q", req.TagLabel, owner.String, req.CategoryLabel)
+		}
+		req.CategoryLabel = owner.String
+	}
+	return false, 0, nil
 }
 
 func lokiDeleteAssignmentHandler(deps *Dependencies) http.HandlerFunc {
@@ -2218,7 +2615,7 @@ func lokiRegenerateThumbnailHandler(deps *Dependencies) http.HandlerFunc {
 		oldPath := getThumbnailPath(req.Path, basePath, cache, req.TimeStamp)
 		os.Remove(oldPath)
 
-		generated, err := generateThumbnailThrottled(req.Path, basePath, cache, req.TimeStamp)
+		generated, err := generateThumbnailThrottled(r.Context(), req.Path, basePath, cache, req.TimeStamp)
 		if err != nil {
 			httpError(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -2350,6 +2747,24 @@ func lokiDBLoadHandler(deps *Dependencies) http.HandlerFunc {
 
 // ---- SPA handler ----
 
+// spaETags caches each embedded SPA file's content-hash ETag; the embedded
+// FS never changes while the process runs.
+var spaETags sync.Map // path -> string
+
+func spaETag(spaFS fs.FS, name string) string {
+	if v, ok := spaETags.Load(name); ok {
+		return v.(string)
+	}
+	data, err := fs.ReadFile(spaFS, name)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(data)
+	etag := `"` + hex.EncodeToString(sum[:12]) + `"`
+	spaETags.Store(name, etag)
+	return etag
+}
+
 func lokiSPAHandler(spaFS fs.FS) http.HandlerFunc {
 	fileServer := http.FileServer(http.FS(spaFS))
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -2365,6 +2780,12 @@ func lokiSPAHandler(spaFS fs.FS) http.HandlerFunc {
 			// any heuristic caching serves a stale app after a server
 			// upgrade. Force revalidation on every load.
 			w.Header().Set("Cache-Control", "no-cache")
+			// ...but give revalidation something to match: without a
+			// validator every load re-downloaded the multi-MB chunks. A
+			// content-hash ETag lets ServeContent answer 304.
+			if etag := spaETag(spaFS, reqPath); etag != "" {
+				w.Header().Set("ETag", etag)
+			}
 			// Serve the static file
 			http.StripPrefix("/app/", fileServer).ServeHTTP(w, r)
 			return

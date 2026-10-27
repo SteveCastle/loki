@@ -67,7 +67,7 @@ func FacesInImageFile(ctx context.Context, m FaceModel, imagePath string) ([]med
 	}
 	embedBin := deps.BundledOrEmpty("embed")
 	if embedBin == "" {
-		return nil, fmt.Errorf("embed binary not installed")
+		return nil, bundledMissing("embed")
 	}
 	ortLib := deps.BundledOrEmpty("onnxruntime")
 

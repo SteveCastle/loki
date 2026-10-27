@@ -1,6 +1,7 @@
 package jobqueue
 
 import (
+	"fmt"
 	"testing"
 )
 
@@ -79,8 +80,19 @@ func TestResourceCountsReleasedOnEveryTransition(t *testing.T) {
 
 	transitions := map[string]func(q *Queue, id string) error{
 		"complete": func(q *Queue, id string) error { return q.CompleteJob(id) },
-		"cancel":   func(q *Queue, id string) error { return q.CancelJob(id) },
-		"error":    func(q *Queue, id string) error { return q.ErrorJob(id) },
+		// A running job keeps its buckets past cancellation until its task
+		// returns, which the runner reports via ReleaseCancelled.
+		"cancel": func(q *Queue, id string) error {
+			if err := q.CancelJob(id); err != nil {
+				return err
+			}
+			if q.RunningCounts["gpu"] != 1 {
+				return fmt.Errorf("gpu bucket freed before the task stopped: %d", q.RunningCounts["gpu"])
+			}
+			q.ReleaseCancelled(id)
+			return nil
+		},
+		"error": func(q *Queue, id string) error { return q.ErrorJob(id) },
 		"pause": func(q *Queue, id string) error {
 			if err := q.RequestPause(id); err != nil {
 				return err

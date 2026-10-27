@@ -121,7 +121,16 @@ func ResolveResources(command string, arguments []string, input string) []string
 	case "describe", "transcribe", "embed", "autotag", "faces":
 		ops = []string{command}
 	case "retouch", "reshoot", "4kify":
-		// Heavy local GPU diffusion run (~20 GB VRAM).
+		// Heavy local GPU diffusion run (~20 GB VRAM). Sent to worker pools
+		// it uses none of this machine (a hybrid run that lands on the local
+		// GPU holds the local engine lease instead, see engines.go).
+		engine := "loki-retouch"
+		if command == "reshoot" {
+			engine = "loki-reshoot"
+		}
+		if !engineRunsLocalOnly(engine) {
+			return nil
+		}
 		return []string{HostBucketLocalCompute}
 	case "faces-cluster":
 		// Clustering shares the faces bucket (its Host) and crunches vectors
@@ -192,8 +201,11 @@ func ApplyHostLimits(q *jobqueue.Queue, cfg appconfig.Config) {
 	q.SetHostLimit(HostBucketAutotag, 1)
 	// Likewise one faces job at a time (internally parallel via its pool).
 	q.SetHostLimit(HostBucketFaces, 1)
-	// One diffusion engine at a time (retouch, reshoot, 4kify share it).
+	// One diffusion engine at a time (retouch, reshoot, 4kify share it) on
+	// this machine; with worker pools the bucket holds every worker's GPU
+	// slots (ConfigureEngines below resizes it).
 	q.SetHostLimit(HostBucketGPUDiffusion, 1)
+	ConfigureEngines(q, cfg.Engines)
 	// Machine-wide cap on concurrent heavy LOCAL jobs (see the bucket's doc
 	// in llm_vision.go). Config value <= 0 falls back to the safe default of
 	// one heavy local workload at a time.

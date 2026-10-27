@@ -1,10 +1,13 @@
 // Transform intents: what a user can ask the local AI engines to do with the
-// selected media, and the pure logic that turns a choice + settings into job
-// requests for the media server's `retouch` (loki-retouch, images) and
-// `reshoot` (loki-reshoot, video) tasks. No React in here: it is unit-tested
-// and shared by the palette's one-click chips and the Transform flow.
+// selected media (or, for Generate, with nothing at all), and the pure logic
+// that turns a choice + settings into job requests for the media server's
+// `retouch` (loki-retouch, images), `reshoot` (loki-reshoot, video) and
+// `dream` (loki-dream, text -> image) tasks. No React in here: it is
+// unit-tested and shared by the palette's one-click chips and the Transform flow.
 
-export type EngineId = 'retouch' | 'reshoot';
+import { DREAM_ENABLED } from '../../features';
+
+export type EngineId = 'retouch' | 'reshoot' | 'dream';
 export type IntentId =
   | 'restore'
   | 'upscale'
@@ -12,7 +15,9 @@ export type IntentId =
   | 'angle'
   | 'edit'
   | 'alive'
-  | 'direct';
+  | 'direct'
+  | 'generate'
+  | 'reimagine';
 
 export type MediaKind = 'image' | 'video' | 'audio' | 'other';
 
@@ -57,6 +62,8 @@ export type SizeMode = 'same' | 'scale' | 'custom';
 export type Shake = 'none' | 'subtle' | 'handheld';
 export type WallpaperTarget = 'desktop' | 'phone';
 export type CameraElevation = 'eye' | 'high' | 'low';
+/** Generate: the picture's shape (DREAM_ASPECTS), or a custom `WxH` (customSize). */
+export type DreamAspect = 'square' | 'landscape' | 'portrait' | 'custom';
 
 /**
  * The camera-angle presets (media-server/tasks/retouch_views.go): an orbit in 45° steps, measured toward the right
@@ -137,12 +144,19 @@ export interface TransformSettings {
   reshootModel: ReshootModel;
   noAudio: boolean;
   keepSoundtrack: boolean;
+  /** What the picture should not have (Generate, Reimagine; the turbo quality ignores it). */
+  negative: string;
+  /** Generate: the picture's shape. */
+  aspect: DreamAspect;
+  /** Reimagine: how much of the image is redrawn, 0-1. */
+  strength: number;
 }
 
 export interface IntentDef {
   id: IntentId;
   engine: EngineId;
-  group: 'image' | 'video';
+  /** The Choose step's section: edit images, make video, or make new pictures. */
+  group: 'image' | 'video' | 'create';
   title: string;
   tagline: string;
   /** Longer explanation shown in the Shape phase. */
@@ -180,9 +194,12 @@ export const BASE_SETTINGS: TransformSettings = {
   noAudio: false,
   keepSoundtrack: true,
   pinned: [],
+  negative: '',
+  aspect: 'square',
+  strength: 0.8,
 };
 
-export const INTENTS: IntentDef[] = [
+const ALL_INTENTS: IntentDef[] = [
   {
     id: 'restore',
     engine: 'retouch',
@@ -291,10 +308,51 @@ export const INTENTS: IntentDef[] = [
       'The person in <Picture 1> performs the motion of <Video 1>.',
     ],
   },
+  {
+    id: 'generate',
+    engine: 'dream',
+    group: 'create',
+    title: 'Generate',
+    tagline: 'A new picture from a description',
+    blurb:
+      'Describe a picture and the model paints it from scratch: no image needed. The results are added to your library, in a Generated folder; anything selected is left alone.',
+    oneClick: false,
+    needsText: 'prompt',
+    defaults: { aspect: 'square' },
+    examples: [
+      'A lighthouse on a rocky coast at dusk, waves breaking on the rocks, dramatic clouds, photograph',
+      'A cozy reading nook with a cat asleep on a stack of books, warm afternoon light through the window',
+      'Portrait of an old fisherman with a weathered face and a knit cap, 85mm lens, shallow depth of field',
+      'A neon-lit street market in the rain at night, cinematic',
+    ],
+  },
+  {
+    id: 'reimagine',
+    engine: 'dream',
+    group: 'create',
+    title: 'Reimagine',
+    tagline: 'Redraw an image from a description',
+    blurb:
+      'The model repaints the image toward your description, keeping as much of the original as the strength allows: subtle keeps the colors and detail, strong little more than the layout. Describe the whole result, not just the change. One new image per image, saved beside it.',
+    oneClick: false,
+    needsText: 'prompt',
+    defaults: { strength: 0.8 },
+    examples: [
+      'The same scene as an oil painting with visible brush strokes',
+      'The same scene in deep winter, everything covered in fresh snow',
+      'A watercolor illustration of this scene in soft pastel colors',
+    ],
+  },
 ];
 
+/**
+ * The intents this build offers: the loki-dream ones (Generate, Reimagine) only with DREAM_ENABLED. intentById still
+ * knows them all, so a remembered run or saved task naming one resolves; availability() keeps it from running.
+ */
+export const INTENTS: IntentDef[] = ALL_INTENTS.filter((i) => i.engine !== 'dream' || DREAM_ENABLED);
+
 export function intentById(id: IntentId): IntentDef {
-  return INTENTS.find((i) => i.id === id) as IntentDef;
+  return ALL_INTENTS.find((i) => i.id === id) as IntentDef;
 }
 
 /**
@@ -327,20 +385,25 @@ export function runSummary(id: IntentId, s: TransformSettings): string {
   const parts: string[] = [];
   const manual = s.manualPrompt !== null && s.manualPrompt.trim() ? s.manualPrompt : null;
   if (manual) parts.push(`your prompt ${quoteSnippet(manual)}`);
-  else if (id === 'edit' || id === 'direct') parts.push(quoteSnippet(s.prompt));
+  else if (promptIsVerbatim(id)) parts.push(quoteSnippet(s.prompt));
   else if (id === 'alive' && s.describe.trim()) parts.push(quoteSnippet(s.describe));
   else if (s.append.trim()) parts.push(`+ ${quoteSnippet(s.append, 32)}`);
   if (id === 'angle') parts.unshift(cameraViewLabel(s.cameraAzimuth, s.cameraElevation));
+  const engine = intentById(id).engine;
   if (id === 'wallpaper') parts.push(s.wallpaperTarget === 'phone' ? 'phone' : 'desktop');
-  else if (intentById(id).engine === 'retouch') {
+  else if (engine === 'retouch') {
     if (s.sizeMode === 'scale') parts.push(`${s.scale}×`);
     else if (s.sizeMode === 'custom' && parseSize(s.customSize)) parts.push(s.customSize);
-  } else parts.push(`${s.duration.toFixed(1).replace(/\.0$/, '')} s`);
-  parts.push(intentById(id).engine === 'reshoot' && s.reshootModel === 'fast' ? 'fast model' : s.quality);
+  } else if (id === 'generate') {
+    const size = dreamSize(s);
+    if (size) parts.push(`${size[0]}×${size[1]}`);
+  } else if (id === 'reimagine') parts.push(`strength ${strengthOf(s)}`);
+  else parts.push(`${s.duration.toFixed(1).replace(/\.0$/, '')} s`);
+  parts.push(engine === 'reshoot' && s.reshootModel === 'fast' ? 'fast model' : qualityLabel(engine, s.quality));
   if (s.variations > 1) parts.push(`${s.variations} variations`);
   if (s.seedMode === 'fixed') parts.push(`seed ${s.seed}`);
-  const pins = pinnable(id) ? (s.pinned || []).length : 0;
-  if (pins) parts.push(`${pins} pinned`);
+  const refs = pinnable(id) ? (s.pinned || []).length : 0;
+  if (refs) parts.push(`${refs} ${refs === 1 ? 'reference' : 'references'}`);
   return parts.join(' · ');
 }
 
@@ -360,6 +423,7 @@ export interface Availability {
 
 /** Whether an intent can run on this selection. */
 export function availability(id: IntentId, inputs: Inputs): Availability {
+  if (!INTENTS.some((i) => i.id === id)) return { ok: false, reason: 'Not available in this version' };
   const { images, videos, audios } = inputs;
   const stills = images.length;
   switch (id) {
@@ -376,6 +440,12 @@ export function availability(id: IntentId, inputs: Inputs): Availability {
     case 'direct':
       if (stills + videos.length + audios.length > 0) return { ok: true };
       return { ok: false, reason: 'Select images, clips or audio' };
+    case 'generate':
+      // Needs nothing: whatever is selected is left alone.
+      return { ok: true };
+    case 'reimagine':
+      if (stills > 0) return { ok: true };
+      return { ok: false, reason: 'Select an image' };
     default:
       return { ok: false };
   }
@@ -415,9 +485,27 @@ export function runGroups(id: IntentId, paths: string[], pinned: string[] | unde
   return targets.length ? targets.map((t) => [t, ...pins]) : [pins];
 }
 
+/**
+ * Every reference a run used besides the item it was for: the pins, or (unpinned) the inputs that rode along with
+ * the first one — Edit's other images (one combined run, <image2>…), Direct's other media. As pins, in this order,
+ * they keep their tokens on any new selection, so a remembered run brings all of them back.
+ */
+export function runReferences(id: IntentId, paths: string[], pinned: string[] | undefined): string[] {
+  if (!pinnable(id)) return [];
+  const pins = activePins(id, pinned);
+  if (pins.length) return pins;
+  if (id === 'edit') return classify(paths).images.slice(1);
+  return paths.filter((p) => mediaKind(p) !== 'other').slice(1);
+}
+
 /** Whether the intent's prompt field IS the whole prompt the engine runs (nothing is expanded around it). */
 export function promptIsVerbatim(id: IntentId): boolean {
-  return id === 'edit' || id === 'direct';
+  return id === 'edit' || id === 'direct' || id === 'generate' || id === 'reimagine';
+}
+
+/** Whether the intent takes the selection at all (Generate makes something new and leaves it alone). */
+export function usesSelection(id: IntentId): boolean {
+  return id !== 'generate';
 }
 
 /**
@@ -441,6 +529,14 @@ export function referenceTokens(id: IntentId | null, paths: string[], manual = f
     return out;
   }
   const inputs = classify(paths);
+  if (id === 'generate') return out;
+  if (intentById(id).engine === 'dream') {
+    // Reimagine: each image is the starting point of its own run; the prompt has no way to name it.
+    inputs.images.forEach((p) => {
+      out[p] = '';
+    });
+    return out;
+  }
   if (intentById(id).engine === 'retouch') {
     const targets = inputs.images.length ? inputs.images : inputs.videos.slice(0, 1);
     const shared = usesReferences(id, inputs);
@@ -509,9 +605,23 @@ export function tokenIssues(prompt: string, tokens: string[]): TokenIssues {
 export const QUALITY_STEPS: Record<EngineId, Record<Quality, number>> = {
   retouch: { draft: 12, balanced: 25, fine: 40 },
   reshoot: { draft: 12, balanced: 20, fine: 32 },
+  // Kromoss: 50 steps at CFG 3 is the model's own setting (Fine); draft = the 8-step turbo LoRA at CFG 1.
+  dream: { draft: 8, balanced: 30, fine: 50 },
 };
 
+/** What a quality is called: loki-dream's draft is its turbo mode. */
+export function qualityLabel(engine: EngineId, q: Quality): string {
+  return engine === 'dream' && q === 'draft' ? 'turbo' : q;
+}
+
 export const MAX_VARIATIONS = 4;
+/** loki-dream makes up to this many images in one run (consecutive seeds, one model load). */
+export const MAX_DREAM_COUNT = 8;
+
+/** How many variations an intent can queue: Generate's are one run of the engine, so it allows more. */
+export function maxVariations(id: IntentId): number {
+  return id === 'generate' ? MAX_DREAM_COUNT : MAX_VARIATIONS;
+}
 export const MIN_DURATION = 1;
 export const MAX_DURATION = 15;
 
@@ -534,6 +644,67 @@ export function parseSize(s: string): [number, number] | null {
   const w = parseInt(m[1], 10);
   const h = parseInt(m[2], 10);
   return w > 0 && h > 0 ? [w, h] : null;
+}
+
+// --- loki-dream canvas ----------------------------------------------------------
+
+/** Generate's shapes: Kromoss's ~1 MP training sizes. */
+export const DREAM_ASPECTS: Array<{ id: Exclude<DreamAspect, 'custom'>; label: string; width: number; height: number }> = [
+  { id: 'square', label: 'Square', width: 1024, height: 1024 },
+  { id: 'landscape', label: 'Landscape', width: 1344, height: 768 },
+  { id: 'portrait', label: 'Portrait', width: 768, height: 1344 },
+];
+
+/** The model works in multiples of DREAM_GRID px (its 16x VAE), around a megapixel. */
+export const DREAM_GRID = 16;
+export const DREAM_MAX_PIXELS = 1024 * 1024;
+const DREAM_MIN_SIDE = 256;
+
+/** Snap a custom size to what the model makes: multiples of DREAM_GRID, at most ~DREAM_MAX_PIXELS, ratio kept. */
+export function snapDreamSize(w: number, h: number): [number, number] {
+  let fw = Math.max(1, w);
+  let fh = Math.max(1, h);
+  if (fw * fh > DREAM_MAX_PIXELS) {
+    const k = Math.sqrt(DREAM_MAX_PIXELS / (fw * fh));
+    fw *= k;
+    fh *= k;
+  }
+  const snap = (x: number) => Math.max(DREAM_MIN_SIDE, Math.round(x / DREAM_GRID) * DREAM_GRID);
+  let sw = snap(fw);
+  let sh = snap(fh);
+  // Rounding both sides up can push the area just over the cap: take the larger side down a notch.
+  while (sw * sh > DREAM_MAX_PIXELS && Math.max(sw, sh) > DREAM_MIN_SIDE) {
+    if (sw >= sh) sw -= DREAM_GRID;
+    else sh -= DREAM_GRID;
+  }
+  return [sw, sh];
+}
+
+/** The size Generate makes for these settings, or null for a custom size that is not a size yet. */
+export function dreamSize(s: Pick<TransformSettings, 'aspect' | 'customSize'>): [number, number] | null {
+  if (s.aspect === 'custom') {
+    const p = parseSize(s.customSize);
+    return p ? snapDreamSize(p[0], p[1]) : null;
+  }
+  const a = DREAM_ASPECTS.find((x) => x.id === s.aspect) || DREAM_ASPECTS[0];
+  return [a.width, a.height];
+}
+
+/**
+ * Reimagine's strength presets. Kromoss holds on to the picture far longer than the number suggests: at 0.6 little
+ * more than a detail changes, 0.8 restyles colors and light, and from about 0.88 only the layout is left (turbo's
+ * 8 steps make 0.88-0.97 the same run).
+ */
+export const STRENGTH_PRESETS: Array<{ value: number; label: string; sub: string }> = [
+  { value: 0.6, label: 'Subtle', sub: 'keeps colors and detail' },
+  { value: 0.8, label: 'Medium', sub: 'keeps the composition' },
+  { value: 0.9, label: 'Strong', sub: 'keeps the layout' },
+];
+
+/** Reimagine's strength, in range (0.05-1) and rounded to the slider's hundredths. */
+export function strengthOf(s: Pick<TransformSettings, 'strength'>): number {
+  const v = Number.isFinite(s.strength) ? s.strength : BASE_SETTINGS.strength;
+  return Math.round(Math.min(1, Math.max(0.05, v)) * 100) / 100;
 }
 
 // --- native canvas (mirrors loki-reshoot's `--native`) -----------------------
@@ -673,6 +844,8 @@ export function buildJobs(
   const inputs = classify(paths);
   const avail = availability(id, inputs);
   if (!avail.ok) return { jobs: [], error: avail.reason || 'Not available' };
+  const dreamProblem = def.engine === 'dream' ? dreamError(id, s) : null;
+  if (dreamProblem) return { jobs: [], error: dreamProblem };
   const steps = stepsForSettings(def.engine, s);
   const seedList = seeds(s, ctx);
   const jobs: JobRequest[] = [];
@@ -680,6 +853,8 @@ export function buildJobs(
   const stamp = (f: Record<string, string>, runPaths: string[]) => {
     if (recipe) f.meta = recipeJson(id, recipe, runPaths);
   };
+
+  if (def.engine === 'dream') return { jobs: buildDreamJobs(id, s, inputs, ctx, stamp) };
 
   if (def.engine === 'retouch') {
     const manual = s.manualPrompt !== null ? s.manualPrompt.trim() : null;
@@ -763,6 +938,61 @@ export function buildJobs(
   return { jobs };
 }
 
+/** Why a Generate / Reimagine run can't be built yet, or null. */
+function dreamError(id: IntentId, s: TransformSettings): string | null {
+  const manual = s.manualPrompt !== null ? s.manualPrompt.trim() : null;
+  if (manual === '') return 'Write the prompt, or reset it to the generated one';
+  if (!(manual ?? s.prompt.trim())) return id === 'generate' ? 'Describe the picture' : 'Describe the result';
+  if (id === 'generate' && !dreamSize(s)) return 'Enter a width and height';
+  return null;
+}
+
+/**
+ * loki-dream jobs. Generate: ONE job with no input making every variation (`count`: consecutive seeds, one model
+ * load), written to the library's Generated folder; the selection is ignored. Reimagine: one job per image and
+ * variation, the image as the starting point.
+ */
+function buildDreamJobs(
+  id: IntentId,
+  s: TransformSettings,
+  inputs: Inputs,
+  ctx: BuildContext,
+  stamp: (f: Record<string, string>, runPaths: string[]) => void
+): JobRequest[] {
+  const prompt = (s.manualPrompt !== null ? s.manualPrompt : s.prompt).trim();
+  const common = (f: Record<string, string>, seed: number) => {
+    put(f, 'prompt', prompt);
+    // Turbo is its own step count at CFG 1, which ignores a negative prompt: send neither.
+    if (s.quality === 'draft') put(f, 'turbo', true);
+    else {
+      put(f, 'steps', stepsFor('dream', s.quality));
+      put(f, 'negative', s.negative.trim());
+    }
+    put(f, 'seed', seed);
+  };
+  if (id === 'generate') {
+    const [w, h] = dreamSize(s) as [number, number];
+    const n = Math.min(MAX_DREAM_COUNT, Math.max(1, Math.round(s.variations)));
+    const f: Record<string, string> = {};
+    common(f, seeds({ ...s, variations: 1 }, ctx)[0]);
+    put(f, 'size', `${w}x${h}`);
+    if (n > 1) put(f, 'count', n);
+    stamp(f, []);
+    return [{ input: 'dream', fields: f, label: `Generate · ${n} ${n === 1 ? 'image' : 'images'}` }];
+  }
+  const jobs: JobRequest[] = [];
+  inputs.images.forEach((img) => {
+    seeds(s, ctx).forEach((seed) => {
+      const f: Record<string, string> = {};
+      common(f, seed);
+      put(f, 'strength', strengthOf(s));
+      stamp(f, [img]);
+      jobs.push({ input: `dream ${q([img])}`, fields: f, label: `Reimagine · ${img.split(/[\\/]/).pop()}` });
+    });
+  });
+  return jobs;
+}
+
 // --- plan (what the review phase shows) -------------------------------------
 
 export interface Plan {
@@ -777,6 +1007,8 @@ export interface Plan {
   frames?: number;
   engine: EngineId;
   steps: number;
+  /** loki-dream's turbo mode (no classifier-free guidance: half the work per step). */
+  turbo?: boolean;
 }
 
 const SUFFIX: Record<string, string> = {
@@ -805,7 +1037,25 @@ export function planFor(
   const first = inputs.images[0] || inputs.videos[0] || inputs.audios[0] || '';
   const built = buildJobs(id, s, paths, { random: () => 0.5 });
   const jobCount = built.jobs.length;
-  const variations = Math.min(MAX_VARIATIONS, Math.max(1, Math.round(s.variations)));
+  const variations = Math.min(maxVariations(id), Math.max(1, Math.round(s.variations)));
+  if (def.engine === 'dream') {
+    const turbo = s.quality === 'draft';
+    if (id === 'generate') {
+      const size = dreamSize(s);
+      return { jobCount, outputs: variations, outputName: 'dream_….png', outWidth: size?.[0], outHeight: size?.[1], engine: 'dream', steps, turbo };
+    }
+    return {
+      jobCount,
+      outputs: jobCount,
+      outputName: `${stem(first)}_dream.png`,
+      // The engine works at the input's size (on its 16 px grid).
+      outWidth: source ? Math.round(source.width / DREAM_GRID) * DREAM_GRID : undefined,
+      outHeight: source ? Math.round(source.height / DREAM_GRID) * DREAM_GRID : undefined,
+      engine: 'dream',
+      steps,
+      turbo,
+    };
+  }
   const outputs =
     def.engine === 'retouch' && !runGroups(id, paths, s.pinned)
       ? (usesReferences(id, inputs) ? 1 : Math.max(1, inputs.images.length || 1)) * variations
@@ -850,6 +1100,11 @@ export function planFor(
 
 /** Rough wall-clock seconds for ONE job on an RTX 4090-class GPU (fitted to measured runs). */
 export function estimateSeconds(plan: Plan): number {
+  if (plan.engine === 'dream') {
+    // Not yet measured: a guess for Kromoss (a model load, then CFG doubles the work per step unless turbo).
+    const mp = plan.outWidth && plan.outHeight ? (plan.outWidth * plan.outHeight) / 1e6 : 1;
+    return 15 + plan.steps * (plan.turbo ? 0.35 : 0.7) * mp;
+  }
   if (plan.engine === 'retouch') {
     const mp = plan.outWidth && plan.outHeight ? (plan.outWidth * plan.outHeight) / 1e6 : 1;
     return 12 + plan.steps * 0.4 * mp;

@@ -1,0 +1,25 @@
+# One loki-worker node on this Docker host (NVIDIA Container Toolkit needed).
+#
+#   LOKI_WORKER_TOKEN=$(openssl rand -hex 24) docker compose -f tools/worker/docker-compose.yml up -d
+#   lokictl pool add-node gpu http://<this-host>:8080 --token $LOKI_WORKER_TOKEN
+services:
+  loki-worker:
+    image: ghcr.io/stevecastle/loki-worker:latest
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      LOKI_WORKER_TOKEN: ${LOKI_WORKER_TOKEN:?set LOKI_WORKER_TOKEN}
+      LOKI_WORKER_PRELOAD: ${LOKI_WORKER_PRELOAD:-}
+      LOKI_WORKER_NAME: ${LOKI_WORKER_NAME:-}
+    volumes:
+      - loki-models:/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+volumes:
+  loki-models:

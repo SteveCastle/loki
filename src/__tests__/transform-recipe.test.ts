@@ -182,3 +182,39 @@ describe('saving the rebuilt task', () => {
     expect(suggestTaskName({ intent: 'angle', settings: { ...settingsFor('angle'), cameraAzimuth: 180, cameraElevation: 'high' }, approximate: false })).toBe('Reverse, high angle');
   });
 });
+
+describe('loki-dream results back into tasks', () => {
+  test('a stamped Generate recipe comes back exactly, with no inputs to carry', () => {
+    const s: TransformSettings = { ...settingsFor('generate'), prompt: 'a red fox', aspect: 'portrait', quality: 'draft', variations: 3 };
+    const meta = recipeOf(buildJobs('generate', s, [IMG], { recipe: true }).jobs[0].fields);
+    expect(meta.paths).toEqual([]);
+    const task = taskFromRecord(recordWith(meta, 'loki-dream'));
+    expect(task).toMatchObject({ intent: 'generate', approximate: false });
+    expect(task?.settings).toMatchObject({ prompt: 'a red fox', aspect: 'portrait', quality: 'draft', variations: 3, pinned: [] });
+    expect(suggestTaskName(task!)).toBe('a red fox');
+  });
+
+  test('an unknown aspect in a recipe falls back to the default', () => {
+    const meta = { kind: 'loki-transform', v: 1, intent: 'generate', settings: { prompt: 'x', aspect: 'triangle' }, paths: [] };
+    expect(taskFromRecord(recordWith(meta, 'loki-dream'))?.settings.aspect).toBe('square');
+  });
+
+  test('a hand-run loki-dream is rebuilt from its command line', () => {
+    const gen = taskFromRecord({ loki: 1, tool: 'loki-dream', prompt: 'a castle', seed: 9, args: ['--prompt', 'a castle', '--size', '1344x768', '--steps', '48', '--negative', 'blurry', '-o', 'out'] });
+    expect(gen).toMatchObject({ intent: 'generate', approximate: true });
+    expect(gen?.settings).toMatchObject({ prompt: 'a castle', aspect: 'landscape', quality: 'fine', negative: 'blurry', seed: 9 });
+    const odd = taskFromRecord({ loki: 1, tool: 'loki-dream', prompt: 'a castle', args: ['--size', '1000x600', '--turbo'] });
+    expect(odd?.settings).toMatchObject({ aspect: 'custom', customSize: '1000x600', quality: 'draft' });
+    const re = taskFromRecord({ loki: 1, tool: 'loki-dream', prompt: 'oil painting', args: ['--init', IMG, '--strength', '0.4', '--steps', '30'] });
+    expect(re?.intent).toBe('reimagine');
+    expect(re?.settings).toMatchObject({ strength: 0.4, quality: 'balanced' });
+    // the Scene editor's inpainting is not a Transform task
+    expect(taskFromRecord({ loki: 1, tool: 'loki-dream', prompt: 'x', args: ['--init', IMG, '--mask', 'm.png'] })).toBeNull();
+  });
+
+  test('nearestQuality knows the dream step table', () => {
+    expect(nearestQuality('dream', 8)).toBe('draft');
+    expect(nearestQuality('dream', 28)).toBe('balanced');
+    expect(nearestQuality('dream', 50)).toBe('fine');
+  });
+});

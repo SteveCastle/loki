@@ -5,6 +5,14 @@ export const isElectron =
   typeof window !== 'undefined' &&
   typeof (window as any).electron !== 'undefined';
 
+// A reference picker window (components/scene/pick-bridge.ts): the viewer booted
+// with ?pick=<request> to choose media for another window. It restores the last
+// session to browse from but never writes it back, so picking can't move the
+// viewer the user came from.
+export const isPickerWindow =
+  typeof window !== 'undefined' &&
+  new URLSearchParams(window.location.search).has('pick');
+
 // Base URL of the local Lowkey Media Server (job queue, deps, AI tasks).
 // In web mode the SPA is served by that same server, so relative URLs work
 // and this is ''. In Electron the preload discovers the configured port
@@ -144,11 +152,12 @@ async function handleResponse(res: Response): Promise<any> {
   return text ? JSON.parse(text) : undefined;
 }
 
-function jsonPost(url: string, body: any): Promise<any> {
+function jsonPost(url: string, body: any, signal?: AbortSignal): Promise<any> {
   return authFetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
+    signal,
   }).then(handleResponse);
 }
 
@@ -342,6 +351,70 @@ function channelToEndpoint(channel: string): EndpointMapping | null {
       method: 'PUT',
       argsToBody: (args) => ({ label: args[0], mode: args[1] }),
     },
+    'update-category-tag-grouping': {
+      url: '/api/categories/tag-grouping',
+      method: 'PUT',
+      argsToBody: (args) => ({ label: args[0], mode: args[1] }),
+    },
+    // Tag groups: a visual level between a category and its tags.
+    'load-tag-groups': {
+      url: '/api/taxonomy/groups',
+      method: 'GET',
+      argsToBody: (args) => ({ category: args[0] }),
+    },
+    'create-tag-group': {
+      url: '/api/tag-groups',
+      method: 'POST',
+      argsToBody: (args) => ({ categoryLabel: args[0], label: args[1] }),
+    },
+    'rename-tag-group': {
+      url: '/api/tag-groups/rename',
+      method: 'PUT',
+      argsToBody: (args) => ({
+        categoryLabel: args[0],
+        label: args[1],
+        newLabel: args[2],
+      }),
+    },
+    'delete-tag-group': {
+      url: '/api/tag-groups',
+      method: 'DELETE',
+      argsToBody: (args) => ({ categoryLabel: args[0], label: args[1] }),
+    },
+    'update-tag-group-weight': {
+      url: '/api/tag-groups/weight',
+      method: 'PUT',
+      argsToBody: (args) => ({
+        categoryLabel: args[0],
+        label: args[1],
+        weight: args[2],
+      }),
+    },
+    'update-tag-group-hidden': {
+      url: '/api/tag-groups/hidden',
+      method: 'PUT',
+      argsToBody: (args) => ({
+        categoryLabel: args[0],
+        label: args[1],
+        hidden: !!args[2],
+      }),
+    },
+    // mode null follows the category's tag view mode.
+    'update-tag-group-view-mode': {
+      url: '/api/tag-groups/view-mode',
+      method: 'PUT',
+      argsToBody: (args) => ({
+        categoryLabel: args[0],
+        label: args[1],
+        viewMode: args[2] ?? '',
+      }),
+    },
+    // groupLabel null ungroups the tag.
+    'set-tag-group': {
+      url: '/api/tags/group',
+      method: 'PUT',
+      argsToBody: (args) => ({ label: args[0], groupLabel: args[1] ?? '' }),
+    },
     'delete-category': {
       url: '/api/categories',
       method: 'DELETE',
@@ -464,7 +537,10 @@ export let loadMediaByQuery: (
 export let fetchMediaPreview: (
   path: string,
   cache: ImageCache,
-  timeStamp?: number
+  timeStamp?: number,
+  // Web only: aborts the request when the tile unmounts, which also stops
+  // the server queueing a thumbnail nobody will see.
+  signal?: AbortSignal
 ) => Promise<string | null>;
 
 export let fetchTagPreview: (tag: string) => Promise<string | null>;
@@ -597,7 +673,9 @@ if (isElectron) {
     const library = await res.json();
     return { library: library || [], cursor: 0 };
   };
-  fetchMediaPreview = window.electron.fetchMediaPreview;
+  // Three args only: an AbortSignal can't cross IPC.
+  fetchMediaPreview = (path, cache, timeStamp) =>
+    window.electron.fetchMediaPreview(path, cache, timeStamp);
   fetchTagPreview = window.electron.fetchTagPreview;
   fetchTagCount = window.electron.fetchTagCount;
   listThumbnails = window.electron.listThumbnails;
@@ -620,6 +698,9 @@ if (isElectron) {
   // Channels that are Electron-only and should silently return undefined
   const stubbedChannels = [
     'select-db',
+    // Web scans are one HTTP request with no streaming; leaving the
+    // loading state already discards the result.
+    'cancel-load-files',
     'refresh-library', 'copy-file-into-clipboard',
     'check-for-updates',
     'load-duplicates-by-path', 'merge-duplicates-by-path',
@@ -845,8 +926,8 @@ if (isElectron) {
     return { library: library || [], cursor: 0 };
   };
 
-  fetchMediaPreview = (path, cache, timeStamp) =>
-    jsonPost('/api/media/preview', { path, cache, timeStamp });
+  fetchMediaPreview = (path, cache, timeStamp, signal) =>
+    jsonPost('/api/media/preview', { path, cache, timeStamp }, signal);
 
   fetchTagPreview = (tag) =>
     jsonPost('/api/tags/preview', { label: tag });
@@ -876,4 +957,20 @@ if (isElectron) {
     jsonPost('/api/media/gif-metadata', { path: filePath });
 
   findSubtitle = async () => null;
+}
+
+// A picker window reads the session (to start where the viewer was) but every
+// write is dropped: its browsing must not become the viewer's restored state.
+if (isPickerWindow) {
+  const readOnly = sessionStore;
+  const ignore = async () => undefined;
+  sessionStore = {
+    get: (key) => readOnly.get(key),
+    getAll: () => readOnly.getAll(),
+    set: ignore,
+    setMany: ignore,
+    clear: ignore,
+    clearKeys: ignore,
+    flush: ignore,
+  };
 }

@@ -340,6 +340,10 @@ type Config struct {
 	// live (no restart) — the feed re-reads this on every page.
 	SwipeFeed feed.Tuning `json:"swipeFeed"`
 
+	// Engines says where the loki-* GPU engines run: this machine's GPU
+	// (the default), remote worker pools, or both (see engines.go).
+	Engines EnginesConfig `json:"engines"`
+
 	// Storage roots for web filesystem browsing
 	Roots []StorageRoot `json:"roots"`
 
@@ -644,6 +648,7 @@ func Load() (Config, string, error) {
 		needsFullRewrite = true
 	}
 
+	NormalizeEngines(&c.Engines)
 	if c.DBPath == "" {
 		c.DBPath = def.DBPath
 		needsSave = true
@@ -839,6 +844,7 @@ func DefaultRoot(roots []StorageRoot) *StorageRoot {
 // applyEnvOverrides overrides config fields with environment variables when set.
 // Environment variables take highest priority, overriding both defaults and config file values.
 func applyEnvOverrides(c *Config) {
+	defer applyEnginesEnv(c)
 	if v := os.Getenv("LOWKEY_DB_PATH"); v != "" {
 		c.DBPath = v
 	}
@@ -1194,7 +1200,9 @@ func Save(c Config) (string, error) {
 		}
 	}
 
-	marshaled, err := json.Marshal(c)
+	persist := c
+	persist.Engines = persistedEngines(c.Engines)
+	marshaled, err := json.Marshal(persist)
 	if err != nil {
 		return path, fmt.Errorf("failed to marshal config: %v", err)
 	}

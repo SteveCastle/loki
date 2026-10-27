@@ -171,6 +171,32 @@ fn load_image(ff: &Ffmpeg, path: &std::path::Path) -> Result<Rgb8> {
 }
 
 /// `record` is the generation record (compact JSON, see `genmeta`) stamped into the output's `comment` tag.
+// Every model goes through the worker's residency cache (a plain load on the command line, dropped after its phase).
+fn load_text_encoder(dev: &Arc<Device>, p: &std::path::Path) -> Result<std::rc::Rc<TextEncoder>> {
+    crate::worker::load(&format!("text-encoder {}", p.display()), p, || TextEncoder::load(dev.clone(), p)).context("loading text encoder")
+}
+fn load_video_vae(dev: &Arc<Device>, p: &std::path::Path) -> Result<std::rc::Rc<VideoVae>> {
+    crate::worker::load(&format!("video-vae {}", p.display()), p, || VideoVae::load(dev.clone(), p)).context("loading video VAE")
+}
+fn load_audio_vae(dev: &Arc<Device>, p: &std::path::Path) -> Result<std::rc::Rc<AudioVae>> {
+    crate::worker::load(&format!("audio-vae {}", p.display()), p, || AudioVae::load(dev.clone(), p)).context("loading audio VAE")
+}
+fn load_dit(dev: &Arc<Device>, p: &std::path::Path, sparse: bool) -> Result<std::rc::Rc<Dit>> {
+    // VSA from the first step by default (as FastH3 is trained); LOKI_VSA_SIGMA=s keeps steps above sigma s dense
+    let vsa_sigma = std::env::var("LOKI_VSA_SIGMA").ok().and_then(|v| v.parse::<f32>().ok()).unwrap_or(f32::INFINITY);
+    let sigma = sparse.then_some(vsa_sigma);
+    crate::worker::load(&format!("dit {} {sigma:?}", p.display()), p, || Dit::load_opts(dev.clone(), p, sigma)).context("loading DiT")
+}
+
+/// Worker warm-up: every model of a run, loaded in the order a run uses them (what does not fit is evicted again).
+pub fn warm(dev: &Arc<Device>, paths: &Paths, sparse: bool) -> Result<()> {
+    load_text_encoder(dev, &paths.text_encoder)?;
+    load_video_vae(dev, &paths.video_vae)?;
+    load_audio_vae(dev, &paths.audio_vae)?;
+    load_dit(dev, &paths.dit, sparse)?;
+    Ok(())
+}
+
 pub fn run(dev: Arc<Device>, req: &Request, paths: &Paths, ff: &Ffmpeg, record: Option<&str>) -> Result<()> {
     let t_all = std::time::Instant::now();
     ensure!(req.ref_images.len() <= MAX_REF_IMAGES, "at most {MAX_REF_IMAGES} reference images");
@@ -255,7 +281,7 @@ pub fn run(dev: Arc<Device>, req: &Request, paths: &Paths, ff: &Ffmpeg, record: 
     }
     let t0 = std::time::Instant::now();
     let cond = {
-        let te = TextEncoder::load(dev.clone(), &paths.text_encoder).context("loading text encoder")?;
+        let te = load_text_encoder(&dev, &paths.text_encoder)?;
         let c = te.encode(&req.prompt, &items).context("text encoding")?;
         dev.sync()?;
         crate::info!("text encoder: {} tokens in {:.1}s", c.tags.len(), t0.elapsed().as_secs_f64());
@@ -267,8 +293,8 @@ pub fn run(dev: Arc<Device>, req: &Request, paths: &Paths, ff: &Ffmpeg, record: 
     let t0 = std::time::Instant::now();
     let mut refs: Vec<RefBlock> = Vec::new();
     {
-        let vvae = VideoVae::load(dev.clone(), &paths.video_vae).context("loading video VAE")?;
-        let avae = AudioVae::load(dev.clone(), &paths.audio_vae).context("loading audio VAE")?;
+        let vvae = load_video_vae(&dev, &paths.video_vae)?;
+        let avae = load_audio_vae(&dev, &paths.audio_vae)?;
         for im in &images {
             let z = vvae.encode(&im.rgb, 1, im.h, im.w).context("encoding reference image")?;
             refs.push(RefBlock { kind: RefKind::Image, latent_t: 1, latent_h: im.h / 16, latent_w: im.w / 16, ref_audio_t: 0, video: Some(z), audio: None });
@@ -301,8 +327,7 @@ pub fn run(dev: Arc<Device>, req: &Request, paths: &Paths, ff: &Ffmpeg, record: 
     let (xv, xa) = {
         let t0 = std::time::Instant::now();
         // VSA from the first step by default (as FastH3 is trained); LOKI_VSA_SIGMA=s keeps steps above sigma s dense
-        let vsa_sigma = std::env::var("LOKI_VSA_SIGMA").ok().and_then(|v| v.parse::<f32>().ok()).unwrap_or(f32::INFINITY);
-        let dit = Dit::load_opts(dev.clone(), &paths.dit, req.sparse.then_some(vsa_sigma)).context("loading DiT")?;
+        let dit = load_dit(&dev, &paths.dit, req.sparse)?;
         let inp = DitInputs {
             text: &cond.context,
             text_tags: &cond.tags,
@@ -330,7 +355,10 @@ pub fn run(dev: Arc<Device>, req: &Request, paths: &Paths, ff: &Ffmpeg, record: 
             &sigmas,
             &xv,
             &xa,
-            &mut |v, a, sigma, ov, oa| dit.forward(&mut run, v, a, sigma, ov, oa),
+            &mut |v, a, sigma, ov, oa| {
+                crate::worker::check_cancel()?;
+                dit.forward(&mut run, v, a, sigma, ov, oa)
+            },
             &|i, total| {
                 bar.set_position(i as u64);
                 if !show_bar {
@@ -372,7 +400,7 @@ pub fn run(dev: Arc<Device>, req: &Request, paths: &Paths, ff: &Ffmpeg, record: 
                 crate::cuda::Arg::F32(0.0),
             ],
         )?;
-        let avae = AudioVae::load(dev.clone(), &paths.audio_vae)?;
+        let avae = load_audio_vae(&dev, &paths.audio_vae)?;
         let wav = avae.decode(&za, audio_t).context("decoding audio")?;
         let p = if req.out == std::path::Path::new("-") {
             std::env::temp_dir().join(format!("loki-reshoot-{}.wav", std::process::id()))
@@ -385,7 +413,7 @@ pub fn run(dev: Arc<Device>, req: &Request, paths: &Paths, ff: &Ffmpeg, record: 
     drop(xa);
     let mut writer = VideoWriter::new(ff, &req.out, req.width, req.height, wav_path.as_deref(), req.crf, record)?;
     {
-        let vvae = VideoVae::load(dev.clone(), &paths.video_vae).context("loading video VAE")?;
+        let vvae = load_video_vae(&dev, &paths.video_vae)?;
         let total = vvae
             .decode(&xv, latent_t, lh, lw, &mut |rgb, _n| writer.write(rgb))
             .context("decoding video")?;

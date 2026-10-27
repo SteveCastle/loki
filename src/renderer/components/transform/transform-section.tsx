@@ -22,17 +22,19 @@ import {
   useLastRun,
 } from './store';
 import { validateForRun } from './flow-view';
-import { GlyphReplay, IntentIcon } from './icons';
+import { GlyphReplay, GlyphScene, IntentIcon } from './icons';
+import { canStartScene, openSceneEditor } from '../scene/launch';
 import './transform-section.css';
 
 // The palette's "Transform" row: one-click presets (run with the settings you
 // used last time), the custom intents (open the flow at their prompt), the last run (“… again”: same action and settings on this
 // selection), and "All options" for the full flow. Shift-click a preset or
 // the last run to adjust it first.
-const CHIP_ORDER: IntentId[] = ['restore', 'upscale', 'wallpaper', 'angle', 'edit', 'alive'];
+// Generate needs no selection, so the row is there (with just Generate) even when nothing is selected.
+const CHIP_ORDER: IntentId[] = ['restore', 'upscale', 'wallpaper', 'angle', 'edit', 'reimagine', 'alive', 'generate'];
 
 export interface TransformSectionProps {
-  /** The working set: the right-clicked file plus any multi-selection. */
+  /** The working set: the right-clicked file plus any multi-selection ([] = nothing: only Generate is offered). */
   paths: string[];
   authToken: string | null;
   /** Seconds into the on-screen video when the single target is the one playing. */
@@ -72,7 +74,7 @@ export default function TransformSection(props: TransformSectionProps) {
     setBusy(key);
     try {
       await submitJobs(built.jobs, { mediaServerBase, authToken });
-      saveLastRun(id, settings);
+      saveLastRun(id, settings, paths);
       rememberTemplateRun(id, settings);
       onDone();
     } catch (e) {
@@ -142,8 +144,24 @@ export default function TransformSection(props: TransformSectionProps) {
             {busy === c.id ? 'Queuing…' : chipLabel(c.id, hasVideoOnly)}
           </button>
         ))}
+        {paths.length === 1 && canStartScene(paths[0]) && (
+          <button
+            type="button"
+            className="type-chip transform-chip"
+            disabled={busy !== null}
+            onClick={() => {
+              openSceneEditor(paths[0], getVideoTime());
+              onDone();
+            }}
+            title="Scene editor (opens a window): mask parts of the picture, edit them, then animate them one by one"
+          >
+            <GlyphScene size={13} />
+            Scene…
+          </button>
+        )}
       </div>
       <span className="merge-selection-note">
+        {paths.length === 0 ? 'nothing selected: Generate makes a new picture from a description · ' : ''}
         {hasVideoOnly ? 'acts on the frame you are looking at · ' : ''}
         {last && lastOk ? '“again” repeats your last run · ' : ''}presets run with your last settings · Shift-click to adjust first
       </span>
@@ -153,6 +171,7 @@ export default function TransformSection(props: TransformSectionProps) {
 
 function chipTitle(id: IntentId): string {
   const def = intentById(id);
+  if (id === 'generate') return `Custom: ${def.tagline}. Opens the prompt box; the selection is left alone.`;
   if (intentKind(id) === 'custom') return `Custom: ${def.tagline}. Opens the prompt box.`;
   if (def.oneClick) return `Preset: ${def.tagline}. Click to run with your last settings, Shift-click to adjust first.`;
   return `Preset: ${def.tagline}. Opens its settings.`;
@@ -167,6 +186,8 @@ function chipLabel(id: IntentId, videoFrame: boolean): string {
   if (id === 'alive') return 'Animate…';
   if (id === 'angle') return 'New angle…';
   if (id === 'direct') return 'Direct…';
+  if (id === 'generate') return 'Generate…';
+  if (id === 'reimagine') return 'Reimagine…';
   if (id === 'wallpaper') {
     const s = settingsFor('wallpaper', loadRemembered('wallpaper'));
     return s.wallpaperTarget === 'phone' ? 'Phone wallpaper' : 'Wallpaper';

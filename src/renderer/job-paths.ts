@@ -44,11 +44,14 @@ type LibraryServiceLike = {
 /**
  * Show a media file: move the cursor to it when it is in the current library,
  * otherwise open its folder from disk with it selected (as clicking a job
- * toast's file path does).
+ * toast's file path does). Either way a type filter that would hide the file
+ * is cleared.
  */
 export function navigateToMedia(libraryService: LibraryServiceLike, path: string): void {
   const library = libraryService.state?.context?.library;
   const inLibrary = Array.isArray(library) && library.some((item) => item?.path === path);
-  if (inLibrary) libraryService.send('RESET_CURSOR', { currentItem: { path } });
+  if (inLibrary) {
+    libraryService.send('RESET_CURSOR', { currentItem: { path }, reveal: true });
+  }
   else libraryService.send('SET_FILE', { path });
 }

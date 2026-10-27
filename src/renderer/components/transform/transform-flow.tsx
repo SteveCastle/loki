@@ -1,4 +1,4 @@
-import React, { useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useSelector } from '@xstate/react';
 import { GlobalStateContext } from '../../state';
@@ -31,6 +31,8 @@ import {
 import { EngineSetupDeferred } from './engine-setup';
 import { markUsed, savedTransformKey } from '../../saved-recent';
 import { TransformFlowView, validateForRun, validateShape, type PromptPreviewState } from './flow-view';
+import { canStartScene, openSceneEditor } from '../scene/launch';
+import { requestLibraryPick } from '../scene/pick-bridge';
 
 // ---------------------------------------------------------------------------
 // Host (container): owns phase/intent/settings state, talks to the server
@@ -130,7 +132,7 @@ function FlowSession({ req }: { req: NonNullable<ReturnType<typeof useFlowReques
         const res = await fetch(`${mediaServerBase}/jobs/list`, { headers: { Authorization: `Bearer ${authToken}` }, signal: ctl.signal });
         if (!res.ok) return;
         const jobs = (await res.json()) as Array<{ command: string; state: string }>;
-        setQueueAhead(jobs.filter((j) => ['retouch', 'reshoot', '4kify'].includes(j.command) && (j.state === 'pending' || j.state === 'in_progress')).length);
+        setQueueAhead(jobs.filter((j) => ['retouch', 'reshoot', 'dream', '4kify'].includes(j.command) && (j.state === 'pending' || j.state === 'in_progress')).length);
       } catch {
         // unknown: show nothing
       }
@@ -141,7 +143,8 @@ function FlowSession({ req }: { req: NonNullable<ReturnType<typeof useFlowReques
   // The prompt the engine will run, for the review step: the first job as /create would get it, minus any
   // hand-written override (the panel shows that itself; the generated prompt is what "Edit" starts from).
   const previewBody = useMemo(() => {
-    if (phase !== 'review' || !intent) return null;
+    // loki-dream sends the prompt as written: there is no expansion to ask the engine for.
+    if (phase !== 'review' || !intent || intentById(intent).engine === 'dream') return null;
     const built = buildJobs(intent, { ...settings, manualPrompt: null }, paths, { videoTime: req.videoTime, random: () => 0.5 });
     const job = built.jobs[0];
     if (!job) return null;
@@ -149,7 +152,10 @@ function FlowSession({ req }: { req: NonNullable<ReturnType<typeof useFlowReques
   }, [phase, intent, settings, paths, req.videoTime]);
   const [preview, setPreview] = useState<PromptPreviewState>({ status: 'idle' });
   useEffect(() => {
-    if (!previewBody) return undefined;
+    if (!previewBody) {
+      setPreview({ status: 'idle' });
+      return undefined;
+    }
     const ctl = new AbortController();
     setPreview((prev) => ({ status: 'loading', data: prev.data }));
     // Debounced (an Edit prompt typed in the review step changes the body), and bounded like every server call.
@@ -213,6 +219,31 @@ function FlowSession({ req }: { req: NonNullable<ReturnType<typeof useFlowReques
     [intent, paths]
   );
 
+  // Add references by browsing the library in a picker window (the viewer, in a window of its own) while this
+  // modal stays put over the media it was opened for; the picks come back added after the inputs. The answer can
+  // arrive after edits here, so it applies to the inputs as they are then.
+  const [picking, setPicking] = useState(false);
+  const cancelPick = useRef<(() => void) | null>(null);
+  const latest = useRef({ paths, changePaths });
+  latest.current = { paths, changePaths };
+  useEffect(() => () => cancelPick.current?.(), []);
+  const addReferences = useCallback(() => {
+    if (!intent || !pinnable(intent)) return;
+    const name = (paths[0] || '').split(/[\\/]/).pop() || '';
+    cancelPick.current?.();
+    const { result, cancel } = requestLibraryPick(intent === 'edit' ? ['image'] : ['image', 'video', 'audio'], `${intentById(intent).title} · ${name}`);
+    cancelPick.current = cancel;
+    setPicking(true);
+    result.then((picked) => {
+      if (cancelPick.current !== cancel) return; // replaced by a newer pick
+      cancelPick.current = null;
+      setPicking(false);
+      const now = latest.current;
+      const add = (picked || []).filter((p) => !now.paths.includes(p));
+      if (add.length) now.changePaths([...now.paths, ...add]);
+    });
+  }, [intent, paths]);
+
   // Pins stay for the next flow (also when they arrive with a saved prompt or the last run).
   useEffect(() => {
     if (intent && pinnable(intent)) savePins(intent, settings.pinned || []);
@@ -237,7 +268,7 @@ function FlowSession({ req }: { req: NonNullable<ReturnType<typeof useFlowReques
     try {
       await submitJobs(built.jobs, { mediaServerBase, authToken });
       saveRemembered(intent, settings);
-      saveLastRun(intent, settings);
+      saveLastRun(intent, settings, paths);
       rememberTemplateRun(intent, settings);
       setQueuedCount(built.jobs.length);
       setStatus('done');
@@ -293,6 +324,14 @@ function FlowSession({ req }: { req: NonNullable<ReturnType<typeof useFlowReques
       onIntent={chooseIntent}
       onTemplate={chooseTemplate}
       onLoadRun={loadRun}
+      onOpenScene={
+        paths.length === 1 && canStartScene(paths[0])
+          ? () => {
+              openSceneEditor(paths[0], req.videoTime);
+              closeTransformFlow();
+            }
+          : undefined
+      }
       onPhase={(p) => {
         setError(undefined);
         setPhase(p);
@@ -302,6 +341,8 @@ function FlowSession({ req }: { req: NonNullable<ReturnType<typeof useFlowReques
       onRemovePath={(p) => paths.length > 1 && changePaths(paths.filter((x) => x !== p))}
       onMakeFirst={(p) => changePaths([p, ...paths.filter((x) => x !== p)])}
       onPin={pin}
+      onAddReferences={addReferences}
+      pickingReferences={picking}
       preview={preview}
       onAgain={() => {
         setStatus('idle');

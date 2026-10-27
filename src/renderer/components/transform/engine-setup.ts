@@ -14,12 +14,13 @@ import {
 } from '../../onboarding/api';
 import type { JobRequest } from './intents';
 
-export type EngineKind = 'retouch' | 'reshoot';
+export type EngineKind = 'retouch' | 'reshoot' | 'dream';
 
 /** Dependency ids per engine: [executable, model weights]. */
 export const ENGINES: Record<EngineKind, { title: string; ids: [string, string] }> = {
   retouch: { title: 'AI image editing', ids: ['loki-retouch', 'qwen-image-2.1'] },
   reshoot: { title: 'AI video from references', ids: ['loki-reshoot', 'minimax-h3-ref2va'] },
+  dream: { title: 'AI image generation', ids: ['loki-dream', 'kromoss'] },
 };
 
 /** Which engine a job needs, from the task id at the start of its input. */
@@ -27,6 +28,7 @@ export function engineOfJob(job: Pick<JobRequest, 'input'>): EngineKind | null {
   const task = job.input.trim().split(/\s+/)[0];
   if (task === 'retouch' || task === '4kify') return 'retouch';
   if (task === 'reshoot') return 'reshoot';
+  if (task === 'dream') return 'dream';
   return null;
 }
 

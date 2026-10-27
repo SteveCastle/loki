@@ -42,3 +42,30 @@ export function cursorAfterRemoval<T extends LibraryEntry>(
   const lastIndex = library.length - 2; // length after the removal, minus one
   return Math.max(0, Math.min(shifted, lastIndex));
 }
+
+/**
+ * Index of the first item whose path is `target`, compared the way the app
+ * compares paths everywhere (normalized, case-insensitive) — or -1.
+ *
+ * Cursor lookups run over the whole view on every filter/sort change and
+ * every job-output jump, and normalizing BOTH sides per item made that ~2M
+ * path.normalize calls at a million items. Paths in a view almost always
+ * match the target verbatim, so an exact pass runs first and the normalized
+ * comparison (target normalized once) is only the fallback.
+ */
+export function findPathIndex<T extends LibraryEntry>(
+  items: T[],
+  target: string | undefined | null,
+  normalize: (p: string) => string
+): number {
+  if (!target) return -1;
+  for (let i = 0; i < items.length; i++) {
+    if (items[i]?.path === target) return i;
+  }
+  const want = normalize(target).toLowerCase();
+  for (let i = 0; i < items.length; i++) {
+    const p = items[i]?.path;
+    if (p && normalize(p).toLowerCase() === want) return i;
+  }
+  return -1;
+}

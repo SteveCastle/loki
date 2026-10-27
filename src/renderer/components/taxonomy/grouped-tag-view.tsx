@@ -1,0 +1,260 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import useComponentSize from '@rehooks/component-size';
+import {
+  defaultRangeExtractor,
+  Range,
+  useVirtualizer,
+} from '@tanstack/react-virtual';
+import { useDragLayer } from 'react-dnd';
+import useDragAutoScroll from '../../hooks/useDragAutoScroll';
+import Tag from './tag';
+import TagListRow from './tag-list-row';
+import TagGroupHeader, { TAG_GROUP_DND_TYPE } from './tag-group-header';
+import {
+  TagGroup,
+  TagViewMode,
+  groupTags,
+  sectionViewMode,
+  flattenGroupedRows,
+  sortGroups,
+  loadCollapsedGroups,
+  saveCollapsedGroups,
+} from './tag-groups';
+
+type Concept = {
+  label: string;
+  weight: number;
+  category: string;
+  group?: string | null;
+  thumbnail_path_600?: string | null;
+};
+
+type Props = {
+  category: string;
+  tags: Concept[];
+  groups: TagGroup[];
+  // The viewer's showHiddenTagGroups setting: hidden groups are dropped
+  // unless it is on, then shown dimmed so they can be unhidden.
+  showHidden: boolean;
+  // The category's mode; a group's own viewMode overrides it.
+  viewMode: TagViewMode;
+  selectedTags: string[];
+  isDisabled: boolean;
+  handleEditAction: (tag: string) => void;
+  onAddTagToGroup: (group: string) => void;
+  onRenameGroup: (group: string) => void;
+};
+
+// Same metrics as VirtualizedTagGrid / TagListView so a grouped category
+// looks like the flat one with headers slotted in.
+const MIN_COLUMN_WIDTH = 100;
+const CARD_HEIGHT = 60;
+const CARD_GAP = 8;
+const LIST_ROW_HEIGHT = 30;
+const HEADER_HEIGHT = 30;
+
+// One category's tags under collapsible group headers. Always virtualized —
+// header rows and tag rows share one virtualizer, so a 10k-tag category
+// renders the same handful of rows whether it is grouped or not.
+export default function GroupedTagView({
+  category,
+  tags,
+  groups,
+  showHidden,
+  viewMode,
+  selectedTags,
+  isDisabled,
+  handleEditAction,
+  onAddTagToGroup,
+  onRenameGroup,
+}: Props) {
+  const parentRef = useRef<HTMLDivElement>(null);
+  const { width } = useComponentSize(parentRef);
+  // Dragging a tag (or a group header) toward the top or bottom edge scrolls
+  // the list, so a far-off group is reachable mid-drag.
+  useDragAutoScroll(parentRef, ['TAG', TAG_GROUP_DND_TYPE]);
+  // Card columns for card sections; list sections always take one per row.
+  const columns = Math.max(
+    1,
+    Math.floor((width || MIN_COLUMN_WIDTH) / MIN_COLUMN_WIDTH)
+  );
+
+  const [collapsed, setCollapsed] = useState<Set<string>>(() =>
+    loadCollapsedGroups(category)
+  );
+  useEffect(() => {
+    setCollapsed(loadCollapsedGroups(category));
+  }, [category]);
+  const toggleCollapsed = useCallback(
+    (key: string) => {
+      setCollapsed((prev) => {
+        const next = new Set(prev);
+        if (!next.delete(key)) next.add(key);
+        saveCollapsedGroups(category, next);
+        return next;
+      });
+    },
+    [category]
+  );
+
+  const orderedGroups = useMemo(() => sortGroups(groups), [groups]);
+  const sections = useMemo(
+    () => groupTags(tags, orderedGroups, showHidden) ?? [],
+    [tags, orderedGroups, showHidden]
+  );
+  const rows = useMemo(
+    () => flattenGroupedRows(sections, collapsed, columns, viewMode),
+    [sections, collapsed, columns, viewMode]
+  );
+  // Both callbacks must be stable between renders: the virtualizer recomputes
+  // its measurements whenever either identity changes, and an inline
+  // getItemKey re-renders forever. They change exactly when the rows do (a
+  // group collapses, the column count changes), which is when the header
+  // positions move.
+  const getItemKey = useCallback(
+    (index: number) => rows[index]?.key ?? index,
+    [rows]
+  );
+  const estimateSize = useCallback(
+    (index: number) => {
+      const row = rows[index];
+      if (!row || row.type === 'header') return HEADER_HEIGHT;
+      return row.mode === 'list' ? LIST_ROW_HEIGHT : CARD_HEIGHT + CARD_GAP;
+    },
+    [rows]
+  );
+
+  // The tag being dragged, if it is one of ours. Item and type are fixed for a
+  // whole drag, so this re-renders at drag start and end, not per dragover.
+  const draggedLabel = useDragLayer((monitor) => {
+    if (!monitor.isDragging() || monitor.getItemType() !== 'TAG') return null;
+    const item = monitor.getItem() as { label?: string; category?: string };
+    return item?.category === category ? item.label ?? null : null;
+  });
+  // Keep the dragged tag's row mounted while auto-scroll carries it out of
+  // view: unmounting a drag source mid-drag can end the HTML5 drag.
+  const pinnedIndex = useMemo(
+    () =>
+      draggedLabel === null
+        ? -1
+        : rows.findIndex(
+            (r) =>
+              r.type === 'tags' && r.tags.some((t) => t.label === draggedLabel)
+          ),
+    [rows, draggedLabel]
+  );
+  const rangeExtractor = useCallback(
+    (range: Range) => {
+      const indexes = defaultRangeExtractor(range);
+      if (pinnedIndex < 0 || indexes.includes(pinnedIndex)) return indexes;
+      return [...indexes, pinnedIndex].sort((a, b) => a - b);
+    },
+    [pinnedIndex]
+  );
+
+  const rowVirtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => parentRef.current,
+    getItemKey,
+    estimateSize,
+    rangeExtractor,
+    overscan: 6,
+  });
+
+  return (
+    <div
+      className={`${
+        viewMode === 'list' ? 'tag-list-view' : 'tags virtualized'
+      } tag-groups`}
+      ref={parentRef}
+    >
+      <div
+        style={{
+          height: `${rowVirtualizer.getTotalSize()}px`,
+          width: '100%',
+          position: 'relative',
+        }}
+      >
+        {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+          const row = rows[virtualRow.index];
+          if (!row) return null;
+          const style = {
+            position: 'absolute' as const,
+            top: 0,
+            left: 0,
+            width: '100%',
+            transform: `translateY(${virtualRow.start}px)`,
+          };
+          if (row.type === 'header') {
+            return (
+              <div
+                key={virtualRow.key}
+                style={{ ...style, height: `${HEADER_HEIGHT}px` }}
+              >
+                <TagGroupHeader
+                  category={category}
+                  group={row.section.group}
+                  groups={orderedGroups}
+                  count={row.section.tags.length}
+                  collapsed={row.collapsed}
+                  hidden={row.section.hidden}
+                  viewMode={sectionViewMode(row.section, viewMode)}
+                  categoryViewMode={viewMode}
+                  onToggleCollapsed={() => toggleCollapsed(row.section.key)}
+                  onAddTag={onAddTagToGroup}
+                  onRename={onRenameGroup}
+                  isDisabled={isDisabled}
+                />
+              </div>
+            );
+          }
+          const rowHidden = row.section.hidden ? ' hidden-group-row' : '';
+          if (row.mode === 'list') {
+            const tag = row.tags[0];
+            return (
+              <div
+                key={virtualRow.key}
+                className={rowHidden || undefined}
+                style={{ ...style, height: `${LIST_ROW_HEIGHT}px` }}
+              >
+                <TagListRow
+                  tag={tag}
+                  tags={row.section.tags}
+                  group={row.section.group}
+                  active={selectedTags.includes(tag.label)}
+                  isDisabled={isDisabled}
+                  handleEditAction={handleEditAction}
+                />
+              </div>
+            );
+          }
+          return (
+            <div
+              key={virtualRow.key}
+              className={`virtualized-row${rowHidden}`}
+              style={{
+                ...style,
+                height: `${CARD_HEIGHT}px`,
+                display: 'grid',
+                gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
+                gap: `${CARD_GAP}px`,
+              }}
+            >
+              {row.tags.map((tag) => (
+                <Tag
+                  key={tag.label}
+                  tag={tag}
+                  tags={row.section.tags}
+                  group={row.section.group}
+                  active={selectedTags.includes(tag.label)}
+                  isDisabled={isDisabled}
+                  handleEditAction={handleEditAction}
+                />
+              ))}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}

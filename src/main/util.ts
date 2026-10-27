@@ -11,5 +11,6 @@ export function resolveHtmlPath(htmlFileName: string, search?: string) {
     }
     return url.href;
   }
-  return `file://${path.resolve(__dirname, '../renderer/', htmlFileName)}`;
+  const file = `file://${path.resolve(__dirname, '../renderer/', htmlFileName)}`;
+  return search ? `${file}${search.startsWith('?') ? '' : '?'}${search}` : file;
 }

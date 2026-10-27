@@ -1,8 +1,8 @@
 # loki- toolkit conventions
 
 Small tools, one job each, composable with each other and with ordinary Unix tools. Every `loki-*` tool follows these rules
-(`loki-retouch`: image editing, `loki-reshoot`: references -> video with sound; `lokictl`, the Lowkey Media Server client, is a
-separate tool and not part of this contract).
+(`loki-retouch`: image editing, `loki-reshoot`: references -> video with sound, `loki-segment`: masks of images and tracked video
+objects, `loki-dream`: text -> image; `lokictl`, the Lowkey Media Server client, is a separate tool and not part of this contract).
 
 ## Streams
 - **stdin**: an input may be `-`. The tool reads that one input from stdin (at most one per run). Images are sniffed from content.
@@ -22,7 +22,7 @@ separate tool and not part of this contract).
 Every result carries one JSON object describing the run, so a file found months later still says what made it. The Lowkey Media
 Viewer and Server show it in the metadata panel's Generation section (next to ComfyUI / WebUI records), with the prompt, the
 settings, the inputs and a copyable command line. Where it lives:
-- **PNG** (loki-retouch): an `iTXt` chunk with the keyword `loki`, before the image data.
+- **PNG** (loki-retouch, loki-segment masks): an `iTXt` chunk with the keyword `loki`, before the image data.
 - **mp4** (loki-reshoot): the container's `comment` tag (`ffprobe -show_entries format_tags=comment`).
 
 The record is recognised by two marker fields and is otherwise open; fields are added over time, never renamed or re-typed,
@@ -48,9 +48,34 @@ there (`{"kind": "loki-transform", "v": 1, "intent", "settings", "paths"}`: the 
 and the job's inputs in order), which is what lets the Generation panel save a result as a Transform task again
 (`src/renderer/components/transform/recipe.ts`). The media server only passes `--meta` to an engine whose `--help` lists it.
 
+## Worker mode (`--worker`)
+Every tool can run as a resident process for a supervisor (`loki-worker`, see [`worker/`](worker)): `loki-<tool> --worker`
+keeps its models on the GPU between requests instead of loading them for every run. It speaks JSON lines:
+- **stdin**: one request per line. A run is `{"id": "j1", "args": ["-p", "...", "-o", "out.png", "in.png"]}` — exactly the
+  command line the tool takes (without the executable). Other commands: `{"id", "cmd": "warm"}` (resolve, download and load
+  the models; loki-reshoot takes `"model": "fast"`), `{"id", "cmd": "evict"}` (drop every idle model), `{"id", "cmd":
+  "status"}`, and `{"cancel": "j1"}`, which stops the named run at its next sampling step. loki-segment adds named
+  sessions on the same resident model: `{"id", "cmd": "session", "session": NAME, "req": {...a --serve request...}}` and
+  `{"cmd": "close-session", "session": NAME}`.
+- **stdout**: protocol events only. `{"event": "ready", "tool", "version", "model", "protocol": 1, "gpu"}` once at start;
+  per request the run's result lines as `{"id", "event": "stdout", "line"}` (sent when the run ends), then `{"id", "event":
+  "done", "ok", "error", "oom", "cancelled", "reply", "secs", "resident": [{"key", "mb"}], "gpu": {"total_mb", "free_mb"}}`.
+- **stderr**: the run's progress log exactly as on the command line, closed by the sentinel line `\x1eloki-worker done <id>`
+  so a supervisor can attribute every line to its request.
+- **memory**: before a load, the least recently used models the current request is not using are evicted until the load
+  fits with `LOKI_WORKER_RESERVE_MB` (default 1.5-5 GB per tool) left for activations; a run that still runs out of memory is
+  retried once with every idle model evicted. On a 24 GB card the big phases still take turns; on 48-80 GB cards a tool's
+  whole pipeline stays loaded and a warm run skips loading entirely.
+- **failure**: a CUDA error that poisons the context makes the tool report the request and exit with status 3; the
+  supervisor restarts it. Input from stdin (`-`) and output to stdout (`-o -`) are refused in worker mode.
+
 ## Environment
 - `LOKI_MODELS`: extra folder(s) searched for model files (after the binary's folder and `./models`; an OS path list, `;` on
   Windows, `:` on Linux).
+- `LOKI_MODELS_DOWNLOAD`: where missing model files are downloaded (default `<binary dir>/models`). Downloads are resumable
+  and take a lock (`<file>.lock`), so several workers sharing one models volume fetch each file once.
+- `LOKI_CUDA_ARCHS` / `LOKI_CUDA_PTX` (build time): SASS architectures (default `89`) and the PTX fallback (default `80`).
+  The FP8 kernels of loki-retouch, loki-reshoot and loki-dream need 89 or later; the worker image builds `89,90` + PTX `90`.
 - `LOKI_PROFILE=1`: per-kernel GPU timing report on stderr. Other `LOKI_*` variables are engine tuning knobs (see each README).
 
 ## Models and hardware

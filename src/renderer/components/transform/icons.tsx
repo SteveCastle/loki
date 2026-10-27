@@ -53,6 +53,22 @@ const P: Record<IntentId, React.ReactNode> = {
       <path d="M4 8l2.5-4 3 1.2L12 3l3 1.2L17.5 3 20 8" />
     </>
   ),
+  // an empty frame with a spark: a picture from nothing
+  generate: (
+    <>
+      <rect x="3" y="6" width="14" height="14" rx="2" strokeDasharray="2.5 2" />
+      <path d="M18 2l1 2.5 2.5 1-2.5 1-1 2.5-1-2.5-2.5-1 2.5-1z" />
+      <path d="M6 17l3.5-4 2.5 2.5 1.5-1.5 2 3" />
+    </>
+  ),
+  // a picture with a brush stroke sweeping over it
+  reimagine: (
+    <>
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d="M3 15l5-5 4 4" />
+      <path d="M10 20c2-4 5.5-7.5 11-9" />
+    </>
+  ),
 };
 
 export function IntentIcon({ id, size = 22 }: { id: IntentId; size?: number }) {
@@ -118,6 +134,17 @@ export function GlyphReplay({ size = 13 }: { size?: number }) {
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M3 12a9 9 0 1 0 3-6.7" />
       <path d="M3 4v5h5" />
+    </svg>
+  );
+}
+
+/** The Scene editor: a picture with a masked region and a motion wave. */
+export function GlyphScene({ size = 22 }: { size?: number }) {
+  return (
+    <svg className="ts-icon" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d="M7 9.5c1.5-2 3-2 4.5 0s3 2 4.5 0" />
+      <rect x="6" y="12.5" width="7" height="5" rx="1" strokeDasharray="2 1.6" />
     </svg>
   );
 }

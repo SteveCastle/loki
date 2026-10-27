@@ -49,6 +49,7 @@ export type SettingKey =
   | 'showTags'
   | 'hideSuggestedTags'
   | 'hidePeopleTags'
+  | 'showHiddenTagGroups'
   | 'showFileInfo'
   | 'showControls'
   | 'recursive'
@@ -81,6 +82,7 @@ export type Settings = {
   showTags: ShowTagOptions;
   hideSuggestedTags: boolean;
   hidePeopleTags: boolean;
+  showHiddenTagGroups: boolean;
   showFileInfo: ShowFileInfoOptions;
   showControls: boolean;
   recursive: boolean;
@@ -333,6 +335,24 @@ export const HIDE_SUGGESTED_TAGS = {
 // hiding one kind doesn't force hiding the other.
 export const HIDE_PEOPLE_TAGS = {
   title: 'Hide People (Face) Tags',
+  reload: false,
+  display: 'general',
+  options: {
+    yes: {
+      label: 'Yes',
+      value: true,
+    },
+    no: {
+      label: 'No',
+      value: false,
+    },
+  },
+};
+
+// Tag groups marked hidden are left out of the taxonomy panel; this brings
+// them back (dimmed, so they can be unhidden). Per viewer, not per library.
+export const SHOW_HIDDEN_TAG_GROUPS = {
+  title: 'Show Hidden Tag Groups',
   reload: false,
   display: 'general',
   options: {
@@ -723,6 +743,7 @@ export const SETTINGS: SettingsObject = {
   showTags: SHOW_TAGS,
   hideSuggestedTags: HIDE_SUGGESTED_TAGS,
   hidePeopleTags: HIDE_PEOPLE_TAGS,
+  showHiddenTagGroups: SHOW_HIDDEN_TAG_GROUPS,
   showFileInfo: SHOW_FILE_INFO,
   showControls: SHOW_CONTROLS,
   recursive: RECURSIVE,

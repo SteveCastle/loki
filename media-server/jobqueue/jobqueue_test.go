@@ -3,6 +3,7 @@ package jobqueue
 import (
 	"database/sql"
 	"testing"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -228,8 +229,13 @@ func TestCancelReleasesLock(t *testing.T) {
 		t.Fatal("Expected 1")
 	}
 
-	// Cancel 1 (must be in progress to release lock from running counts)
+	// Cancel 1: its slot stays held until the task returns...
 	q.CancelJob(id1)
+	if job, _ := q.ClaimJob(); job != nil {
+		t.Fatalf("claimed %s while the cancelled task still holds the slot", job.ID)
+	}
+	// ...which the runner reports.
+	q.ReleaseCancelled(id1)
 
 	// Claim 2 should succeed
 	job, _ = q.ClaimJob()
@@ -257,5 +263,42 @@ func TestRemoveReleasesLock(t *testing.T) {
 	job, _ = q.ClaimJob()
 	if job == nil || job.ID != id2 {
 		t.Errorf("Expected 2, got %v", job)
+	}
+}
+
+// AddJob must never block while holding q.mu, even when the runner has
+// fallen behind and the Signal buffer is full: the runner takes q.mu after
+// receiving, so a blocking send there deadlocked the whole queue.
+func TestAddJobDoesNotBlockOnFullSignal(t *testing.T) {
+	q := setupTestQueue(t)
+	done := make(chan struct{})
+	go func() {
+		for i := 0; i < cap(q.Signal)+50; i++ {
+			if _, err := q.AddJob("", "wait", nil, "", nil); err != nil {
+				t.Error(err)
+				break
+			}
+		}
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("AddJob blocked on a full Signal channel")
+	}
+	// The queue lock must be free for the runner.
+	if _, err := q.ClaimJob(); err != nil {
+		t.Fatal(err)
+	}
+	// Every add still produces its signal once the runner drains.
+	got := 0
+	deadline := time.After(5 * time.Second)
+	for got < cap(q.Signal)+50 {
+		select {
+		case <-q.Signal:
+			got++
+		case <-deadline:
+			t.Fatalf("got %d signals, want %d", got, cap(q.Signal)+50)
+		}
 	}
 }
