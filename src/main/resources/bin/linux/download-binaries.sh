@@ -18,7 +18,9 @@ trap "rm -rf $TEMP_DIR" EXIT
 
 # --- FFmpeg ---
 echo "Downloading FFmpeg from: $FFMPEG_URL"
-curl -L "$FFMPEG_URL" -o "$TEMP_DIR/ffmpeg.tar.xz"
+# BtbN re-uploads its "latest" assets daily, so a fetch can 404 mid-swap:
+# -f fails on it instead of saving the error page, and retries ride it out.
+curl -fL --retry 5 --retry-delay 15 --retry-all-errors "$FFMPEG_URL" -o "$TEMP_DIR/ffmpeg.tar.xz"
 echo "Extracting FFmpeg..."
 tar -xf "$TEMP_DIR/ffmpeg.tar.xz" -C "$TEMP_DIR"
 cp "$TEMP_DIR"/ffmpeg-*/bin/ffmpeg "$SCRIPT_DIR/"
@@ -27,7 +29,7 @@ chmod +x "$SCRIPT_DIR/ffmpeg" "$SCRIPT_DIR/ffprobe"
 
 # --- UnRAR ---
 echo "Downloading UnRAR from: $UNRAR_URL"
-curl -L "$UNRAR_URL" -o "$TEMP_DIR/rar.tar.gz"
+curl -fL --retry 5 --retry-delay 15 --retry-all-errors "$UNRAR_URL" -o "$TEMP_DIR/rar.tar.gz"
 echo "Extracting UnRAR..."
 tar -xzf "$TEMP_DIR/rar.tar.gz" -C "$TEMP_DIR"
 cp "$TEMP_DIR/rar/unrar" "$SCRIPT_DIR/"
