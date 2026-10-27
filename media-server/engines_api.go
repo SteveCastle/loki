@@ -1,7 +1,7 @@
 package main
 
 // GPU worker pools: where the loki-* engines run (Config.Engines), their
-// live status, and the Workers admin page. Untagged so every platform main
+// live status, and the GPU Engines tab of the Config page. Untagged so every platform main
 // registers it (registerEngineRoutes).
 
 import (
@@ -119,14 +119,19 @@ func registerEngineRoutes(mux *http.ServeMux, deps *Dependencies) {
 	admin := func(fn http.HandlerFunc) http.HandlerFunc {
 		return renderer.ApplyMiddlewares(fn, renderer.RoleAdmin)
 	}
+	// the Workers page became the Config page's GPU Engines tab
 	mux.HandleFunc("GET /workers", admin(func(w http.ResponseWriter, r *http.Request) {
-		if err := renderer.Templates().ExecuteTemplate(w, "workers", nil); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-		}
+		http.Redirect(w, r, "/config#engines", http.StatusFound)
 	}))
-	// GET: the engines section (secrets redacted) and the live status.
+	// GET: the engines section (secrets redacted) and the live status;
+	// ?local=1 adds this machine's engine installs (versions cost a
+	// subprocess the first time).
 	mux.HandleFunc("GET /api/engines", admin(func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, map[string]any{"config": redactEngines(currentConfig.Engines), "status": tasks.EnginesStatus()})
+		out := map[string]any{"config": redactEngines(currentConfig.Engines), "status": tasks.EnginesStatus()}
+		if r.URL.Query().Get("local") == "1" {
+			out["local"] = tasks.LocalEngines()
+		}
+		writeJSON(w, out)
 	}))
 	// PUT: replace the engines section (redacted secrets keep their values).
 	mux.HandleFunc("PUT /api/engines", admin(func(w http.ResponseWriter, r *http.Request) {

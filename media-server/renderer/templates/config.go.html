@@ -824,6 +824,7 @@
         }
       }
     </style>
+    {{ template "engines-panel-style" . }}
   </head>
   <body>
     <div class="container">
@@ -846,6 +847,9 @@
           </button>
           <button class="tab-button" data-tab="transcription">
             Transcription
+          </button>
+          <button class="tab-button" data-tab="engines">
+            GPU Engines
           </button>
           <button class="tab-button" data-tab="access">
             Access
@@ -1999,6 +2003,10 @@
           </div>
         </div>
 
+        <div id="tab-engines" class="tab-content">
+          {{ template "engines-panel" . }}
+        </div>
+
         <div id="tab-dependencies" class="tab-content">
           <div id="dependencies-content" style="min-height: 400px">
             <div
@@ -2184,6 +2192,13 @@
           if (tabName === 'dependencies' && !window.dependenciesLoaded) {
             loadDependencies();
           }
+          // The GPU Engines tab saves on its own (/api/engines) and polls
+          // worker status only while it shows.
+          if (tabName === 'engines') window.enginesPanel.show();
+          else window.enginesPanel.hide();
+          document.querySelector('.config-footer').style.display =
+            tabName === 'engines' ? 'none' : '';
+          history.replaceState(null, '', '#' + tabName);
         });
       });
 
@@ -3140,6 +3155,14 @@
       // Initial load
       loadUsers();
       loadKeys();
+
+      // Deep link: /config#engines opens that tab.
+      {
+        const b = document.querySelector(
+          `.tab-button[data-tab="${location.hash.slice(1)}"]`
+        );
+        if (b) b.click();
+      }
     </script>
   </body>
 </html>

@@ -10,7 +10,7 @@ import (
 	"github.com/stevecastle/shrike/workerapi"
 )
 
-// EngineTargetStatus is one place engines run, as the Workers page shows it.
+// EngineTargetStatus is one place engines run, as the GPU Engines config tab shows it.
 type EngineTargetStatus struct {
 	Key      string                  `json:"key"`
 	Pool     string                  `json:"pool,omitempty"`
@@ -32,6 +32,7 @@ type EngineStatus struct {
 	Strategy  string               `json:"strategy"`
 	Routes    map[string]string    `json:"routes,omitempty"`
 	Fallback  bool                 `json:"fallback"`
+	LocalOnly bool                 `json:"localOnly"`
 	Placement map[string]string    `json:"placement"`
 	Targets   []EngineTargetStatus `json:"targets"`
 }
@@ -43,7 +44,7 @@ func EnginesStatus() EngineStatus {
 	cfg := d.cfg
 	targets := append([]*engineTarget{d.local}, d.targets...)
 	d.mu.Unlock()
-	st := EngineStatus{Strategy: cfg.Strategy, Routes: cfg.Routes, Fallback: cfg.Fallback, Placement: map[string]string{}}
+	st := EngineStatus{Strategy: cfg.Strategy, Routes: cfg.Routes, Fallback: cfg.Fallback, LocalOnly: cfg.LocalOnly, Placement: map[string]string{}}
 	for _, e := range workerapi.Engines {
 		st.Placement[e] = d.route(e)
 	}

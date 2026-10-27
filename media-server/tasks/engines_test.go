@@ -350,3 +350,35 @@ func TestGPUBucketSizedToPools(t *testing.T) {
 		t.Fatalf("gpu-diffusion limit %d, want 4 (local 1 + 2 + 1)", got)
 	}
 }
+
+// Local only overrides the strategy and every route while the pools stay
+// configured: every engine leases the local GPU and the bucket shrinks to it.
+func TestEnginesLocalOnly(t *testing.T) {
+	a := newFakeNode(t, 2)
+	db := setupItemOpsDB(t)
+	q, _ := newItemOpsJob(t, db, "retouch", nil, "x")
+	pools := []appconfig.WorkerPool{{Name: "gpu", Nodes: []appconfig.WorkerNode{{URL: a.srv.URL}}}}
+	usePools(t, q, appconfig.EnginesConfig{Strategy: "pool", LocalOnly: true, Routes: map[string]string{"retouch": "pool:gpu"}, Pools: pools})
+	engineDisp.checkAll(context.Background())
+	for _, e := range workerapi.Engines {
+		if !engineRunsLocalOnly(e) {
+			t.Errorf("%s leaves this machine with local only on", e)
+		}
+	}
+	if got := q.HostLimit(HostBucketGPUDiffusion); got != 1 {
+		t.Errorf("gpu-diffusion limit %d, want 1 (the local GPU)", got)
+	}
+	if r := ResolveResources("retouch", nil, ""); len(r) != 1 || r[0] != HostBucketLocalCompute {
+		t.Errorf("a local-only retouch holds %v", r)
+	}
+	st := EnginesStatus()
+	if !st.LocalOnly || st.Placement["loki-retouch"] != "local" || len(st.Targets) != 2 {
+		t.Errorf("status %+v: want local only, retouch local, the pool still listed", st)
+	}
+	// turning it off restores the pool
+	usePools(t, q, appconfig.EnginesConfig{Strategy: "pool", Routes: map[string]string{"retouch": "pool:gpu"}, Pools: pools})
+	engineDisp.checkAll(context.Background())
+	if engineRunsLocalOnly("loki-retouch") {
+		t.Error("retouch stayed local after local only was turned off")
+	}
+}

@@ -195,10 +195,10 @@ func (d *engineDispatcher) resize() {
 	d.mu.Lock()
 	q, cfg := d.q, d.cfg
 	n := 0
-	if cfg.Strategy != appconfig.EngineStrategyPool || cfg.Fallback || d.anyRouteLocal() {
+	if cfg.LocalOnly || cfg.Strategy != appconfig.EngineStrategyPool || cfg.Fallback || d.anyRouteLocal() {
 		n += d.local.slots()
 	}
-	if cfg.Strategy != appconfig.EngineStrategyLocal || len(cfg.Routes) > 0 {
+	if !cfg.LocalOnly && (cfg.Strategy != appconfig.EngineStrategyLocal || len(cfg.Routes) > 0) {
 		for _, t := range d.targets {
 			n += t.slots()
 		}
@@ -226,10 +226,13 @@ func (d *engineDispatcher) notify() {
 }
 
 // route is the placement rule for one engine: "local", "pool", "pool:<name>"
-// or "hybrid".
+// or "hybrid". Local only sends everything to this machine.
 func (d *engineDispatcher) route(engine string) string {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if d.cfg.LocalOnly {
+		return appconfig.EngineStrategyLocal
+	}
 	if r, ok := d.cfg.Routes[engine]; ok && r != "" {
 		return r
 	}
@@ -355,7 +358,7 @@ func acquireEngine(ctx context.Context, engine string, logf func(string), skip m
 			if len(unreachable) > 0 {
 				msg += " (unreachable: " + strings.Join(unreachable, "; ") + ")"
 			} else {
-				msg += ": add a worker to a pool on the Workers page, or set the engines strategy back to local"
+				msg += ": add a worker to a pool on the Config page's GPU Engines tab, or set the engines strategy back to local"
 			}
 			return nil, errors.New(msg)
 		}
@@ -408,7 +411,7 @@ func slotsLocked(t *engineTarget) int {
 func holdLocalGPU(ctx context.Context) (func(), error) {
 	d := engineDisp
 	d.mu.Lock()
-	onlyLocal := d.cfg.Strategy == appconfig.EngineStrategyLocal && len(d.cfg.Routes) == 0
+	onlyLocal := d.cfg.LocalOnly || (d.cfg.Strategy == appconfig.EngineStrategyLocal && len(d.cfg.Routes) == 0)
 	d.mu.Unlock()
 	if onlyLocal {
 		return func() {}, nil

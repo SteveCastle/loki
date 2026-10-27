@@ -1,0 +1,411 @@
+{{ define "engines-panel-style" }}
+<style>
+  .wk-muted { color: var(--text-muted); font-size: var(--text-xs); }
+  .wk-head { display: flex; justify-content: space-between; align-items: center; gap: var(--space-3); flex-wrap: wrap; margin-bottom: var(--space-3); }
+  .wk-head .section-title { margin: 0; }
+  .wk-table { border: 1px solid var(--border-subtle); border-radius: var(--radius-md); overflow: hidden; }
+  .wk-row { display: grid; grid-template-columns: 16px 1.6fr 2fr 1.4fr 0.8fr 1.6fr auto; gap: var(--space-2); align-items: center; padding: 8px var(--space-3); border-bottom: 1px solid var(--border-subtle); font-size: var(--text-sm); }
+  .wk-row:last-child { border-bottom: none; }
+  .wk-row.hdr { font-weight: 600; color: var(--text-secondary); font-size: var(--text-xs); text-transform: uppercase; letter-spacing: .5px; background: var(--bg-surface); }
+  .wk-row.local { grid-template-columns: 16px 1.2fr 2.4fr 0.8fr 2.4fr auto; }
+  .wk-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--text-muted); }
+  .wk-dot.ok { background: #3fb950; } .wk-dot.bad { background: #f85149; } .wk-dot.busy { background: #d29922; }
+  .wk-err { color: #f85149; font-size: var(--text-xs); word-break: break-word; }
+  .wk-path { font-family: var(--font-mono, monospace); font-size: 11px; color: var(--text-muted); word-break: break-all; }
+  .wk-chip { display: inline-block; padding: 1px 6px; margin: 1px 2px; border-radius: 10px; font-size: 11px; background: var(--bg-surface); border: 1px solid var(--border-subtle); color: var(--text-secondary); }
+  .wk-chip.warm, .wk-chip.ok { border-color: #3fb950; color: #3fb950; }
+  .wk-chip.bad { border-color: #f85149; color: #f85149; }
+  .wk-chip.busy { border-color: #d29922; color: #d29922; }
+  .wk-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--space-3); }
+  .wk-grid label { display: flex; flex-direction: column; gap: 4px; font-size: var(--text-xs); color: var(--text-secondary); }
+  .wk-actions { display: flex; gap: var(--space-2); margin-top: var(--space-3); flex-wrap: wrap; align-items: center; }
+  .wk-inline { display: flex; gap: var(--space-3); align-items: center; flex-wrap: wrap; font-size: var(--text-sm); }
+  .wk-note { margin-top: var(--space-2); font-size: var(--text-xs); color: var(--text-secondary); white-space: pre-wrap; }
+  .wk-small { padding: 2px 8px !important; font-size: var(--text-xs) !important; }
+  .wk-pools.overridden { opacity: .55; }
+  .wk-banner { display: none; margin-bottom: var(--space-4); padding: var(--space-3) var(--space-4); border-radius: var(--radius-md); border: 1px solid #d29922; color: #d29922; background: rgba(210, 153, 34, .08); font-size: var(--text-sm); }
+  .wk-banner.on { display: block; }
+  /* Local only switch */
+  .wk-switch { display: flex; align-items: center; gap: var(--space-4); }
+  .wk-switch input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+  .wk-track { position: relative; flex-shrink: 0; width: 46px; height: 26px; border-radius: 13px; background: var(--border-default); cursor: pointer; transition: background .15s; }
+  .wk-track::after { content: ''; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: #fff; transition: transform .15s; }
+  .wk-switch input:checked + .wk-track { background: var(--accent-primary); }
+  .wk-switch input:checked + .wk-track::after { transform: translateX(20px); }
+  .wk-switch input:focus-visible + .wk-track { outline: 2px solid var(--accent-primary); outline-offset: 2px; }
+  .wk-switch b { color: var(--text-primary); }
+  @media (max-width: 800px) {
+    .wk-row, .wk-row.local { grid-template-columns: 16px 1fr 1fr auto; }
+    .wk-row > .wide { display: none; }
+  }
+</style>
+{{ end }}
+
+{{ define "engines-panel" }}
+<div class="config-sections" id="engines-panel">
+  <div class="wk-banner" id="wk-local-banner">
+    Local only is on: every engine runs on this machine's installs. The pools
+    below stay configured but get no work until you turn it off.
+  </div>
+
+  <div class="config-card config-card--blue">
+    <label class="wk-switch">
+      <input type="checkbox" id="wk-local-only" />
+      <span class="wk-track" aria-hidden="true"></span>
+      <span>
+        <b>Local only</b><br />
+        <span class="wk-muted">
+          Run loki-retouch, loki-reshoot, loki-dream and loki-segment on this
+          machine's GPU whatever the strategy and routes below say. Applies at
+          once; jobs already on a worker finish there.
+        </span>
+      </span>
+    </label>
+    <div class="wk-note" id="wk-local-note"></div>
+  </div>
+
+  <div class="config-card config-card--blue">
+    <div class="wk-head">
+      <div class="section-title">🖥️ This machine</div>
+      <span class="wk-muted" id="wk-local-busy"></span>
+    </div>
+    <div class="section-subtitle">
+      The engines installed here: a build on PATH wins over the managed
+      download. Models download on the first run, or install them now.
+    </div>
+    <div class="wk-table" id="wk-local-tools">
+      <div class="wk-row local"><span></span><span class="wk-muted">Loading…</span></div>
+    </div>
+  </div>
+
+  <div class="config-card config-card--purple">
+    <div class="wk-head">
+      <div class="section-title">🧭 Placement</div>
+      <span class="wk-muted" id="wk-placement-live"></span>
+    </div>
+    <div class="section-subtitle">Where each engine runs when Local only is off.</div>
+    <div class="wk-inline">
+      <label style="display:flex;flex-direction:column;gap:4px;font-size:var(--text-xs);color:var(--text-secondary)">Strategy
+        <select class="input" id="wk-strategy">
+          <option value="local">Local: this machine's GPU (default)</option>
+          <option value="pool">Pool: remote GPU workers only</option>
+          <option value="hybrid">Hybrid: this GPU plus the pools</option>
+        </select>
+      </label>
+      <label><input type="checkbox" id="wk-fallback" /> fall back to this GPU when no worker is reachable</label>
+    </div>
+    <div class="wk-grid" style="margin-top: var(--space-3)" id="wk-routes"></div>
+    <div class="wk-actions">
+      <button class="btn btn-primary" id="wk-save-placement">Save placement</button>
+      <span class="wk-muted" id="wk-placement-note"></span>
+    </div>
+  </div>
+
+  <div class="wk-pools" id="wk-pools"></div>
+
+  <div class="config-card config-card--cyan">
+    <div class="wk-head">
+      <div class="section-title">➕ Add a worker node</div>
+      <span class="wk-muted">a loki-worker container on a RunPod pod, a cloud VM, or another PC</span>
+    </div>
+    <div class="wk-grid">
+      <label>Pool<input class="input" id="wk-node-pool" value="gpu" /></label>
+      <label>URL<input class="input" id="wk-node-url" placeholder="https://abc123-8080.proxy.runpod.net" /></label>
+      <label>Token<input class="input" id="wk-node-token" type="password" placeholder="LOKI_WORKER_TOKEN of the worker" /></label>
+      <label>Name (optional)<input class="input" id="wk-node-name" placeholder="defaults to the URL" /></label>
+    </div>
+    <div class="wk-actions">
+      <button class="btn btn-secondary" id="wk-node-probe">Test</button>
+      <button class="btn btn-primary" id="wk-node-add">Add node</button>
+      <span class="wk-muted">Start one with <code>docker run --gpus all -p 8080:8080 -e LOKI_WORKER_TOKEN=... -v models:/models ghcr.io/stevecastle/loki-worker</code>, or <code>lokictl pool create runpod-pods</code>.</span>
+    </div>
+    <div class="wk-note" id="wk-node-note"></div>
+  </div>
+
+  <div class="config-card config-card--cyan">
+    <div class="wk-head">
+      <div class="section-title">➕ Add a RunPod serverless endpoint</div>
+      <span class="wk-muted">queue-based; scales from zero, files go through a bucket</span>
+    </div>
+    <div class="wk-grid">
+      <label>Pool<input class="input" id="wk-rp-pool" value="serverless" /></label>
+      <label>Endpoint ID<input class="input" id="wk-rp-endpoint" placeholder="e.g. abc123xyz" /></label>
+      <label>RunPod API key<input class="input" id="wk-rp-key" type="password" /></label>
+      <label>Max jobs in flight<input class="input" id="wk-rp-max" type="number" min="1" value="4" /></label>
+      <label>Engines (empty: all)<input class="input" id="wk-rp-engines" placeholder="loki-retouch, loki-dream" /></label>
+      <label>Transfer: S3 storage root label<input class="input" id="wk-rp-root" placeholder="a configured S3 root (optional)" /></label>
+      <label>…or bucket<input class="input" id="wk-rp-bucket" placeholder="bucket name (optional)" /></label>
+      <label>Bucket endpoint<input class="input" id="wk-rp-s3-endpoint" placeholder="https://s3.us-east-1.amazonaws.com" /></label>
+      <label>Bucket region<input class="input" id="wk-rp-s3-region" placeholder="us-east-1" /></label>
+      <label>Access key<input class="input" id="wk-rp-s3-access" /></label>
+      <label>Secret key<input class="input" id="wk-rp-s3-secret" type="password" /></label>
+    </div>
+    <div class="wk-actions">
+      <button class="btn btn-secondary" id="wk-rp-probe">Test</button>
+      <button class="btn btn-primary" id="wk-rp-add">Add endpoint</button>
+      <span class="wk-muted">Without a bucket, files up to 7 MB go inline (stills work; videos need a bucket). Create one with <code>lokictl pool create runpod-serverless</code>.</span>
+    </div>
+    <div class="wk-note" id="wk-rp-note"></div>
+  </div>
+</div>
+<script>
+  // GPU Engines tab: Config.Engines (placement, pools, Local only) through
+  // /api/engines, plus this machine's engine installs. Polls only while the
+  // tab is showing (window.enginesPanel.show / hide).
+  window.enginesPanel = (function () {
+    const ENGINES = ['loki-retouch', 'loki-reshoot', 'loki-dream', 'loki-segment'];
+    let cfg = null, status = null, local = null, timer = null, placementDirty = false;
+    const $ = (id) => document.getElementById('wk-' + id);
+    const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    const gb = (b) => (b ? (b / 1e9).toFixed(b >= 1e10 ? 0 : 1) + ' GB' : '');
+    async function api(method, url, body) {
+      const r = await fetch(url, { method, headers: body ? { 'Content-Type': 'application/json' } : {}, body: body ? JSON.stringify(body) : undefined });
+      const t = await r.text();
+      let j = {};
+      try { j = t ? JSON.parse(t) : {}; } catch (e) { j = { error: t }; }
+      if (!r.ok) throw new Error(j.error || t || r.status);
+      return j;
+    }
+    async function load() {
+      const j = await api('GET', '/api/engines?local=1');
+      cfg = j.config; status = j.status; local = j.local || [];
+      if (!placementDirty) renderPlacement();
+      renderLocalOnly(); renderLocal(); renderPools();
+    }
+    function clone() { return JSON.parse(JSON.stringify(cfg)); }
+    async function save(next, noteEl) {
+      try {
+        const j = await api('PUT', '/api/engines', next);
+        cfg = j.config; status = j.status;
+        placementDirty = false;
+        renderPlacement(); renderLocalOnly(); renderLocal(); renderPools();
+        if (noteEl) noteEl.textContent = 'Saved.';
+        return true;
+      } catch (e) {
+        if (noteEl) noteEl.textContent = 'Error: ' + e.message; else alert(e.message);
+        return false;
+      }
+    }
+
+    // --- Local only
+    function renderLocalOnly() {
+      const on = !!cfg.localOnly;
+      $('local-only').checked = on;
+      $('local-banner').classList.toggle('on', on);
+      $('pools').classList.toggle('overridden', on);
+      const pools = (cfg.pools || []).filter((p) => !p.disabled).length;
+      $('local-note').textContent = on
+        ? (pools ? `${pools} pool(s) kept but idle.` : '')
+        : (pools ? '' : 'No pools configured yet: engines run here either way.');
+      const envPools = (cfg.pools || []).filter((p) => p.fromEnv).length;
+      if (envPools) $('local-note').textContent += (envPools ? ` ${envPools} pool(s) come from the environment (LOWKEY_ENGINES / LOWKEY_WORKER_NODES) and are not saved.` : '');
+    }
+    $('local-only').addEventListener('change', async (ev) => {
+      const c = clone();
+      c.localOnly = ev.target.checked;
+      $('local-note').textContent = 'Saving…';
+      if (!(await save(c, $('local-note')))) ev.target.checked = !ev.target.checked;
+    });
+
+    // --- This machine
+    function stateChip(it) {
+      const st = it.state;
+      if (st === 'installed') return `<span class="wk-chip ok">installed${it.source === 'user' ? ' (PATH)' : ''}</span>`;
+      if (st === 'queued' || st === 'downloading' || st === 'verifying' || st === 'extracting') {
+        const d = it.detail || {};
+        const pct = d.bytes_total ? Math.floor((d.bytes_done || 0) * 100 / d.bytes_total) + '%' : '';
+        return `<span class="wk-chip busy">${esc(st)} ${pct}</span>`;
+      }
+      if (st === 'failed') return `<span class="wk-chip bad" title="${esc(it.error)}">failed</span>`;
+      return `<span class="wk-chip">not installed</span>`;
+    }
+    const installable = (it) => !['installed', 'queued', 'downloading', 'verifying', 'extracting'].includes(it.state);
+    function renderLocal() {
+      const lt = status.targets.find((t) => t.kind === 'local');
+      $('local-busy').textContent = lt ? `GPU: ${lt.running}/${lt.slots} busy` : '';
+      const rows = local.filter((e) => ENGINES.includes(e.engine)).map((e) => {
+        const tool = e.tool;
+        const ok = tool.state === 'installed' && (e.models || []).every((m) => m.state === 'installed');
+        const dot = ok ? 'ok' : tool.state === 'installed' ? 'busy' : 'bad';
+        const placement = (status.placement || {})[e.engine] || 'local';
+        const missing = [tool].concat(e.models || []).filter(installable);
+        return `<div class="wk-row local">
+          <span class="wk-dot ${dot}"></span>
+          <span><b>${esc(e.engine.replace('loki-', ''))}</b>${e.version ? ` <span class="wk-muted">v${esc(e.version)}</span>` : ''}<br><span class="wk-muted">runs: ${esc(placement)}</span></span>
+          <span>${stateChip(tool)}<div class="wk-path">${esc(tool.path || '')}</div>${tool.error ? `<div class="wk-err">${esc(tool.error)}</div>` : ''}</span>
+          <span class="wide wk-muted">${gb((e.models || []).reduce((n, m) => n + (m.size_bytes || 0), 0))}</span>
+          <span class="wide">${(e.models || []).map((m) => `<div>${esc(m.name || m.id)} ${stateChip(m)}</div>`).join('')}</span>
+          <span>${missing.length ? `<button class="btn btn-secondary wk-small" data-wk-install="${esc(missing.map((m) => m.id).join(','))}">Install</button>` : ''}</span>
+        </div>`;
+      });
+      $('local-tools').innerHTML = `<div class="wk-row local hdr"><span></span><span>Engine</span><span>Executable</span><span class="wide">Size</span><span class="wide">Models</span><span></span></div>` +
+        (rows.join('') || '<div class="wk-row local"><span></span><span class="wk-muted">No engines available on this platform.</span></div>');
+    }
+
+    // --- Placement
+    function routeOptions(cur) {
+      const pools = (cfg.pools || []).map((p) => p.name);
+      const opts = [['', 'follow the strategy'], ['local', 'this machine'], ['pool', 'any pool'], ['hybrid', 'this machine + pools']].concat(pools.map((n) => ['pool:' + n, 'pool ' + n]));
+      return opts.map(([v, l]) => `<option value="${esc(v)}" ${v === (cur || '') ? 'selected' : ''}>${esc(l)}</option>`).join('');
+    }
+    function renderPlacement() {
+      $('strategy').value = cfg.strategy || 'local';
+      $('fallback').checked = !!cfg.fallback;
+      $('routes').innerHTML = ENGINES.map((e) => `<label>${e}<select class="input" data-engine="${e}">${routeOptions((cfg.routes || {})[e])}</select></label>`).join('');
+      $('placement-live').textContent = 'now: ' + ENGINES.map((e) => e.replace('loki-', '') + ' → ' + (status.placement || {})[e]).join(' · ');
+    }
+    document.getElementById('engines-panel').addEventListener('change', (ev) => {
+      if (ev.target.closest('#wk-routes') || ev.target.id === 'wk-strategy' || ev.target.id === 'wk-fallback') placementDirty = true;
+    });
+    $('save-placement').onclick = () => {
+      const c = clone();
+      c.strategy = $('strategy').value;
+      c.fallback = $('fallback').checked;
+      c.routes = {};
+      document.querySelectorAll('#wk-routes select').forEach((s) => { if (s.value) c.routes[s.dataset.engine] = s.value; });
+      save(c, $('placement-note'));
+    };
+
+    // --- Pools
+    function gpuText(info) {
+      if (!info || !info.gpus) return '';
+      return info.gpus.map((g) => `${esc(g.name)} ${g.totalMb ? Math.round(g.totalMb / 1024) + ' GB' : ''}${g.busy ? ' (busy)' : ''}`).join(', ');
+    }
+    function enginesText(t) {
+      if (t.kind === 'runpod') {
+        const h = t.runpod;
+        return (t.engines && t.engines.length ? t.engines.map((e) => `<span class="wk-chip">${esc(e.replace('loki-', ''))}</span>`).join('') + '<br>' : '') +
+          (h ? `<span class="wk-muted">workers: ${h.workers.idle} idle, ${h.workers.running} running, ${h.workers.initializing} starting · queue ${h.jobs.inQueue}</span>` : '');
+      }
+      if (!t.info) return '';
+      return (t.info.tools || []).map((x) => `<span class="wk-chip ${x.resident && x.resident.length ? 'warm' : ''}" title="${esc((x.resident || []).map((r) => r.key + ' ' + r.mb + ' MB').join('\n') || 'no model loaded')}">${esc(x.name.replace('loki-', ''))}${x.resident && x.resident.length ? ' ●' : ''}</span>`).join('');
+    }
+    function targetRow(t) {
+      const dot = !t.healthy ? 'bad' : t.running > 0 ? 'busy' : 'ok';
+      const name = t.key.includes('/') ? t.key.split('/').slice(1).join('/') : t.key;
+      return `<div class="wk-row">
+        <span class="wk-dot ${dot}"></span>
+        <span><b>${esc(name)}</b><br><span class="wk-muted">${esc(t.url || t.kind)}${t.info ? ' · v' + esc(t.info.version) : ''}</span>${t.error ? `<div class="wk-err">${esc(t.error)}</div>` : ''}</span>
+        <span class="wide">${enginesText(t)}</span>
+        <span class="wide wk-muted">${gpuText(t.info)}${t.transfer ? esc(t.transfer) : ''}</span>
+        <span>${t.running}/${t.slots}</span>
+        <span class="wide wk-muted">${t.info ? `${t.info.queued} queued · ${t.info.sessions} session(s)` : ''}</span>
+        <span>${t.kind === 'node' ? `<button class="btn btn-secondary wk-small" data-wk-remove-node="${esc(t.pool)}|${esc(t.url)}">Remove</button>` : ''}</span>
+      </div>`;
+    }
+    function renderPools() {
+      const byPool = {};
+      for (const t of status.targets) if (t.pool) (byPool[t.pool] = byPool[t.pool] || []).push(t);
+      let html = '';
+      for (const p of cfg.pools || []) {
+        const ts = byPool[p.name] || [];
+        const what = p.kind === 'runpod' ? 'RunPod serverless ' + esc(p.endpointId) : (p.nodes || []).length + ' node(s)';
+        html += `<div class="config-card config-card--pink" style="margin-bottom:var(--space-4)">
+          <div class="wk-head">
+            <div class="section-title">☁️ Pool ${esc(p.name)} <span class="wk-muted">(${what}${p.disabled ? ', disabled' : ''}${p.fromEnv ? ', from environment' : ''})</span></div>
+            <span class="wk-inline">
+              <button class="btn btn-secondary wk-small" data-wk-warm="${esc(p.name)}">Preload models</button>
+              ${p.fromEnv ? '' : `<button class="btn btn-secondary wk-small" data-wk-toggle="${esc(p.name)}">${p.disabled ? 'Enable' : 'Disable'}</button>
+              <button class="btn btn-secondary wk-small" data-wk-remove-pool="${esc(p.name)}">Remove pool</button>`}
+            </span>
+          </div>
+          <div class="wk-table">
+            <div class="wk-row hdr"><span></span><span>Worker</span><span class="wide">Engines (● models loaded)</span><span class="wide">GPU</span><span>Busy</span><span class="wide">Queue</span><span></span></div>
+            ${ts.length ? ts.map(targetRow).join('') : `<div class="wk-row"><span></span><span class="wk-muted">${p.disabled ? 'Disabled.' : 'No active workers.'}</span></div>`}
+          </div>
+        </div>`;
+      }
+      $('pools').innerHTML = html;
+    }
+
+    // --- Add workers
+    $('node-probe').onclick = async () => {
+      $('node-note').textContent = 'Testing…';
+      try {
+        const j = await api('POST', '/api/engines/probe', { kind: 'nodes', url: $('node-url').value, token: $('node-token').value });
+        const i = j.info;
+        $('node-note').textContent = `OK: ${i.worker} (loki-worker ${i.version}), ${i.slots} GPU slot(s): ${(i.gpus || []).map((g) => g.name).join(', ')}; engines ${(i.tools || []).map((t) => t.name).join(', ')}${i.ready ? '' : ' — still preloading models'}`;
+      } catch (e) { $('node-note').textContent = 'Error: ' + e.message; }
+    };
+    $('node-add').onclick = () => {
+      const c = clone();
+      const pool = $('node-pool').value.trim() || 'gpu';
+      let p = (c.pools || []).find((x) => x.name.toLowerCase() === pool.toLowerCase());
+      if (!p) { p = { name: pool, kind: 'nodes', nodes: [] }; c.pools = (c.pools || []).concat([p]); }
+      if (p.kind === 'runpod') { $('node-note').textContent = 'Pool ' + pool + ' is a RunPod endpoint; pick another name.'; return; }
+      p.nodes = (p.nodes || []).concat([{ name: $('node-name').value.trim(), url: $('node-url').value.trim(), token: $('node-token').value.trim() }]);
+      if (c.strategy === 'local') c.strategy = 'pool';
+      save(c, $('node-note'));
+    };
+    function rpPool() {
+      const t = { root: $('rp-root').value.trim(), bucket: $('rp-bucket').value.trim(), endpoint: $('rp-s3-endpoint').value.trim(), region: $('rp-s3-region').value.trim(), accessKey: $('rp-s3-access').value.trim(), secretKey: $('rp-s3-secret').value.trim() };
+      const engines = $('rp-engines').value.split(',').map((s) => s.trim()).filter(Boolean).map((s) => (s.startsWith('loki-') ? s : 'loki-' + s));
+      return { name: $('rp-pool').value.trim() || 'serverless', kind: 'runpod', endpointId: $('rp-endpoint').value.trim(), apiKey: $('rp-key').value.trim(), maxJobs: parseInt($('rp-max').value, 10) || 4, engines, transfer: t.root || t.bucket ? t : null };
+    }
+    $('rp-probe').onclick = async () => {
+      $('rp-note').textContent = 'Testing…';
+      try {
+        const p = rpPool();
+        const h = (await api('POST', '/api/engines/probe', { kind: 'runpod', endpointId: p.endpointId, apiKey: p.apiKey })).info;
+        $('rp-note').textContent = `OK: workers ${h.workers.idle} idle, ${h.workers.running} running; ${h.jobs.inQueue} queued`;
+      } catch (e) { $('rp-note').textContent = 'Error: ' + e.message; }
+    };
+    $('rp-add').onclick = () => {
+      const c = clone();
+      const p = rpPool();
+      c.pools = (c.pools || []).filter((x) => x.name.toLowerCase() !== p.name.toLowerCase()).concat([p]);
+      if (c.strategy === 'local') c.strategy = 'pool';
+      save(c, $('rp-note'));
+    };
+
+    // --- Row actions
+    document.getElementById('engines-panel').addEventListener('click', async (ev) => {
+      const b = ev.target.closest('button');
+      if (!b) return;
+      if (b.dataset.wkInstall) {
+        b.disabled = true;
+        try {
+          for (const id of b.dataset.wkInstall.split(',')) await api('POST', '/api/deps/models/' + encodeURIComponent(id) + '/download');
+        } catch (e) { alert(e.message); }
+        load().catch(() => {});
+      } else if (b.dataset.wkRemoveNode) {
+        const [pool, url] = b.dataset.wkRemoveNode.split('|');
+        if (!confirm('Remove ' + url + ' from pool ' + pool + '?')) return;
+        const c = clone();
+        const p = c.pools.find((x) => x.name === pool);
+        p.nodes = p.nodes.filter((n) => n.url !== url);
+        save(c);
+      } else if (b.dataset.wkRemovePool) {
+        if (!confirm('Remove pool ' + b.dataset.wkRemovePool + '? (cloud resources it was created with keep running: use lokictl pool destroy)')) return;
+        const c = clone();
+        c.pools = c.pools.filter((x) => x.name !== b.dataset.wkRemovePool);
+        save(c);
+      } else if (b.dataset.wkToggle) {
+        const c = clone();
+        const p = c.pools.find((x) => x.name === b.dataset.wkToggle);
+        p.disabled = !p.disabled;
+        save(c);
+      } else if (b.dataset.wkWarm) {
+        const p = (cfg.pools || []).find((x) => x.name === b.dataset.wkWarm);
+        const which = prompt('Preload which engines? (comma separated)', (p && p.engines && p.engines.length ? p.engines : ['loki-retouch', 'loki-segment']).join(','));
+        if (!which) return;
+        try {
+          const j = await api('POST', '/api/engines/warm', { pool: b.dataset.wkWarm, engines: which.split(',').map((s) => s.trim()).filter(Boolean) });
+          alert(j.notes.join('\n'));
+        } catch (e) { alert(e.message); }
+      }
+    });
+
+    return {
+      show() {
+        load().catch((e) => { $('local-tools').innerHTML = '<div class="wk-row local"><span></span><span class="wk-err">' + esc(e.message) + '</span></div>'; });
+        if (!timer) timer = setInterval(() => load().catch(() => {}), 5000);
+      },
+      hide() {
+        if (timer) clearInterval(timer);
+        timer = null;
+      },
+    };
+  })();
+</script>
+{{ end }}

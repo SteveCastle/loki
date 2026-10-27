@@ -29,6 +29,8 @@ func init() {
 	}})
 	register(command{group: "pool", name: "strategy", args: "local|pool|hybrid [--fallback=true|false]",
 		summary: "Where engines run: this GPU, the pools, or both", run: cmdPoolStrategy})
+	register(command{group: "pool", name: "local-only", args: "on|off",
+		summary: "Run every engine on this machine, keeping the pools configured", run: cmdPoolLocalOnly})
 	register(command{group: "pool", name: "route", args: "<engine> local|pool|pool:NAME|hybrid|default",
 		summary: "Override the strategy for one engine (e.g. keep segment local)", run: cmdPoolRoute})
 	register(command{group: "pool", name: "add-node", args: "<pool> <url> [--token T] [--name N]",
@@ -152,6 +154,18 @@ func cmdPoolStrategy(a *App, args []string) int {
 	case "false":
 		d.Config.Fallback = false
 	}
+	return putEngines(a, d.Config)
+}
+
+func cmdPoolLocalOnly(a *App, args []string) int {
+	if len(args) != 1 || (args[0] != "on" && args[0] != "off") {
+		return a.Usage(nil, "usage: lokictl pool local-only on|off")
+	}
+	d, err := getEngines(a)
+	if err != nil {
+		return a.Fail(err)
+	}
+	d.Config.LocalOnly = args[0] == "on"
 	return putEngines(a, d.Config)
 }
 

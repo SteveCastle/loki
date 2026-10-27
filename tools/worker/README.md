@@ -46,7 +46,7 @@ A multi-GPU machine is one node with one job slot per GPU.
 | `LOKI_WORKER_GPUS` | `auto` | GPU indices to use (`0,1`). |
 | `LOKI_WORKER_COEXIST` | `auto` | keep several engines' models on one GPU: `auto` (≥ 60 GB), `always`, `never`. |
 | `LOKI_WORKER_MODE` | `auto` | `http`, or `runpod` (queue-based serverless; picked automatically from RunPod's environment). |
-| `LOKI_WORKER_NAME` | hostname / pod id | name shown on the Workers page. |
+| `LOKI_WORKER_NAME` | hostname / pod id | name shown on the Config page's GPU Engines tab. |
 | `LOKI_WORKER_RESERVE_MB` | per engine | VRAM kept free for activations next to resident models. |
 
 ## Quick start: any Docker host with an NVIDIA GPU
@@ -84,7 +84,7 @@ lokictl pool destroy gpu                                                        
 
 Each pod gets its own token, a 150 GB pod volume at `/models` (or the network volume you pass, which every pod shares —
 models are then downloaded once), and is reached through RunPod's HTTPS proxy (`https://<pod>-8080.proxy.runpod.net`).
-Pods need a few minutes to pull the image and download models; the Workers page shows them as starting until ready.
+Pods need a few minutes to pull the image and download models; the Config page's GPU Engines tab shows them as starting until ready.
 
 By hand: deploy a pod from the image with an HTTP port `8080`, `LOKI_WORKER_TOKEN` set and a volume at `/models`, then
 `lokictl pool add-node gpu https://<pod-id>-8080.proxy.runpod.net --token <token>`.
@@ -131,7 +131,7 @@ replica), Service and PVC; each replica is a node (add each pod's address, or fr
 | `hybrid` | this machine's GPU is one more worker: a free local GPU is used first, then warm workers, then the rest. |
 
 Per-engine routes override it: `lokictl pool route segment local` keeps clicks on the local GPU while generation goes to
-the pool; `pool:<name>` pins an engine to one pool. The Workers page shows the same controls, every worker's health, GPU,
+the pool; `pool:<name>` pins an engine to one pool. The Config page's GPU Engines tab shows the same controls, every worker's health, GPU,
 loaded models and queue, and can preload models on a pool ahead of use (`lokictl pool warm gpu retouch reshoot`).
 
 The queue runs as many GPU jobs at once as the pools have slots (one per node GPU, `maxJobs` per serverless endpoint),

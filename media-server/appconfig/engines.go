@@ -42,6 +42,10 @@ type EnginesConfig struct {
 	// Fallback lets a run go to this machine's GPU when no pool worker is
 	// reachable (strategy "pool" only; "hybrid" always may).
 	Fallback bool `json:"fallback,omitempty"`
+	// LocalOnly overrides the strategy and every route: all engines run on
+	// this machine's installs while the pools stay configured (a kill
+	// switch for working offline or when the cloud is misbehaving).
+	LocalOnly bool `json:"localOnly,omitempty"`
 }
 
 // WorkerPool is a group of interchangeable GPU workers.
@@ -179,6 +183,7 @@ func NormalizeEngines(e *EnginesConfig) {
 // file's; LOWKEY_ENGINES_STRATEGY sets just the strategy; LOWKEY_WORKER_NODES
 // ("https://a:8080|token,https://b:8080|token") adds a "nodes" pool named
 // "env" — the Docker-friendly ways to point a server at workers.
+// LOWKEY_ENGINES_LOCAL_ONLY=1 forces every engine onto this machine.
 func applyEnginesEnv(c *Config) {
 	if v := strings.TrimSpace(os.Getenv("LOWKEY_ENGINES")); v != "" {
 		var e EnginesConfig
@@ -208,6 +213,9 @@ func applyEnginesEnv(c *Config) {
 	}
 	if v := strings.TrimSpace(os.Getenv("LOWKEY_ENGINES_STRATEGY")); v != "" {
 		c.Engines.Strategy = v
+	}
+	if v := strings.TrimSpace(os.Getenv("LOWKEY_ENGINES_LOCAL_ONLY")); v != "" {
+		c.Engines.LocalOnly = v == "1" || strings.EqualFold(v, "true")
 	}
 	NormalizeEngines(&c.Engines)
 }
