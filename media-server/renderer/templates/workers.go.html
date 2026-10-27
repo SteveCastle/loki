@@ -1,0 +1,276 @@
+{{ define "workers" }}
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Lowkey Media Server Workers</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+    <style>
+      .wk-wrap { max-width: 1200px; margin: 0 auto; padding: var(--space-4); }
+      .wk-card { background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: var(--radius-xl); margin-top: var(--space-4); overflow: hidden; }
+      .wk-head { display: flex; justify-content: space-between; align-items: center; gap: var(--space-3); padding: var(--space-3) var(--space-4); background: var(--bg-elevated); border-bottom: 1px solid var(--border-subtle); flex-wrap: wrap; }
+      .wk-head h2 { margin: 0; font-size: var(--text-base); color: var(--text-primary); }
+      .wk-body { padding: var(--space-4); }
+      .wk-muted { color: var(--text-muted); font-size: var(--text-xs); }
+      .wk-row { display: grid; grid-template-columns: 16px 1.6fr 2fr 1.4fr 0.8fr 1.6fr auto; gap: var(--space-2); align-items: center; padding: 8px var(--space-4); border-bottom: 1px solid var(--border-subtle); font-size: var(--text-sm); }
+      .wk-row:last-child { border-bottom: none; }
+      .wk-row.hdr { font-weight: 600; color: var(--text-secondary); font-size: var(--text-xs); text-transform: uppercase; letter-spacing: .5px; background: var(--bg-surface); }
+      .wk-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--text-muted); }
+      .wk-dot.ok { background: #3fb950; } .wk-dot.bad { background: #f85149; } .wk-dot.busy { background: #d29922; }
+      .wk-err { color: #f85149; font-size: var(--text-xs); word-break: break-word; }
+      .wk-chip { display: inline-block; padding: 1px 6px; margin: 1px 2px; border-radius: 10px; font-size: 11px; background: var(--bg-surface); border: 1px solid var(--border-subtle); color: var(--text-secondary); }
+      .wk-chip.warm { border-color: #3fb950; color: #3fb950; }
+      .wk-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--space-3); }
+      .wk-grid label { display: flex; flex-direction: column; gap: 4px; font-size: var(--text-xs); color: var(--text-secondary); }
+      .wk-grid input, .wk-grid select { width: 100%; box-sizing: border-box; }
+      .wk-grid input, .wk-grid select, .wk-inline select { background: var(--bg-surface); color: var(--text-primary); border: 1px solid var(--border-default); border-radius: var(--radius-md); padding: 6px 8px; font-size: var(--text-sm); }
+      .wk-actions { display: flex; gap: var(--space-2); margin-top: var(--space-3); flex-wrap: wrap; align-items: center; }
+      .wk-btn { background: var(--bg-surface); color: var(--text-primary); border: 1px solid var(--border-default); border-radius: var(--radius-md); padding: 6px 12px; cursor: pointer; font-size: var(--text-sm); }
+      .wk-btn.primary { background: var(--accent-primary, #2f81f7); border-color: transparent; color: #fff; }
+      .wk-btn.small { padding: 2px 8px; font-size: var(--text-xs); }
+      .wk-inline { display: flex; gap: var(--space-3); align-items: center; flex-wrap: wrap; font-size: var(--text-sm); }
+      .wk-note { margin-top: var(--space-2); font-size: var(--text-xs); color: var(--text-secondary); white-space: pre-wrap; }
+      code { font-size: 12px; }
+      @media (max-width: 800px) { .wk-row { grid-template-columns: 16px 1fr 1fr auto; } .wk-row > .wide { display: none; } }
+    </style>
+  </head>
+  <body>
+    {{ template "topnav" }}
+    <div class="wk-wrap">
+      <div class="wk-card">
+        <div class="wk-head">
+          <h2>GPU engines: where they run</h2>
+          <span class="wk-muted">loki-retouch, loki-reshoot, loki-dream, loki-segment</span>
+        </div>
+        <div class="wk-body">
+          <div class="wk-inline">
+            <label>Strategy
+              <select id="strategy">
+                <option value="local">Local: this machine's GPU (default)</option>
+                <option value="pool">Pool: remote GPU workers only</option>
+                <option value="hybrid">Hybrid: this GPU plus the pools</option>
+              </select>
+            </label>
+            <label><input type="checkbox" id="fallback" /> fall back to this GPU when no worker is reachable</label>
+          </div>
+          <div class="wk-grid" style="margin-top: var(--space-3)" id="routes"></div>
+          <div class="wk-actions">
+            <button class="wk-btn primary" id="save-placement">Save placement</button>
+            <span class="wk-muted" id="placement-note"></span>
+          </div>
+        </div>
+      </div>
+
+      <div id="pools"></div>
+
+      <div class="wk-card">
+        <div class="wk-head"><h2>Add a worker node</h2><span class="wk-muted">a loki-worker container on a RunPod pod, a cloud VM, or another PC</span></div>
+        <div class="wk-body">
+          <div class="wk-grid">
+            <label>Pool<input id="node-pool" value="gpu" /></label>
+            <label>URL<input id="node-url" placeholder="https://abc123-8080.proxy.runpod.net" /></label>
+            <label>Token<input id="node-token" placeholder="LOKI_WORKER_TOKEN of the worker" /></label>
+            <label>Name (optional)<input id="node-name" placeholder="defaults to the URL" /></label>
+          </div>
+          <div class="wk-actions">
+            <button class="wk-btn" id="node-probe">Test</button>
+            <button class="wk-btn primary" id="node-add">Add node</button>
+            <span class="wk-muted">Start one with <code>docker run --gpus all -p 8080:8080 -e LOKI_WORKER_TOKEN=... -v models:/models ghcr.io/stevecastle/loki-worker</code>, or <code>lokictl pool create runpod-pods</code>.</span>
+          </div>
+          <div class="wk-note" id="node-note"></div>
+        </div>
+      </div>
+
+      <div class="wk-card">
+        <div class="wk-head"><h2>Add a RunPod serverless endpoint</h2><span class="wk-muted">queue-based; scales from zero, files go through a bucket</span></div>
+        <div class="wk-body">
+          <div class="wk-grid">
+            <label>Pool<input id="rp-pool" value="serverless" /></label>
+            <label>Endpoint ID<input id="rp-endpoint" placeholder="e.g. abc123xyz" /></label>
+            <label>RunPod API key<input id="rp-key" type="password" /></label>
+            <label>Max jobs in flight<input id="rp-max" type="number" min="1" value="4" /></label>
+            <label>Transfer: S3 storage root label<input id="rp-root" placeholder="a configured S3 root (optional)" /></label>
+            <label>…or bucket<input id="rp-bucket" placeholder="bucket name (optional)" /></label>
+            <label>Bucket endpoint<input id="rp-s3-endpoint" placeholder="https://s3.us-east-1.amazonaws.com" /></label>
+            <label>Bucket region<input id="rp-s3-region" placeholder="us-east-1" /></label>
+            <label>Access key<input id="rp-s3-access" /></label>
+            <label>Secret key<input id="rp-s3-secret" type="password" /></label>
+          </div>
+          <div class="wk-actions">
+            <button class="wk-btn" id="rp-probe">Test</button>
+            <button class="wk-btn primary" id="rp-add">Add endpoint</button>
+            <span class="wk-muted">Without a bucket, files up to 7 MB go inline (stills work; videos need a bucket). Create one with <code>lokictl pool create runpod-serverless</code>.</span>
+          </div>
+          <div class="wk-note" id="rp-note"></div>
+        </div>
+      </div>
+    </div>
+    <script>
+      (function () {
+        const ENGINES = ['loki-retouch', 'loki-reshoot', 'loki-dream', 'loki-segment'];
+        let cfg = null, status = null;
+        const $ = (id) => document.getElementById(id);
+        const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+        async function api(method, url, body) {
+          const r = await fetch(url, { method, headers: body ? { 'Content-Type': 'application/json' } : {}, body: body ? JSON.stringify(body) : undefined });
+          const t = await r.text();
+          let j = {};
+          try { j = t ? JSON.parse(t) : {}; } catch (e) { j = { error: t }; }
+          if (!r.ok) throw new Error(j.error || t || r.status);
+          return j;
+        }
+        async function load() {
+          const j = await api('GET', '/api/engines');
+          const first = !cfg;
+          cfg = j.config; status = j.status;
+          if (first) renderPlacement();
+          renderPools();
+        }
+        function routeOptions(cur) {
+          const pools = (cfg.pools || []).map((p) => p.name);
+          const opts = [['', 'follow the strategy'], ['local', 'this machine'], ['pool', 'any pool'], ['hybrid', 'this machine + pools']].concat(pools.map((n) => ['pool:' + n, 'pool ' + n]));
+          return opts.map(([v, l]) => `<option value="${esc(v)}" ${v === (cur || '') ? 'selected' : ''}>${esc(l)}</option>`).join('');
+        }
+        function renderPlacement() {
+          $('strategy').value = cfg.strategy || 'local';
+          $('fallback').checked = !!cfg.fallback;
+          $('routes').innerHTML = ENGINES.map((e) => `<label>${e}<select data-engine="${e}">${routeOptions((cfg.routes || {})[e])}</select></label>`).join('');
+        }
+        function gpuText(info) {
+          if (!info || !info.gpus) return '';
+          return info.gpus.map((g) => `${esc(g.name)} ${g.totalMb ? Math.round(g.totalMb / 1024) + ' GB' : ''}${g.busy ? ' (busy)' : ''}`).join(', ');
+        }
+        function enginesText(t) {
+          if (t.kind === 'runpod') {
+            const h = t.runpod;
+            return h ? `workers: ${h.workers.idle} idle, ${h.workers.running} running, ${h.workers.initializing} starting · queue ${h.jobs.inQueue}` : '';
+          }
+          if (!t.info) return '';
+          return (t.info.tools || []).map((x) => `<span class="wk-chip ${x.resident && x.resident.length ? 'warm' : ''}" title="${esc((x.resident || []).map((r) => r.key + ' ' + r.mb + ' MB').join('\n') || 'no model loaded')}">${esc(x.name.replace('loki-', ''))}${x.resident && x.resident.length ? ' ●' : ''}</span>`).join('');
+        }
+        function targetRow(t) {
+          const busy = t.running > 0;
+          const dot = !t.healthy ? 'bad' : busy ? 'busy' : 'ok';
+          const node = t.kind === 'node';
+          const name = t.key.includes('/') ? t.key.split('/').slice(1).join('/') : t.key;
+          return `<div class="wk-row">
+            <span class="wk-dot ${dot}"></span>
+            <span><b>${esc(name)}</b><br><span class="wk-muted">${esc(t.url || t.kind)}${t.info ? ' · v' + esc(t.info.version) : ''}</span>${t.error ? `<div class="wk-err">${esc(t.error)}</div>` : ''}</span>
+            <span class="wide">${enginesText(t)}</span>
+            <span class="wide wk-muted">${gpuText(t.info)}${t.transfer ? esc(t.transfer) : ''}</span>
+            <span>${t.running}/${t.slots}</span>
+            <span class="wide wk-muted">${t.info ? `${t.info.queued} queued · ${t.info.sessions} session(s)` : ''}</span>
+            <span>${node ? `<button class="wk-btn small" data-remove-node="${esc(t.pool)}|${esc(t.url)}">Remove</button>` : ''}</span>
+          </div>`;
+        }
+        function renderPools() {
+          const byPool = {};
+          for (const t of status.targets) (byPool[t.pool || ''] = byPool[t.pool || ''] || []).push(t);
+          const local = byPool[''] || [];
+          let html = `<div class="wk-card"><div class="wk-head"><h2>This machine</h2><span class="wk-muted">placement: ${ENGINES.map((e) => esc(e.replace('loki-', '')) + ' → ' + esc(status.placement[e])).join(' · ')}</span></div>
+            <div class="wk-row hdr"><span></span><span>Target</span><span class="wide">Engines</span><span class="wide">GPU</span><span>Busy</span><span class="wide"></span><span></span></div>${local.map(targetRow).join('')}</div>`;
+          for (const p of cfg.pools || []) {
+            const ts = byPool[p.name] || [];
+            html += `<div class="wk-card"><div class="wk-head"><h2>Pool ${esc(p.name)} <span class="wk-muted">(${p.kind === 'runpod' ? 'RunPod serverless ' + esc(p.endpointId) : (p.nodes || []).length + ' node(s)'}${p.disabled ? ', disabled' : ''})</span></h2>
+              <span class="wk-inline">
+                <button class="wk-btn small" data-warm="${esc(p.name)}">Preload models</button>
+                <button class="wk-btn small" data-toggle="${esc(p.name)}">${p.disabled ? 'Enable' : 'Disable'}</button>
+                <button class="wk-btn small" data-remove-pool="${esc(p.name)}">Remove pool</button>
+              </span></div>
+              <div class="wk-row hdr"><span></span><span>Worker</span><span class="wide">Engines (● models loaded)</span><span class="wide">GPU</span><span>Busy</span><span class="wide">Queue</span><span></span></div>
+              ${ts.length ? ts.map(targetRow).join('') : '<div class="wk-body wk-muted">No active workers.</div>'}</div>`;
+          }
+          $('pools').innerHTML = html;
+        }
+        async function save(next, noteEl) {
+          try {
+            const j = await api('PUT', '/api/engines', next);
+            cfg = j.config; status = j.status;
+            renderPlacement(); renderPools();
+            if (noteEl) noteEl.textContent = 'Saved.';
+          } catch (e) { if (noteEl) noteEl.textContent = 'Error: ' + e.message; else alert(e.message); }
+        }
+        function clone() { return JSON.parse(JSON.stringify(cfg)); }
+        $('save-placement').onclick = () => {
+          const c = clone();
+          c.strategy = $('strategy').value;
+          c.fallback = $('fallback').checked;
+          c.routes = {};
+          document.querySelectorAll('#routes select').forEach((s) => { if (s.value) c.routes[s.dataset.engine] = s.value; });
+          save(c, $('placement-note'));
+        };
+        $('node-probe').onclick = async () => {
+          $('node-note').textContent = 'Testing…';
+          try {
+            const j = await api('POST', '/api/engines/probe', { kind: 'nodes', url: $('node-url').value, token: $('node-token').value });
+            const i = j.info;
+            $('node-note').textContent = `OK: ${i.worker} (loki-worker ${i.version}), ${i.slots} GPU slot(s): ${(i.gpus || []).map((g) => g.name).join(', ')}; engines ${(i.tools || []).map((t) => t.name).join(', ')}${i.ready ? '' : ' — still preloading models'}`;
+          } catch (e) { $('node-note').textContent = 'Error: ' + e.message; }
+        };
+        $('node-add').onclick = () => {
+          const c = clone();
+          const pool = $('node-pool').value.trim() || 'gpu';
+          let p = (c.pools || []).find((x) => x.name.toLowerCase() === pool.toLowerCase());
+          if (!p) { p = { name: pool, kind: 'nodes', nodes: [] }; c.pools = (c.pools || []).concat([p]); }
+          if (p.kind === 'runpod') { $('node-note').textContent = 'Pool ' + pool + ' is a RunPod endpoint; pick another name.'; return; }
+          p.nodes = (p.nodes || []).concat([{ name: $('node-name').value.trim(), url: $('node-url').value.trim(), token: $('node-token').value.trim() }]);
+          if (c.strategy === 'local') c.strategy = 'pool';
+          save(c, $('node-note'));
+        };
+        function rpPool() {
+          const t = { root: $('rp-root').value.trim(), bucket: $('rp-bucket').value.trim(), endpoint: $('rp-s3-endpoint').value.trim(), region: $('rp-s3-region').value.trim(), accessKey: $('rp-s3-access').value.trim(), secretKey: $('rp-s3-secret').value.trim() };
+          return { name: $('rp-pool').value.trim() || 'serverless', kind: 'runpod', endpointId: $('rp-endpoint').value.trim(), apiKey: $('rp-key').value.trim(), maxJobs: parseInt($('rp-max').value, 10) || 4, transfer: t.root || t.bucket ? t : null };
+        }
+        $('rp-probe').onclick = async () => {
+          $('rp-note').textContent = 'Testing…';
+          try {
+            const p = rpPool();
+            const j = await api('POST', '/api/engines/probe', { kind: 'runpod', endpointId: p.endpointId, apiKey: p.apiKey });
+            const h = j.info;
+            $('rp-note').textContent = `OK: workers ${h.workers.idle} idle, ${h.workers.running} running; ${h.jobs.inQueue} queued`;
+          } catch (e) { $('rp-note').textContent = 'Error: ' + e.message; }
+        };
+        $('rp-add').onclick = () => {
+          const c = clone();
+          const p = rpPool();
+          c.pools = (c.pools || []).filter((x) => x.name.toLowerCase() !== p.name.toLowerCase()).concat([p]);
+          if (c.strategy === 'local') c.strategy = 'pool';
+          save(c, $('rp-note'));
+        };
+        document.addEventListener('click', async (ev) => {
+          const b = ev.target.closest('button');
+          if (!b) return;
+          if (b.dataset.removeNode) {
+            const [pool, url] = b.dataset.removeNode.split('|');
+            if (!confirm('Remove ' + url + ' from pool ' + pool + '?')) return;
+            const c = clone();
+            const p = c.pools.find((x) => x.name === pool);
+            p.nodes = p.nodes.filter((n) => n.url !== url);
+            save(c);
+          } else if (b.dataset.removePool) {
+            if (!confirm('Remove pool ' + b.dataset.removePool + '? (cloud resources it was created with keep running: use lokictl pool destroy)')) return;
+            const c = clone();
+            c.pools = c.pools.filter((x) => x.name !== b.dataset.removePool);
+            save(c);
+          } else if (b.dataset.toggle) {
+            const c = clone();
+            const p = c.pools.find((x) => x.name === b.dataset.toggle);
+            p.disabled = !p.disabled;
+            save(c);
+          } else if (b.dataset.warm) {
+            const which = prompt('Preload which engines? (comma separated)', 'loki-retouch,loki-segment');
+            if (!which) return;
+            try {
+              const j = await api('POST', '/api/engines/warm', { pool: b.dataset.warm, engines: which.split(',').map((s) => s.trim()).filter(Boolean) });
+              alert(j.notes.join('\n'));
+            } catch (e) { alert(e.message); }
+          }
+        });
+        load().catch((e) => { $('pools').innerHTML = '<div class="wk-card"><div class="wk-body wk-err">' + esc(e.message) + '</div></div>'; });
+        setInterval(() => load().catch(() => {}), 5000);
+      })();
+    </script>
+  </body>
+</html>
+{{ end }}

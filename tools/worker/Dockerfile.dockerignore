@@ -1,0 +1,16 @@
+# Build context allowlist for tools/worker/Dockerfile (BuildKit reads this
+# file instead of the repo's .dockerignore for that Dockerfile). The tools'
+# target/, models/, ref*/ and test media are many GB and never needed.
+*
+!tools/loki-*/Cargo.toml
+!tools/loki-*/Cargo.lock
+!tools/loki-*/build.rs
+!tools/loki-*/src
+!tools/loki-*/kernels
+!tools/loki-*/assets
+!tools/loki-*/docs
+!tools/loki-*/tests
+!media-server/go.mod
+!media-server/go.sum
+!media-server/workerapi
+!media-server/cmd/loki-worker

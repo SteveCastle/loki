@@ -2555,6 +2555,7 @@ func main() {
 	mux.HandleFunc("/tasks", renderer.ApplyMiddlewares(tasksHandler(deps), renderer.RoleAdmin))
 	RegisterDepsRoutes(mux, deps)
 	registerSetupRoutes(mux, deps)
+	registerEngineRoutes(mux, deps)
 	RegisterVizRoutes(mux, deps)
 	RegisterFacesRoutes(mux, deps)
 	RegisterDuplicatesRoutes(mux, deps)
@@ -2664,6 +2665,7 @@ func main() {
 			lokiDeleteCategoryHandler(deps)(w, r)
 		}
 	}, renderer.RoleAdmin))
+	mux.HandleFunc("/api/categories/impact", renderer.ApplyMiddlewares(lokiCategoryImpactHandler(deps), renderer.RolePublicRead))
 	mux.HandleFunc("/api/categories/rename", renderer.ApplyMiddlewares(lokiRenameCategoryHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/categories/tag-view-mode", renderer.ApplyMiddlewares(lokiUpdateCategoryTagViewModeHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/categories/tag-grouping", renderer.ApplyMiddlewares(lokiUpdateCategoryTagGroupingHandler(deps), renderer.RoleAdmin))

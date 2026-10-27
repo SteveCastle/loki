@@ -25,6 +25,20 @@ fn main() -> anyhow::Result<()> {
     println!("cargo:rerun-if-changed=kernels");
     let nvcc = std::env::var("NVCC").unwrap_or_else(|_| "nvcc".to_string());
     let ccbin = find_cl();
+    // SASS for every architecture in LOKI_CUDA_ARCHS (default 89, the RTX 40 series), plus PTX for LOKI_CUDA_PTX
+    // (default 80) that the driver JITs on newer GPUs. The FP8 tensor-core kernels (retouch, reshoot, dream) need 89+, so the worker
+    // image builds LOKI_CUDA_ARCHS=89,90 LOKI_CUDA_PTX=90 (Ada, Hopper, and Blackwell through the PTX).
+    println!("cargo:rerun-if-env-changed=LOKI_CUDA_ARCHS");
+    println!("cargo:rerun-if-env-changed=LOKI_CUDA_PTX");
+    let ptx = std::env::var("LOKI_CUDA_PTX").unwrap_or_else(|_| "80".to_string());
+    anyhow::ensure!(!ptx.is_empty() && ptx.chars().all(|c| c.is_ascii_digit()), "LOKI_CUDA_PTX: {ptx:?} is not an architecture number such as 90");
+    let archs = std::env::var("LOKI_CUDA_ARCHS").unwrap_or_else(|_| "89".to_string());
+    let mut gencode: Vec<String> = Vec::new();
+    for a in archs.split(',').map(str::trim).filter(|a| !a.is_empty()) {
+        anyhow::ensure!(a.chars().all(|c| c.is_ascii_digit()), "LOKI_CUDA_ARCHS: {a:?} is not an architecture number such as 89");
+        gencode.extend(["-gencode".to_string(), format!("arch=compute_{a},code=sm_{a}")]);
+    }
+    gencode.extend(["-gencode".to_string(), format!("arch=compute_{ptx},code=compute_{ptx}")]);
     let mut entries: Vec<_> = std::fs::read_dir(kdir)?
         .filter_map(|e| e.ok())
         .map(|e| e.path())
@@ -44,8 +58,7 @@ fn main() -> anyhow::Result<()> {
             .arg("--expt-relaxed-constexpr")
             .arg("-lineinfo")
             .arg("-Xptxas").arg("-v")
-            .arg("-gencode").arg("arch=compute_89,code=sm_89")
-            .arg("-gencode").arg("arch=compute_80,code=compute_80")
+            .args(&gencode)
             .arg("-I").arg(kdir)
             .arg("-o").arg(&out)
             .arg(&cu);

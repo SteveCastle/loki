@@ -1588,3 +1588,10 @@ func (q *Queue) SetHostLimit(host string, limit int) {
 	defer q.mu.Unlock()
 	q.HostLimits[host] = limit
 }
+
+// HostLimit returns a bucket's concurrency cap (0 when unset).
+func (q *Queue) HostLimit(host string) int {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return q.HostLimits[host]
+}

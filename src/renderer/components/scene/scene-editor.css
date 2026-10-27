@@ -1664,13 +1664,12 @@ body.sc-body {
   cursor: pointer;
 }
 
-.sc-ink-current input {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  opacity: 0;
-  cursor: pointer;
+.sc-ink-current {
+  padding: 0;
+}
+
+.sc-ink-current.open {
+  border-color: #fff;
 }
 
 .sc-ink-pick {
@@ -1800,6 +1799,12 @@ body.sc-body {
 .sc-grounding-help {
   margin: 4px 0 8px;
   font-size: 11px;
+}
+
+.sc-finish-note {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.4;
 }
 
 .sc-grounding-full p {

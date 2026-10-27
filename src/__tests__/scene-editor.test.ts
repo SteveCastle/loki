@@ -356,8 +356,19 @@ describe('repose finish mask', () => {
     const repose = finishShapes(paint, 'repose', [link]);
     expect(repose).toEqual([link, { ...picked, subject: true }]);
     // Switching away drops the cover and keeps the user's own shapes; switching back does not stack it.
-    expect(finishShapes(paint, 'colour', repose)).toEqual([link]);
+    expect(finishShapes(paint, 'sketch', repose)).toEqual([link]);
     expect(finishShapes(paint, 'repose', repose)).toHaveLength(2);
+  });
+
+  it('Recolour covers past the rough paint, so whole objects show', () => {
+    const paint = layer('p', { kind: 'paint', shapes: [stick] });
+    const [own, cover] = finishShapes(paint, 'colour', [link]);
+    expect(own).toEqual(link);
+    expect(cover).toMatchObject({ t: 'rect', subject: true });
+    const r = cover as { x: number; y: number; w: number; h: number };
+    expect(r.x).toBeLessThan(38);
+    expect(r.y + r.h).toBeGreaterThan(82);
+    expect(finishShapes(paint, 'colour', finishShapes(paint, 'colour', [link]))).toHaveLength(2);
   });
 
   it('falls back to the drawing padded out to a body', () => {

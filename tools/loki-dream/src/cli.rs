@@ -14,7 +14,7 @@ use crate::tensor::Tensor;
 use crate::text_encoder::{self, TextEncoder};
 use crate::vae::Vae;
 use anyhow::{bail, ensure, Context, Result};
-use clap::{CommandFactory, FromArgMatches, Parser};
+use clap::{CommandFactory, Parser};
 use std::collections::HashMap;
 use std::io::{IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
@@ -165,10 +165,16 @@ struct Cli {
     /// FLUX.2 small VAE file.
     #[arg(long)]
     vae: Option<PathBuf>,
+
+    /// Run as a resident worker: read one request per line on stdin (a JSON object whose "args" are a command line for
+    /// this tool), keep the models on the GPU between requests, answer with JSON events on stdout. For supervisors such
+    /// as loki-worker; see CONVENTIONS.md, "Worker mode".
+    #[arg(long)]
+    worker: bool,
 }
 
 pub fn main(prog: &'static str) {
-    if let Err(e) = run(prog) {
+    if let Err(e) = run(prog, std::env::args().collect()) {
         let msg = format!("{e:#}");
         eprintln!("{prog}: error: {msg}");
         if msg.contains("allocating") || msg.contains("OUT_OF_MEMORY") {
@@ -215,6 +221,7 @@ fn target_size(cli: &Cli, init: Option<(usize, usize)>) -> Result<((usize, usize
 }
 
 fn read_stdin() -> Result<String> {
+    crate::worker::forbid_stdin()?;
     let mut v = String::new();
     std::io::stdin().lock().read_to_string(&mut v).context("reading stdin")?;
     Ok(v)
@@ -238,10 +245,54 @@ fn unique(dir: &Path, base: &str, taken: &mut Vec<PathBuf>) -> PathBuf {
     p
 }
 
-fn run(prog: &'static str) -> Result<()> {
+// The VAE and the DiT go through the worker's residency cache (a plain load on the command line). The DiT sits in a
+// RefCell: each run sets its own LoRAs on it.
+fn load_vae(dev: &std::sync::Arc<Device>, p: &Path) -> Result<std::rc::Rc<Vae>> {
+    crate::worker::load(&format!("vae {}", p.display()), p, || Vae::load(dev.clone(), p))
+}
+fn load_dit(dev: &std::sync::Arc<Device>, p: &Path) -> Result<std::rc::Rc<std::cell::RefCell<Dit>>> {
+    crate::worker::load(&format!("dit {}", p.display()), p, || Ok(std::cell::RefCell::new(Dit::load(dev.clone(), p, None)?)))
+}
+
+fn dit_path(cli: &Cli) -> Result<PathBuf> {
+    Ok(match (&cli.dit, cli.precision.as_deref()) {
+        (Some(p), _) => models::resolve(Some(p.clone()), &models::DIT_INT8)?,
+        (None, Some("bf16")) => models::resolve(None, &models::DIT_BF16)?,
+        (None, Some("int8")) => models::resolve(None, &models::DIT_INT8)?,
+        (None, None) => match models::find_local(&models::DIT_INT8).or_else(|| models::find_local(&models::DIT_BF16)) {
+            Some(p) => p,
+            None => models::resolve(None, &models::DIT_INT8)?,
+        },
+        (None, Some(o)) => bail!("--precision must be int8 or bf16, not {o}"),
+    })
+}
+
+fn run(prog: &'static str, argv: Vec<String>) -> Result<()> {
     let cmd = Cli::command().name(prog).bin_name(prog).after_help(HELP.replace("PROG", prog));
-    let cli = Cli::from_arg_matches(&cmd.get_matches())?;
+    let Some(cli) = crate::worker::parse_args::<Cli>(cmd, argv)? else { return Ok(()) };
     crate::log::set_quiet(cli.quiet);
+    if cli.worker {
+        ensure!(!crate::worker::active(), "--worker inside a worker request");
+        return crate::worker::serve(&crate::worker::Tool {
+            name: prog,
+            version: env!("CARGO_PKG_VERSION"),
+            model: MODEL_NAME,
+            run: &|argv| run(prog, argv),
+            warm: &|_| {
+                let dit_path = dit_path(&cli)?;
+                models::resolve(cli.text_encoder.clone(), &models::TEXT_ENCODER)?;
+                let vae_path = models::resolve(cli.vae.clone(), &models::VAE)?;
+                let dev = crate::worker::device()?;
+                crate::ops::gemm_init(&dev)?;
+                crate::ops::attn_init(&dev)?;
+                Vae::init_kernels(&dev)?;
+                load_vae(&dev, &vae_path)?;
+                load_dit(&dev, &dit_path)?;
+                Ok(())
+            },
+            custom: None,
+        });
+    }
     let meta = genmeta::read_meta(cli.meta.as_deref(), cli.meta_file.as_deref()).map_err(anyhow::Error::msg)?;
 
     // ---- prompts
@@ -280,13 +331,11 @@ fn run(prog: &'static str) -> Result<()> {
     let negative = if cfg != 1.0 { Some(cli.negative.clone().unwrap_or_default()) } else { None };
     if cli.show_prompt {
         for p in &prompts {
-            print!("{}", text_encoder::template(p));
-            println!();
+            crate::worker::out_line(&text_encoder::template(p));
         }
         if let Some(n) = &negative {
-            println!("--- negative (CFG {cfg}, blocks {:?} skipped) ---", skip_layers);
-            print!("{}", text_encoder::template(n));
-            println!();
+            crate::worker::out_line(&format!("--- negative (CFG {cfg}, blocks {:?} skipped) ---", skip_layers));
+            crate::worker::out_line(&text_encoder::template(n));
         }
         return Ok(());
     }
@@ -333,6 +382,7 @@ fn run(prog: &'static str) -> Result<()> {
             let dest = match cli.out.as_deref() {
                 Some("-") => {
                     ensure!(n_images == 1, "-o - (PNG on stdout) needs exactly one image");
+                    ensure!(!crate::worker::active(), "-o - (PNG on stdout) is not available in --worker mode; give a file or folder");
                     ensure!(!std::io::stdout().is_terminal(), "refusing to write a PNG to a terminal; redirect stdout or use -o FILE");
                     Dest::Stdout
                 }
@@ -363,16 +413,7 @@ fn run(prog: &'static str) -> Result<()> {
     }
 
     // ---- models
-    let dit_path = match (&cli.dit, cli.precision.as_deref()) {
-        (Some(p), _) => models::resolve(Some(p.clone()), &models::DIT_INT8)?,
-        (None, Some("bf16")) => models::resolve(None, &models::DIT_BF16)?,
-        (None, Some("int8")) => models::resolve(None, &models::DIT_INT8)?,
-        (None, None) => match models::find_local(&models::DIT_INT8).or_else(|| models::find_local(&models::DIT_BF16)) {
-            Some(p) => p,
-            None => models::resolve(None, &models::DIT_INT8)?,
-        },
-        (None, Some(o)) => bail!("--precision must be int8 or bf16, not {o}"),
-    };
+    let dit_path = dit_path(&cli)?;
     let te_path = models::resolve(cli.text_encoder.clone(), &models::TEXT_ENCODER)?;
     let vae_path = models::resolve(cli.vae.clone(), &models::VAE)?;
     let mut all_loras = loras.clone();
@@ -388,7 +429,7 @@ fn run(prog: &'static str) -> Result<()> {
     crate::info!("  dit: {}\n  text encoder: {}\n  vae: {}", dit_path.display(), te_path.display(), vae_path.display());
 
     let t_dev = std::time::Instant::now();
-    let dev = Device::new(0)?;
+    let dev = crate::worker::device()?;
     crate::info!("  gpu: {} MB free of {} MB (cuda init {:.1}s)", dev.free_mem()? >> 20, dev.total_mem >> 20, t_dev.elapsed().as_secs_f64());
     crate::ops::gemm_init(&dev)?;
     crate::ops::attn_init(&dev)?;
@@ -414,7 +455,7 @@ fn run(prog: &'static str) -> Result<()> {
     crate::info!("  text encoder: {} prompt(s), {} tokens, {:.1}s", texts.len(), feats.iter().map(|f| f.tokens.len()).sum::<usize>(), t0.elapsed().as_secs_f64());
 
     // ---- phase 2: VAE (kept for the decodes); encode the init image
-    let vae = Vae::load(dev.clone(), &vae_path)?;
+    let vae = load_vae(&dev, &vae_path)?;
     let (lh, lw) = (gh / 16, gw / 16);
     let x0 = match &init_gen {
         Some(img) => Some(vae.encode(&img.to_f32(), gh, gw).context("vae encode")?),
@@ -426,7 +467,10 @@ fn run(prog: &'static str) -> Result<()> {
     };
 
     // ---- phase 3: DiT (+ LoRAs); sample, decode, write each image as soon as it is ready
-    let mut dit = Dit::load(dev.clone(), &dit_path, None)?;
+    let dit_cell = load_dit(&dev, &dit_path)?;
+    let mut dit = dit_cell.borrow_mut();
+    // always assigned: a resident DiT still carries the previous run's LoRAs
+    dit.lora = Vec::new();
     if !all_loras.is_empty() {
         let t0 = std::time::Instant::now();
         dit.lora = lora::load(&dev, &all_loras, crate::dit::LAYERS)?;
@@ -520,7 +564,7 @@ fn run(prog: &'static str) -> Result<()> {
                 if cli.json {
                     results.push(serde_json::json!({"path": path.display().to_string(), "seed": job.seed, "width": ow, "height": oh, "prompt": prompts[job.prompt], "generation": rec.to_value()}));
                 } else if !stdout_is_image {
-                    println!("{}", path.display());
+                    crate::worker::out_line(&path.display().to_string());
                     std::io::stdout().flush()?;
                 }
             }
@@ -532,7 +576,7 @@ fn run(prog: &'static str) -> Result<()> {
             "prompt": if prompts.len() == 1 { serde_json::Value::from(prompts[0].clone()) } else { serde_json::Value::from(prompts.clone()) },
             "negative": negative, "steps": steps, "cfg": cfg, "turbo": cli.turbo, "width": ow, "height": oh,
         });
-        println!("{j}");
+        crate::worker::out_line(&j.to_string());
     }
     drop(dit);
     dev.sync()?;

@@ -15,6 +15,7 @@ pub mod tokenizer;
 pub mod vae;
 pub mod vision;
 pub mod weights;
+pub mod worker;
 
 /// Progress/diagnostic output (stderr), silenced by `--quiet`. Results go to stdout, never through this.
 pub mod log {

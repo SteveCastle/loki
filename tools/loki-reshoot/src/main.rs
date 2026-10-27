@@ -1,7 +1,7 @@
 //! loki-reshoot: MiniMax H3 reference-to-video (images / videos / audio -> video with sound) on a standalone CUDA engine.
 use anyhow::{bail, ensure, Context, Result};
-use clap::{Parser, ValueEnum};
-use loki_reshoot::cuda::Device;
+use clap::{CommandFactory, Parser, ValueEnum};
+use loki_reshoot::worker;
 use loki_reshoot::genmeta;
 use loki_reshoot::media::{Ffmpeg, FPS};
 use loki_reshoot::models;
@@ -54,7 +54,7 @@ enum FitArg {
     Stretch,
 }
 
-#[derive(Parser, Debug)]
+#[derive(Parser, Debug, Clone)]
 #[command(
     name = "loki-reshoot",
     version,
@@ -204,6 +204,11 @@ struct Cli {
     /// ffmpeg executable (ffprobe next to it). Default: next to the binary, PATH, or auto-download on Windows.
     #[arg(long)]
     ffmpeg: Option<PathBuf>,
+    /// Run as a resident worker: read one request per line on stdin (a JSON object whose "args" are a command line for
+    /// this tool), keep the models on the GPU between requests, answer with JSON events on stdout. For supervisors such
+    /// as loki-worker; see CONVENTIONS.md, "Worker mode".
+    #[arg(long)]
+    worker: bool,
 }
 
 /// `FILE[@START[,DURATION]]`; the `@` suffix is only taken when it parses as numbers (paths may contain '@').
@@ -243,7 +248,7 @@ fn size_for(ratio: f64, mp: f64) -> (usize, usize) {
 }
 
 fn main() {
-    if let Err(e) = run() {
+    if let Err(e) = run(std::env::args().collect()) {
         let msg = format!("{e:#}");
         eprintln!("error: {msg}");
         if msg.contains("allocating") || msg.contains("OUT_OF_MEMORY") {
@@ -253,10 +258,38 @@ fn main() {
     }
 }
 
-fn run() -> Result<()> {
-    let cli = Cli::parse();
+fn model_paths(cli: &Cli) -> Result<Paths> {
+    Ok(Paths {
+        dit: models::resolve(cli.dit.clone(), if cli.model == ModelArg::Fast { &models::FAST_DIT } else { &models::DIT })?,
+        text_encoder: models::resolve(cli.text_encoder.clone(), &models::TEXT_ENCODER)?,
+        video_vae: models::resolve(cli.video_vae.clone(), &models::VIDEO_VAE)?,
+        audio_vae: models::resolve(cli.audio_vae.clone(), &models::AUDIO_VAE)?,
+    })
+}
+
+fn run(argv: Vec<String>) -> Result<()> {
+    let Some(cli) = worker::parse_args::<Cli>(Cli::command(), argv)? else { return Ok(()) };
+    if cli.worker {
+        ensure!(!worker::active(), "--worker inside a worker request");
+        loki_reshoot::log::set_quiet(cli.quiet);
+        return worker::serve(&worker::Tool {
+            name: "loki-reshoot",
+            version: env!("CARGO_PKG_VERSION"),
+            model: "MiniMax H3",
+            run: &|argv| run(argv),
+            // {"cmd": "warm", "model": "fast"} warms FastH3's diffusion model instead of H3's
+            warm: &|req| {
+                let mut base = cli.clone();
+                if req.get("model").and_then(|m| m.as_str()) == Some("fast") {
+                    base.model = ModelArg::Fast;
+                }
+                pipeline::warm(&worker::device()?, &model_paths(&base)?, base.model == ModelArg::Fast)
+            },
+            custom: None,
+        });
+    }
     if cli.prompt_guide {
-        println!("{}", include_str!("../docs/VIDEO_PROMPT_WRITING_GUIDE_ref_en.md"));
+        worker::out_line(include_str!("../docs/VIDEO_PROMPT_WRITING_GUIDE_ref_en.md"));
         return Ok(());
     }
     let mut cli = cli;
@@ -367,7 +400,7 @@ fn run() -> Result<()> {
         (None, None) => bail!("give a prompt with --prompt or --prompt-file"),
     };
     if cli.show_prompt {
-        println!("{prompt}");
+        worker::out_line(&prompt);
         return Ok(());
     }
     let seed = cli.seed.unwrap_or_else(|| {
@@ -378,6 +411,7 @@ fn run() -> Result<()> {
     let to_stdout = out == Path::new("-");
     if to_stdout {
         use std::io::IsTerminal;
+        ensure!(!worker::active(), "-o - (mp4 on stdout) is not available in --worker mode; give a file");
         ensure!(!std::io::stdout().is_terminal(), "refusing to write a video to the terminal: pipe stdout (| ffmpeg -i - ...) or use -o FILE");
     }
     let req = Request {
@@ -407,14 +441,9 @@ fn run() -> Result<()> {
     let mut record = generation_record(&cli, &req, fc, fit_resolved, &ff, _stdin_tmp.0.as_deref());
     record.set("meta", meta);
 
-    let paths = Paths {
-        dit: models::resolve(cli.dit.clone(), if cli.model == ModelArg::Fast { &models::FAST_DIT } else { &models::DIT })?,
-        text_encoder: models::resolve(cli.text_encoder.clone(), &models::TEXT_ENCODER)?,
-        video_vae: models::resolve(cli.video_vae.clone(), &models::VIDEO_VAE)?,
-        audio_vae: models::resolve(cli.audio_vae.clone(), &models::AUDIO_VAE)?,
-    };
+    let paths = model_paths(&cli)?;
     eprintln!("  dit: {}\n  text encoder: {}\n  video vae: {}\n  audio vae: {}", paths.dit.display(), paths.text_encoder.display(), paths.video_vae.display(), paths.audio_vae.display());
-    let dev = Device::new(0)?;
+    let dev = worker::device()?;
     eprintln!("  gpu: {} MB free of {} MB", dev.free_mem()? >> 20, dev.total_mem >> 20);
     let out_path = req.out.clone();
     pipeline::run(dev, &req, &paths, &ff, Some(&record.to_json()))?;
@@ -425,9 +454,9 @@ fn run() -> Result<()> {
                 "seconds": fc as f64 / FPS as f64, "seed": req.seed, "steps": req.steps, "audio": !req.no_audio,
                 "generation": record.to_value(),
             });
-            println!("{j}");
+            worker::out_line(&j.to_string());
         } else {
-            println!("{}", out_path.display());
+            worker::out_line(&out_path.display().to_string());
         }
     }
     Ok(())
@@ -517,6 +546,7 @@ fn resolve_stdin(cli: &mut Cli) -> Result<Option<PathBuf>> {
     if uses == 0 {
         return Ok(None);
     }
+    worker::forbid_stdin()?;
     let mut bytes = Vec::new();
     std::io::stdin().lock().read_to_end(&mut bytes).context("reading stdin")?;
     ensure!(!bytes.is_empty(), "no data on stdin");

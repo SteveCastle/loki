@@ -28,6 +28,36 @@ fn download(hf_path: &str, dest: &Path) -> Result<()> {
         std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
     }
     let part = PathBuf::from(format!("{}.part", dest.display()));
+    // Replicas sharing one models volume (serverless workers) must not write the same .part file at once: one
+    // downloads, the others wait for it (a lock nobody has touched for 2 minutes is stale and taken over).
+    let lock = PathBuf::from(format!("{}.lock", dest.display()));
+    struct Unlock(PathBuf);
+    impl Drop for Unlock {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+    let fresh = |p: &Path| std::fs::metadata(p).and_then(|m| m.modified()).map(|t| t.elapsed().map(|e| e.as_secs() < 120).unwrap_or(true)).unwrap_or(false);
+    let mut announced = false;
+    let _unlock = loop {
+        match std::fs::OpenOptions::new().write(true).create_new(true).open(&lock) {
+            Ok(_) => break Unlock(lock.clone()),
+            Err(_) if dest.exists() => return Ok(()),
+            Err(_) if !fresh(&part) && !fresh(&lock) => {
+                let _ = std::fs::remove_file(&lock);
+            }
+            Err(_) => {
+                if !announced {
+                    eprintln!("  another process is downloading {}; waiting for it", dest.display());
+                    announced = true;
+                }
+                std::thread::sleep(std::time::Duration::from_secs(5));
+            }
+        }
+    };
+    if dest.exists() {
+        return Ok(());
+    }
     let have = std::fs::metadata(&part).map(|m| m.len()).unwrap_or(0);
     let mut req = ureq::get(&url);
     if have > 0 {
@@ -49,6 +79,8 @@ fn download(hf_path: &str, dest: &Path) -> Result<()> {
     pb.set_position(start);
     let mut file = std::fs::OpenOptions::new().create(true).write(true).append(resumed).truncate(!resumed).open(&part)?;
     let mut reader = resp.into_reader();
+    let tty = std::io::IsTerminal::is_terminal(&std::io::stderr());
+    let (mut got, mut last_pct) = (start, 0u64);
     let mut buf = vec![0u8; 1 << 20];
     loop {
         let n = reader.read(&mut buf).with_context(|| format!("downloading {url} (re-run to resume)"))?;
@@ -57,6 +89,17 @@ fn download(hf_path: &str, dest: &Path) -> Result<()> {
         }
         file.write_all(&buf[..n])?;
         pb.inc(n as u64);
+        got += n as u64;
+        // without a terminal the bar draws nothing: log every 5% instead (supervisors relay stderr to remote callers)
+        if !tty {
+            if let Some(t) = total.filter(|t| *t > 0) {
+                let pct = got * 100 / t;
+                if pct >= last_pct + 5 || got == t {
+                    last_pct = pct - pct % 5;
+                    eprintln!("  downloading {}: {pct}% ({:.1}/{:.1} GB)", dest.file_name().unwrap_or_default().to_string_lossy(), got as f64 / 1e9, t as f64 / 1e9);
+                }
+            }
+        }
     }
     file.flush()?;
     drop(file);
@@ -106,6 +149,15 @@ pub fn find_local(spec: &Spec) -> Option<PathBuf> {
     None
 }
 
+/// Where missing model files are downloaded: `$LOKI_MODELS_DOWNLOAD` (containers point it at their models volume), else
+/// `<binary dir>/models`.
+fn download_dir() -> PathBuf {
+    if let Some(d) = std::env::var_os("LOKI_MODELS_DOWNLOAD").filter(|d| !d.is_empty()) {
+        return PathBuf::from(d);
+    }
+    std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.join("models"))).unwrap_or_else(|| PathBuf::from("models"))
+}
+
 /// Resolve a model file: explicit path, else search, else download from Hugging Face into models/ next to the binary.
 pub fn resolve(explicit: Option<PathBuf>, spec: &Spec) -> Result<PathBuf> {
     if let Some(p) = explicit {
@@ -117,8 +169,7 @@ pub fn resolve(explicit: Option<PathBuf>, spec: &Spec) -> Result<PathBuf> {
     if let Some(p) = find_local(spec) {
         return Ok(p);
     }
-    let base = std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.to_path_buf())).unwrap_or_else(|| PathBuf::from("."));
-    let dest = base.join("models").join(spec.hf_path.rsplit('/').next().unwrap());
+    let dest = download_dir().join(spec.hf_path.rsplit('/').next().unwrap());
     // announced even with -q: a multi-GB download should never be a surprise
     eprintln!("{} not found locally; downloading {} ({:.1} GB) from Hugging Face (lodestones/Kromoss) to {}", spec.what, spec.hf_path, spec.size_gb, dest.display());
     download(spec.hf_path, &dest)?;

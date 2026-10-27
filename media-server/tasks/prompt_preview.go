@@ -217,6 +217,16 @@ func runShowPrompt(ctx context.Context, tool aiToolRun, prompt string, build fun
 	if promptFile != "" {
 		defer os.Remove(promptFile)
 	}
+	if tool.Remote() {
+		// a worker's engine answers (this machine has none, or the pool owns it)
+		ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+		defer cancel()
+		out, err := runRemote(ctx, tool, append([]string{"--show-prompt"}, build(promptFile)...), true, nil, nil)
+		if err != nil {
+			return "", fmt.Errorf("%s --show-prompt on %s: %v", tool.Bin, tool.Where(), err)
+		}
+		return strings.TrimRight(strings.Join(out, "\n"), "\n"), nil
+	}
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, tool.Bin, append([]string{"--show-prompt"}, build(promptFile)...)...)

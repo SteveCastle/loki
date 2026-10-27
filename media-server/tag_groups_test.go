@@ -205,6 +205,32 @@ func TestTagGroups_Lifecycle(t *testing.T) {
 	}
 }
 
+// Grouping a tag under a group its category doesn't have yet creates the
+// group; an unknown tag is a 404.
+func TestTagGroups_SetGroupCreatesMissingGroup(t *testing.T) {
+	deps := tagGroupDeps(t)
+
+	rr := postJSON(lokiSetTagGroupHandler(deps), map[string]string{"label": "sunset", "groupLabel": "Places"})
+	mustOK(t, "set group", rr.Code, rr.Body.String())
+	if got := groupLabels(t, deps, "Subject"); len(got) != 1 || got[0] != "Places" {
+		t.Fatalf("groups = %v, want [Places]", got)
+	}
+	if g := groupOf(categoryTags(t, deps, "Subject")["sunset"]); g != "Places" {
+		t.Fatalf("sunset group = %q, want Places", g)
+	}
+
+	// Reusing the group doesn't duplicate it.
+	postJSON(lokiSetTagGroupHandler(deps), map[string]string{"label": "portrait", "groupLabel": "Places"})
+	if got := groupLabels(t, deps, "Subject"); len(got) != 1 {
+		t.Fatalf("groups after reuse = %v, want one", got)
+	}
+
+	rr = postJSON(lokiSetTagGroupHandler(deps), map[string]string{"label": "no-such-tag", "groupLabel": "Places"})
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("unknown tag: expected 404, got %d", rr.Code)
+	}
+}
+
 // Hidden and view mode are per-group display settings: both default off /
 // null, round-trip through the groups payload, and survive a rename.
 func TestTagGroups_DisplaySettings(t *testing.T) {

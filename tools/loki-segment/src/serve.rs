@@ -93,7 +93,7 @@ pub fn prompts_from_json(req: &Value) -> Result<Vec<ObjPrompt>> {
     Ok(out)
 }
 
-fn handle(model: &Model, sess: &mut Session, req: &Value, cli: &Cli) -> Result<Value> {
+pub fn handle(model: &Model, sess: &mut Session, req: &Value, cli: &Cli) -> Result<Value> {
     let cmd = req.get("cmd").and_then(|v| v.as_str()).unwrap_or("");
     match cmd {
         "open" => {
@@ -159,6 +159,40 @@ fn handle(model: &Model, sess: &mut Session, req: &Value, cli: &Cli) -> Result<V
         "" => bail!("missing \"cmd\""),
         other => bail!("unknown cmd {other:?} (open, segment, track, close, info)"),
     }
+}
+
+/// `--worker`: one-shot command lines plus named sessions, all on one resident model. A session request is
+/// `{"id": ..., "cmd": "session", "session": NAME, "req": {...a --serve request...}}` (the reply is the done event's
+/// "reply"); `{"cmd": "close-session", "session": NAME}` ends one.
+pub fn worker(cli: &Cli) -> Result<()> {
+    use std::cell::RefCell;
+    use std::collections::HashMap;
+    let sessions: RefCell<HashMap<String, Session>> = RefCell::new(HashMap::new());
+    let session_cmd = |cmd: &str, req: &Value| -> Result<Value> {
+        let name = req.get("session").and_then(|v| v.as_str()).context("a session command needs \"session\": NAME")?.to_string();
+        match cmd {
+            "session" => {
+                let inner = req.get("req").context("a session command needs \"req\": {...}")?;
+                let model = load_model(cli.model.clone())?;
+                let mut all = sessions.borrow_mut();
+                let sess = all.entry(name).or_insert(Session::None);
+                handle(&model, sess, inner, cli)
+            }
+            "close-session" => {
+                sessions.borrow_mut().remove(&name);
+                Ok(json!({"ok": true}))
+            }
+            other => bail!("unknown cmd {other:?} (run, warm, evict, status, session, close-session)"),
+        }
+    };
+    crate::worker::serve(&crate::worker::Tool {
+        name: crate::cli::TOOL,
+        version: crate::cli::VERSION,
+        model: MODEL_NAME,
+        run: &|argv| crate::cli::run_argv_pub(argv),
+        warm: &|_| load_model(cli.model.clone()).map(|_| ()),
+        custom: Some(&session_cmd),
+    })
 }
 
 pub fn run(cli: &Cli) -> Result<()> {

@@ -842,13 +842,16 @@ func TestScenePaintLayerWithFFmpeg(t *testing.T) {
 
 func TestSceneFinishPrompt(t *testing.T) {
 	refs := []sceneRef{{Path: "a.png", Kind: "image"}, {Kind: "image", Layer: "p1"}}
-	got := sceneFinishPrompt(map[string]any{"finish": FinishColour, "paint": "p1"}, "warm autumn tones.", refs, "", "")
-	if !strings.Contains(got, "painted on <image3> as a guide: warm autumn tones. The paint") {
+	// Recolour's finish pass: the coat is <image1>, the crop before it the identity reference; no paint.
+	coat := []sceneRef{{Path: "a.png", Kind: "image"}, {Kind: "image", Path: "in.png", Identity: true}}
+	got := sceneFinishPrompt(map[string]any{"finish": FinishColour, "paint": "p1"}, "warm autumn tones.", coat, "", "", "green (#2e6b3f), blue (#3a7bd5)")
+	if !strings.HasPrefix(got, "Finish the colouring of <image1>, whose new base colours are already laid in: warm autumn tones. The new colours are green (#2e6b3f), blue (#3a7bd5): every object") ||
+		!strings.Contains(got, "<image3> is the same picture before it was recoloured, for its light, shading and detail only") {
 		t.Fatalf("colour: %s", got)
 	}
 	// Repose with its pose words and the crop again as the identity reference.
 	withSelf := append(append([]sceneRef{}, refs...), sceneRef{Kind: "image", Path: "in.png", Identity: true})
-	got = sceneFinishPrompt(map[string]any{"finish": FinishRepose, "paint": "p1"}, "waving hello", withSelf, "", "both arms raised above the head")
+	got = sceneFinishPrompt(map[string]any{"finish": FinishRepose, "paint": "p1"}, "waving hello", withSelf, "", "both arms raised above the head", "")
 	if !strings.HasPrefix(got, "New pose for the person in <image1>: both arms raised above the head. Make the person") ||
 		!strings.Contains(got, "exact same pose as shown in <image3>: waving hello. <image3> only shows the pose") ||
 		!strings.Contains(got, "placed differently in <image3> move") ||
@@ -857,21 +860,21 @@ func TestSceneFinishPrompt(t *testing.T) {
 		t.Fatalf("repose: %s", got)
 	}
 	// No mannequin words, no identity reference: their sentences go.
-	got = sceneFinishPrompt(map[string]any{"finish": FinishRepose, "paint": "p1"}, "", refs, "", "")
+	got = sceneFinishPrompt(map[string]any{"finish": FinishRepose, "paint": "p1"}, "", refs, "", "", "")
 	if !strings.HasPrefix(got, "Make the person in <image1> do the exact same pose as shown in <image3>. <image3> only shows") ||
 		strings.Contains(got, "{") || strings.Contains(got, "same picture again") || !strings.Contains(got, "instead. Keep their identity") {
 		t.Fatalf("repose, no words: %s", got)
 	}
-	got = sceneFinishPrompt(map[string]any{"finish": FinishSketch}, "", nil, "", "")
+	got = sceneFinishPrompt(map[string]any{"finish": FinishSketch}, "", nil, "", "", "")
 	if !strings.Contains(got, "stands in for the real thing: replace that sketch, and only it, with the real thing as") || strings.Contains(got, "{") ||
 		!strings.Contains(got, "in this picture. The sketch is") || !strings.HasSuffix(got, "any other figure or object.") {
 		t.Fatalf("sketch, no words: %s", got)
 	}
-	got = sceneFinishPrompt(map[string]any{"finish": FinishSketch, "grounding": "Paint {what} in <image1>."}, "a sun", nil, "", "")
+	got = sceneFinishPrompt(map[string]any{"finish": FinishSketch, "grounding": "Paint {what} in <image1>."}, "a sun", nil, "", "", "")
 	if got != "Paint a sun in <image1>." {
 		t.Fatalf("custom grounding: %s", got)
 	}
-	if got := sceneFinishPrompt(map[string]any{}, "make it night", nil, "", ""); got != "make it night" {
+	if got := sceneFinishPrompt(map[string]any{}, "make it night", nil, "", "", ""); got != "make it night" {
 		t.Fatalf("plain layer: %s", got)
 	}
 }

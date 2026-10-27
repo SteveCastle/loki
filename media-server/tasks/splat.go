@@ -112,6 +112,14 @@ func splatTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 		return err
 	}
 
+	// Splat training runs here whatever the engines strategy: with worker
+	// pools the gpu-diffusion bucket is wider than this GPU, so take it.
+	releaseGPU, gerr := holdLocalGPU(ctx)
+	if gerr != nil {
+		return fail("task canceled", gerr)
+	}
+	defer releaseGPU()
+
 	p := splatParamsFromOptions(ParseOptions(j, splatOptions))
 
 	logf := func(format string, a ...any) { q.PushJobStdout(j.ID, tag+": "+fmt.Sprintf(format, a...)) }

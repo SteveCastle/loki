@@ -419,14 +419,20 @@ export function Inspector(props: InspectorProps) {
     return { where: paint ? sketchWhere(paint.region, l.region) : '', target: `<image${images + 2}>` };
   })();
   // A Retouch Repose is also given the crop again (the server adds it last) and, for a mannequin, its pose in words.
+  // Recolour's finish pass is given the crop before recolouring the same way, and not the paint.
   const repose = (() => {
+    if (finish === 'colour' && !dream) {
+      const images = (o.refs || []).filter((r) => !(r.layer && r.layer === o.paint)).length;
+      return { pose: '', self: `<image${images + 2}>` };
+    }
     if (finish !== 'repose' || dream) return { pose: '', self: '' };
     const paint = (props.paintLayers || []).find((p) => p.id === o.paint);
     const images = refTokens('still', o.refs || [], false).filter(Boolean).length;
     const mannequin = (paint?.shapes || []).some((op) => op.t === 'pose' && !op.off);
     return { pose: mannequin ? '[the mannequin’s pose, in words]' : '', self: `<image${images + 2}>` };
   })();
-  const fullPrompt = finish ? composeFinish(grounding, l.prompt, guideToken, sketchTarget.where, sketchTarget.target, repose.pose, repose.self) : '';
+  const colours = finish === 'colour' && !dream ? '[the painted colours, e.g. green (#2e6b3f)]' : '';
+  const fullPrompt = finish ? composeFinish(grounding, l.prompt, guideToken, sketchTarget.where, sketchTarget.target, repose.pose, repose.self, colours) : '';
   const outside = version && grown && !rectContains(version.region, grown);
   const ideas = motion ? MOTION_IDEAS : STILL_IDEAS;
   const promptRef = useRef<HTMLTextAreaElement>(null);
@@ -533,6 +539,13 @@ export function Inspector(props: InspectorProps) {
         onSelect={rememberCaret}
         onBlur={rememberCaret}
       />
+      {finish === 'colour' && !dream && (
+        <p className="sc-faint sc-finish-note">
+          {l.prompt.trim()
+            ? 'Base colours first, then the AI finishes the light and shading you describe (the colours may shift a little).'
+            : 'Base colours only: each object the paint is mostly on takes its colour edge to edge, its shading kept. No AI, a few seconds.'}
+        </p>
+      )}
       {finish && !dream && (
         <details className="sc-grounding">
           <summary>

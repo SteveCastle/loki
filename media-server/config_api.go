@@ -50,6 +50,7 @@ func redactConfig(cfg appconfig.Config) appconfig.Config {
 	cfg.LlamaCppAPIKey = red(cfg.LlamaCppAPIKey)
 	cfg.StrataAPIKey = red(cfg.StrataAPIKey)
 	cfg.Roots = redactRoots(cfg.Roots)
+	cfg.Engines = redactEngines(cfg.Engines)
 	return cfg
 }
 

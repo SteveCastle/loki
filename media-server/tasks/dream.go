@@ -175,6 +175,7 @@ func dreamTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 	if err != nil {
 		return fail(err.Error(), err)
 	}
+	defer tool.Release()
 	res, rerr := resolveJobItemsRaw(j, q)
 	if rerr != nil {
 		return fail("failed to resolve input: "+rerr.Error(), rerr)

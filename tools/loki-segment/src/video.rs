@@ -414,6 +414,7 @@ impl VideoSession {
             }
             out.push((t, per_bucket));
             progress.tick();
+            crate::worker::check_cancel()?;
         }
         Ok(out)
     }
@@ -770,10 +771,10 @@ pub fn run_cli(cli: &Cli, input: &str, prompts: &[ObjPrompt], meta: Option<&Valu
     let vopts = TrackOpts { looped: cli.looped, bidir: !cli.no_bidir, smooth: cli.smooth, sticky: cli.sticky };
     let r = sess.track(&model, prompts, cli.threshold, cli.out.as_deref(), &WriteOpts { alpha: cli.alpha, binary: cli.binary, multimask: cli.multimask }, &vopts, false)?;
     if cli.json {
-        println!("{r}");
+        crate::worker::out_line(&r.to_string());
     } else {
         for o in r["objects"].as_array().cloned().unwrap_or_default() {
-            println!("{}", o["frames"].as_str().unwrap_or(""));
+            crate::worker::out_line(o["frames"].as_str().unwrap_or(""));
         }
     }
     Ok(())

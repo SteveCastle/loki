@@ -60,7 +60,12 @@ input and its path is printed, so the tools chain: `loki-retouch --preset restor
 | **loki-segment** | concept / click / box segmentation of images, tracked roto masks of video (`--serve` for editors) | Meta SAM 3.1 | [`loki-segment/`](loki-segment) |
 | **loki-dream** | text -> image, img2img, inpainting, LoRAs, 8-step turbo (`--turbo`) | Kromoss (MOSS-Image fine-tune) + Qwen3.5-9B + FLUX.2 VAE | [`loki-dream/`](loki-dream) |
 
-They share one set of conventions (streams, flags, exit codes, model discovery): see [`CONVENTIONS.md`](CONVENTIONS.md).
+They share one set of conventions (streams, flags, exit codes, model discovery, and `--worker`, the resident mode that keeps
+models on the GPU between requests): see [`CONVENTIONS.md`](CONVENTIONS.md).
+
+**GPU workers**: [`worker/`](worker) packages all four as one container (`ghcr.io/stevecastle/loki-worker`) run by
+`loki-worker`, which serves them to the media server from RunPod (pods or serverless), AWS, Kubernetes or any GPU box,
+so the server can send its Transform jobs to a pool of remote GPUs instead of (or as well as) its own.
 `lokictl` (the media-server client) is separate and unrelated.
 
 ## Getting the binaries
@@ -121,4 +126,5 @@ tools/
   loki-reshoot/         same; plus reference_4kify/ (Qwen-Image sources kept as reading material, not compiled)
   loki-segment/         same layout; ref/ holds the scripts that dump references from Meta's official sam3 package
   loki-dream/           same layout; ref/ dumps references from the official pipeline_moss_image.py (diffusers/transformers)
+  worker/               the loki-worker container (Dockerfile), deployment recipes (RunPod, AWS, Kubernetes, compose)
 ```

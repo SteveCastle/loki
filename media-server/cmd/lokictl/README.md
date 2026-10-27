@@ -79,6 +79,7 @@ Run `lokictl help` for the always-current list. Highlights:
 | Raw SQL (read-only) | `db query "SELECT ..." [--arg V]`, `db tables`, `db schema [table]` |
 | Taxonomy | `taxonomy [--category C]`, `tag create/delete/rename/move/assign/unassign/assign-bulk/unassign-bulk`, `tag list/count/weight/has/timestamp/assignment-weight`, `category create/delete/rename/count` |
 | Dependencies | `deps status`, `deps download <model-id> --wait`, `deps verify/delete` |
+| GPU worker pools | `pool status` (`-o table`), `pool check`, `pool strategy local\|pool\|hybrid [--fallback=true]`, `pool route <engine> local\|pool\|pool:NAME\|hybrid\|default`, `pool add-node <pool> <url> --token T`, `pool add-runpod <pool> --endpoint ID --api-key K [--transfer-root LABEL]`, `pool remove <pool> [url]`, `pool warm <pool\|all> <engine>...`, `pool create runpod-pods\|runpod-serverless <pool> [--count N --gpu T --network-volume V --preload E]` (needs `$RUNPOD_API_KEY`), `pool scale <pool> --count N`, `pool destroy <pool>` — see `tools/worker/README.md` |
 | Server admin | `config get`, `config set --json '{...}'`, `fs list/scan`, `upload <file>...`, `whoami` |
 | API keys | `key create --name N [--username U] [--save]`, `key list`, `key revoke --id N` |
 | Escape hatch | `api <METHOD> <path> [--body JSON\|@file\|-]` — any endpoint, auth attached |
@@ -161,6 +162,35 @@ lokictl tag list -o table                                    # every tag with us
 lokictl db query "SELECT path FROM media WHERE path LIKE '%/vacation/%'" -q \
   | jq -r '.rows[][]' | lokictl tag assign-bulk vacation --category trips --stdin
 lokictl tag unassign-bulk blurry --stdin --yes < paths.txt
+```
+
+**Group tags inside a category** (a visual level between category and tag —
+e.g. a `Series` category with one group per show holding per-season tags;
+grouping never changes what a tag query matches):
+
+```sh
+lokictl group list --category Series -o table               # groups in order
+lokictl group add "Dirty Pair" --category Series "Dirty Pair - Season 1" "Dirty Pair - Season 2"
+lokictl group weight "Dirty Pair" --category Series --weight 1   # reorder
+lokictl group rename "Dirty Pair" "The Dirty Pair" --category Series
+lokictl group remove "Dirty Pair - Specials"                 # ungroup a tag
+lokictl group hide "Dirty Pair" --category Series           # out of the panel (Settings → Show Hidden Tag Groups)
+lokictl group show "Dirty Pair" --category Series
+lokictl group view "Dirty Pair" list --category Series      # card | list | auto (follow the category)
+lokictl group delete "Dirty Pair" --category Series --yes    # tags stay, ungrouped
+lokictl category grouping Series on                          # show/hide groups
+```
+
+Assigning a tag that doesn't exist yet creates it in `--category`; an existing
+tag keeps its own category (naming another is a 409).
+
+**Deleting a category is guarded.** It always previews what it would remove,
+and refuses to untag anything unless you also pass `--allow-nonempty`:
+
+```sh
+lokictl category delete Anime --dry-run                      # tags, groups, assignments, media
+lokictl category delete Anime --yes                          # only if it owns no assignments
+lokictl category delete Anime --yes --allow-nonempty         # deliberately untag its media
 ```
 
 **Write metadata directly, or have AI generate it:**

@@ -344,7 +344,34 @@ func (w *lineWriter) Flush() {
 // runAICLI runs one loki-* CLI invocation, streaming stderr into the job log
 // (prefixed with tag, step lines throttled) and reporting step progress via
 // onStep. Returns the stdout lines (the written path).
+//
+// A remote tool (a worker lease) runs the same command line on its worker:
+// local files are sent along and the outputs come back to the paths args name.
 func runAICLI(ctx context.Context, q *jobqueue.Queue, jobID, tag string, tool aiToolRun, args []string, onStep func(i, n int)) ([]string, error) {
+	firstStep := true
+	onErrLine := func(s string) {
+		if i, n, ok := parseStepLine(s); ok {
+			if onStep != nil {
+				onStep(i, n)
+			}
+			if firstStep || i%5 == 0 || i >= n {
+				_ = q.PushJobStdout(jobID, tag+": "+strings.TrimSpace(s))
+			}
+			firstStep = false
+			return
+		}
+		_ = q.PushJobStdout(jobID, tag+": "+s)
+	}
+	return runEngine(ctx, tool, args, onErrLine, func(s string) { _ = q.PushJobStdout(jobID, tag+": "+s) })
+}
+
+// runEngine runs one engine command line here or on the tool's worker,
+// handing each stderr line to onErrLine (and the dispatcher's notes to
+// onStatus); returns the stdout lines.
+func runEngine(ctx context.Context, tool aiToolRun, args []string, onErrLine, onStatus func(string)) ([]string, error) {
+	if tool.Remote() {
+		return runRemote(ctx, tool, args, tool.light, onErrLine, onStatus)
+	}
 	cmd := exec.CommandContext(ctx, tool.Bin, args...)
 	if len(tool.Env) > 0 {
 		cmd.Env = append(os.Environ(), tool.Env...)
@@ -359,20 +386,7 @@ func runAICLI(ctx context.Context, q *jobqueue.Queue, jobID, tag string, tool ai
 		outLines = append(outLines, strings.TrimSpace(s))
 		outMu.Unlock()
 	}}
-	firstStep := true
-	stderr := &lineWriter{fn: func(s string) {
-		if i, n, ok := parseStepLine(s); ok {
-			if onStep != nil {
-				onStep(i, n)
-			}
-			if firstStep || i%5 == 0 || i >= n {
-				_ = q.PushJobStdout(jobID, tag+": "+strings.TrimSpace(s))
-			}
-			firstStep = false
-			return
-		}
-		_ = q.PushJobStdout(jobID, tag+": "+s)
-	}}
+	stderr := &lineWriter{fn: onErrLine}
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	err := cmd.Run()
@@ -488,6 +502,7 @@ func runRetouchJob(j *jobqueue.Job, q *jobqueue.Queue, tag string, p retouchPara
 	if err != nil {
 		return fail(err.Error(), err)
 	}
+	defer bin.Release()
 
 	res, rerr := resolveJobItemsRaw(j, q)
 	if rerr != nil {

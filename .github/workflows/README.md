@@ -60,3 +60,16 @@ Notes:
   jobs are proven stable.
 - CUDA 12.6.3 is pinned in the action (it must match the `cuda-12060` feature of `cudarc` in each `Cargo.toml`).
 - Windows installs the full toolkit; Linux installs only `nvcc`, `cudart-dev` and `cccl` (verified sufficient to build both tools).
+
+## Worker image Workflow
+
+**File:** `worker-image.yml`
+
+**Trigger:** pushes to `master` and `v*` tags touching the engines (`tools/loki-*`), `tools/worker/`, `media-server/workerapi/` or
+`media-server/cmd/loki-worker/`; pull requests on the same paths (build and smoke test only); manual dispatch.
+
+**Purpose:** builds the `loki-worker` container (`tools/worker/Dockerfile`: the four CUDA engines, loki-worker and ffmpeg) and pushes
+it to `ghcr.io/stevecastle/loki-worker` (`latest`, the `package.json` version, `sha-<commit>`), where RunPod, AWS and any Docker
+host pull it. The image is smoke-tested on the runner (no GPU: every binary must start and print its version). The first push creates
+the GHCR package private: make it public once (repository → Packages → loki-worker → Package settings) so providers can pull it
+without credentials, or give them a `read:packages` token. See `tools/worker/README.md`.

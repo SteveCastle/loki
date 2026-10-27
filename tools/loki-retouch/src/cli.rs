@@ -13,7 +13,7 @@ use crate::presets::{self, Preset};
 use crate::text_encoder::TextEncoder;
 use crate::vae::Vae;
 use anyhow::{bail, ensure, Context, Result};
-use clap::{CommandFactory, FromArgMatches, Parser};
+use clap::{CommandFactory, Parser};
 use std::io::{IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
 
@@ -156,11 +156,17 @@ struct Cli {
     /// Qwen Image 2.1 VAE (bf16 safetensors).
     #[arg(long)]
     vae: Option<PathBuf>,
+
+    /// Run as a resident worker: read one request per line on stdin (a JSON object whose "args" are a command line for
+    /// this tool), keep the models on the GPU between requests, answer with JSON events on stdout. For supervisors such
+    /// as loki-worker; see CONVENTIONS.md, "Worker mode".
+    #[arg(long)]
+    worker: bool,
 }
 
 /// Entry point shared by the binaries: `prog` names the tool in help, `default_preset` is applied unless `--preset` says otherwise.
 pub fn main(prog: &'static str, default_preset: Option<&'static str>) {
-    if let Err(e) = run(prog, default_preset) {
+    if let Err(e) = run(prog, default_preset, std::env::args().collect()) {
         let msg = format!("{e:#}");
         eprintln!("{prog}: error: {msg}");
         if msg.contains("allocating") || msg.contains("OUT_OF_MEMORY") {
@@ -263,6 +269,7 @@ fn target_size(cli: &Cli, preset: Option<&Preset>, first: (usize, usize)) -> Res
 }
 
 fn read_stdin() -> Result<Vec<u8>> {
+    crate::worker::forbid_stdin()?;
     let mut v = Vec::new();
     std::io::stdin().lock().read_to_end(&mut v).context("reading stdin")?;
     Ok(v)
@@ -327,6 +334,7 @@ fn glob_match(pat: &str, s: &str) -> bool {
 fn destination(out: &Option<String>, src: &Source, njobs: usize, suffix: &str) -> Result<Dest> {
     match (out.as_deref(), src) {
         (Some("-"), _) => {
+            ensure!(!crate::worker::active(), "-o - (PNG on stdout) is not available in --worker mode; give a file");
             ensure!(njobs == 1, "-o - (PNG on stdout) needs exactly one input");
             Ok(Dest::Stdout)
         }
@@ -353,14 +361,50 @@ fn destination(out: &Option<String>, src: &Source, njobs: usize, suffix: &str) -
     }
 }
 
-fn run(prog: &'static str, default_preset: Option<&'static str>) -> Result<()> {
+/// The models' paths: explicit flags, else discovered locally, else downloaded.
+fn model_paths(cli: &Cli) -> Result<(PathBuf, PathBuf, PathBuf)> {
+    Ok((models::resolve(cli.dit.clone(), &models::DIT)?, models::resolve(cli.text_encoder.clone(), &models::TEXT_ENCODER)?, models::resolve(cli.vae.clone(), &models::VAE)?))
+}
+
+// Every model goes through the worker's residency cache (a plain load on the command line); the key names the file.
+fn load_vae(dev: &std::sync::Arc<Device>, p: &Path) -> Result<std::rc::Rc<Vae>> {
+    crate::worker::load(&format!("vae {}", p.display()), p, || Vae::load(dev.clone(), p))
+}
+fn load_text_encoder(dev: &std::sync::Arc<Device>, p: &Path) -> Result<std::rc::Rc<TextEncoder>> {
+    crate::worker::load(&format!("text-encoder {}", p.display()), p, || TextEncoder::load(dev.clone(), p))
+}
+fn load_dit(dev: &std::sync::Arc<Device>, p: &Path) -> Result<std::rc::Rc<Dit>> {
+    crate::worker::load(&format!("dit {}", p.display()), p, || Dit::load(dev.clone(), p))
+}
+
+fn run(prog: &'static str, default_preset: Option<&'static str>, argv: Vec<String>) -> Result<()> {
     let cmd = Cli::command().name(prog).bin_name(prog).after_help(HELP.replace("PROG", prog));
-    let cli = Cli::from_arg_matches(&cmd.get_matches())?;
+    let Some(cli) = crate::worker::parse_args::<Cli>(cmd, argv)? else { return Ok(()) };
     crate::log::set_quiet(cli.quiet);
+
+    if cli.worker {
+        ensure!(!crate::worker::active(), "--worker inside a worker request");
+        return crate::worker::serve(&crate::worker::Tool {
+            name: prog,
+            version: env!("CARGO_PKG_VERSION"),
+            model: "Qwen Image 2.1",
+            run: &|argv| run(prog, default_preset, argv),
+            warm: &|_| {
+                let (dit, te, vae) = model_paths(&cli)?;
+                let dev = crate::worker::device()?;
+                let _init = Pipeline::new(dev.clone(), Settings { target_w: 0, target_h: 0, out_w: 0, out_h: 0, steps: 1, shift: 0.0, seed: 0, ref_resolution: 0, ref_policy: crate::pipeline::RefPolicy::Native, prompt: String::new() })?;
+                load_text_encoder(&dev, &te)?;
+                load_vae(&dev, &vae)?;
+                load_dit(&dev, &dit)?;
+                Ok(())
+            },
+            custom: None,
+        });
+    }
 
     if cli.list_presets {
         for (n, d) in presets::PRESETS {
-            println!("{n:<12} {d}");
+            crate::worker::out_line(&format!("{n:<12} {d}"));
         }
         return Ok(());
     }
@@ -427,7 +471,7 @@ fn run(prog: &'static str, default_preset: Option<&'static str>) -> Result<()> {
     if cli.show_prompt && cli.inputs.is_empty() {
         // no input needed when the preset (or --size) fixes the output size
         let ((w, h), _) = target_size(&cli, preset.as_ref(), (1024, 1024))?;
-        println!("{}", make_prompt(w, h));
+        crate::worker::out_line(&make_prompt(w, h));
         return Ok(());
     }
     ensure!(!cli.inputs.is_empty() || !jobs.is_empty(), "no input image (give files, a directory, a glob, or `-` for stdin)");
@@ -435,7 +479,7 @@ fn run(prog: &'static str, default_preset: Option<&'static str>) -> Result<()> {
     let first_dims = sources[0].dims()?;
     if cli.show_prompt {
         let ((w, h), _) = target_size(&cli, preset.as_ref(), first_dims)?;
-        println!("{}", make_prompt(w, h));
+        crate::worker::out_line(&make_prompt(w, h));
         return Ok(());
     }
     // each job's references: its own (--jobs), else the flags'
@@ -455,13 +499,11 @@ fn run(prog: &'static str, default_preset: Option<&'static str>) -> Result<()> {
     let fixed_seed = preset.as_ref().map(|p| p.seq).unwrap_or(false);
     let policy = preset.as_ref().map(|p| p.ref_policy()).unwrap_or(crate::pipeline::RefPolicy::Native);
 
-    let dit_path = models::resolve(cli.dit.clone(), &models::DIT)?;
-    let te_path = models::resolve(cli.text_encoder.clone(), &models::TEXT_ENCODER)?;
-    let vae_path = models::resolve(cli.vae.clone(), &models::VAE)?;
+    let (dit_path, te_path, vae_path) = model_paths(&cli)?;
     crate::info!("{prog}: {} input(s){}{}", sources.len(), preset_name.as_ref().map(|n| format!(", preset {n}")).unwrap_or_default(), if cli.refs.is_empty() { String::new() } else { format!(", {} extra reference(s)", cli.refs.len()) });
     crate::info!("  dit: {}\n  text encoder: {}\n  vae: {}", dit_path.display(), te_path.display(), vae_path.display());
 
-    let dev = Device::new(0)?;
+    let dev = crate::worker::device()?;
     crate::info!("  gpu: {} MB free of {} MB", dev.free_mem()? >> 20, dev.total_mem >> 20);
     let base = Settings { target_w: 0, target_h: 0, out_w: 0, out_h: 0, steps: cli.steps, shift: cli.shift, seed: cli.seed, ref_resolution: cli.ref_resolution, ref_policy: policy, prompt: String::new() };
     let _init = Pipeline::new(dev.clone(), base.clone())?; // initializes the GEMM/attention/VAE kernels
@@ -474,8 +516,8 @@ fn run(prog: &'static str, default_preset: Option<&'static str>) -> Result<()> {
     }
 
     // ---- phase 1: load the VAE and text encoder; encode every input
-    let vae = Vae::load(dev.clone(), &vae_path)?;
-    let te = TextEncoder::load(dev.clone(), &te_path)?;
+    let vae = load_vae(&dev, &vae_path)?;
+    let te = load_text_encoder(&dev, &te_path)?;
     // (job index, settings, encoded inputs, the inputs as described in the generation record)
     let mut encoded: Vec<(usize, Settings, Encoded, Vec<serde_json::Value>)> = Vec::new();
     let mut failed = 0usize;
@@ -527,7 +569,7 @@ fn run(prog: &'static str, default_preset: Option<&'static str>) -> Result<()> {
     }
 
     // ---- phase 2: load the DiT; sample, decode and write each result as soon as it is ready
-    let model = Dit::load(dev.clone(), &dit_path)?;
+    let model = load_dit(&dev, &dit_path)?;
     let show_bar = !cli.quiet && std::io::stderr().is_terminal();
     let stdout_is_image = dests.iter().any(|d| matches!(d, Dest::Stdout));
     for (i, settings, enc, inputs) in &encoded {
@@ -587,9 +629,9 @@ fn run(prog: &'static str, default_preset: Option<&'static str>) -> Result<()> {
                         "input": src.name(), "output": path.display().to_string(), "width": settings.out_w, "height": settings.out_h,
                         "seed": settings.seed, "steps": settings.steps, "preset": preset_name, "generation": rec.to_value(),
                     });
-                    println!("{j}");
+                    crate::worker::out_line(&j.to_string());
                 } else if !stdout_is_image {
-                    println!("{}", path.display());
+                    crate::worker::out_line(&path.display().to_string());
                 }
             }
         }

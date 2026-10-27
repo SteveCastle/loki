@@ -145,6 +145,18 @@ impl Device {
         Ok(self.ctx.mem_get_info()?.0)
     }
 
+    /// Hand the memory pool's cached free blocks back to the driver, so `free_mem` sees them (worker mode measures
+    /// what is free before deciding which resident model to evict).
+    pub fn trim_pool(&self) {
+        unsafe {
+            let _ = self.ctx.bind_to_thread();
+            let mut pool: sys::CUmemoryPool = std::ptr::null_mut();
+            if sys::cuDeviceGetDefaultMemPool(&mut pool, self.ctx.cu_device()) == sys::CUresult::CUDA_SUCCESS {
+                let _ = sys::cuMemPoolTrimTo(pool, 0);
+            }
+        }
+    }
+
     pub fn alloc(&self, bytes: usize) -> Result<DevBuf> {
         let bytes = bytes.max(256);
         let slice = unsafe { self.stream.alloc::<u8>(bytes) }

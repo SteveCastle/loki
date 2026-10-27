@@ -1,14 +1,12 @@
 package tasks
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
 	"image"
 	"image/png"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -18,7 +16,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stevecastle/shrike/jobqueue"
-	"github.com/stevecastle/shrike/platform"
 )
 
 // --- Roto: a motion version's matte, tracked through its clip ---
@@ -200,15 +197,20 @@ func sceneTrackTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 	// Installed on first use like the other engines (the tool and SAM 3.1's
 	// weights, ~1.8 GB): a managed loki-segment is only used with its weights
 	// in place. $LOKI_SEGMENT_BIN and a binary on PATH bring their own.
-	bin := strings.TrimSpace(os.Getenv("LOKI_SEGMENT_BIN"))
-	if bin == "" {
+	tool := aiToolRun{Bin: strings.TrimSpace(os.Getenv("LOKI_SEGMENT_BIN"))}
+	if tool.Bin == "" {
 		run, rerr := resolveAITool(ctx, q, j.ID, tag, segSpec)
 		if rerr != nil {
 			return fail(rerr.Error(), rerr)
 		}
-		bin = run.Bin
+		tool = run
+	} else {
+		tool.Env = aiToolEnv(segSpec)
 	}
-	defer beginGPUHeavy()()
+	defer tool.Release()
+	if !tool.Remote() {
+		defer beginGPUHeavy()()
+	}
 
 	v := SceneVersion{Path: video}
 	dir, preview := sceneTrackPaths(v)
@@ -220,19 +222,8 @@ func sceneTrackTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 	}
 	args = append(args, video)
 	q.PushJobStdout(j.ID, fmt.Sprintf("%s: tracking %s", tag, filepath.Base(video)))
-	cmd := exec.CommandContext(ctx, bin, args...)
-	platform.HideSubprocessWindow(cmd)
-	cmd.Env = append(os.Environ(), aiToolEnv(segSpec)...)
-	stderr, _ := cmd.StderrPipe()
-	var stdout strings.Builder
-	cmd.Stdout = &stdout
-	if err := cmd.Start(); err != nil {
-		return fail("starting loki-segment: "+err.Error(), err)
-	}
-	sc := bufio.NewScanner(stderr)
-	sc.Split(scanLinesOrCR)
-	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
+	out, err := runEngine(ctx, tool, args, func(line string) {
+		line = strings.TrimSpace(line)
 		if m := trackProgressRe.FindStringSubmatch(line); m != nil {
 			done, _ := strconv.Atoi(m[1])
 			total, _ := strconv.Atoi(m[2])
@@ -242,21 +233,22 @@ func sceneTrackTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 		} else if line != "" {
 			q.PushJobStdout(j.ID, tag+": "+line)
 		}
-	}
-	if err := cmd.Wait(); err != nil {
+	}, func(s string) { q.PushJobStdout(j.ID, tag+": "+s) })
+	if err != nil {
 		_ = os.RemoveAll(raw)
 		if ctx.Err() != nil {
 			return fail("task canceled", ctx.Err())
 		}
 		return fail("loki-segment failed: "+err.Error(), err)
 	}
+	stdout := strings.Join(out, "\n")
 	var res struct {
 		Frames  int `json:"frames"`
 		Objects []struct {
 			Frames string `json:"frames"`
 		} `json:"objects"`
 	}
-	if err := json.Unmarshal([]byte(stdout.String()), &res); err != nil {
+	if err := json.Unmarshal([]byte(stdout), &res); err != nil {
 		return fail("could not read loki-segment's answer", err)
 	}
 	if len(res.Objects) == 0 {

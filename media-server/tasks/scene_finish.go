@@ -18,7 +18,8 @@ import (
 // token of the sketch rendered alone on black (sceneFinishTarget), {pose} =
 // the mannequin's pose in words (describePose), {self} = the token of the
 // picture given again as an identity reference (Repose). A sentence naming
-// {target}, {pose} or {self} is dropped when it is empty (Kromoss takes no
+// {target}, {pose}, {self} or {colours} (Recolour: the painted colours in
+// words) is dropped when it is empty (Kromoss takes no
 // images; a hand-drawn figure has no words).
 //
 // Retouch takes no mask, so the words and the target image are all that say
@@ -52,10 +53,16 @@ var sceneFinishGrounding = map[string]string{
 		"so do not copy its flat paint or hard outline: correct its shape and proportions, and give it the real look, light, texture and focus " +
 		"it would have here, in the picture's own style. Leave everything that was not sketched exactly as it is: " +
 		"do not change, move or replace any other figure or object, even one that looks like {what}.",
-	FinishColour: "Colour <image1> using the rough colours painted on {guide} as a guide: {what}. " +
-		"The paint is loose and only marks which colour goes where: give each whole object or area the colour painted mostly over it, " +
-		"following the shapes and edges of <image1> rather than the edges of the brush strokes. " +
-		"Keep every line and detail of <image1> as it is, and finish with clean, natural shading.",
+	// Recolour's engine pass only finishes the base coat scene-recolour lays
+	// in (scene_recolour.go): shown the paint, it copied the patches onto the
+	// picture. It runs only when the layer has words, and sees the coat as
+	// <image1> and the crop before it as {self}.
+	// Named colours hold: without them a glowing lantern went back to its old
+	// yellow and recoloured grass drifted back toward green.
+	FinishColour: "Finish the colouring of <image1>, whose new base colours are already laid in: {what}. " +
+		"The new colours are {colours}: every object in one of them keeps it exactly; only even out patchy or uneven colour within an object. " +
+		"{self} is the same picture before it was recoloured, for its light, shading and detail only, not its colours. " +
+		"Keep every line, texture and detail, and the composition, unchanged.",
 	// Evolved in tools/repose-lab (FAVORITE.md, strategy x1idref): limbs follow
 	// the figure's directions, not its lengths (a mannequin's shin read from
 	// an ankle off the frame is short); "keep the person exactly as they are"
@@ -76,8 +83,9 @@ var sceneFinishGrounding = map[string]string{
 // as it is, or for a finish layer the grounding around it. refs are the
 // layer's references (the guide's and the target's tokens are looked up among
 // them); where is sketchWhere's phrase, or ""; pose is the mannequin's pose
-// in words (paintPoseWords), or "".
-func sceneFinishPrompt(opts map[string]any, prompt string, refs []sceneRef, where, pose string) string {
+// in words (paintPoseWords), or ""; colours is the painted colours in words
+// (Recolour: paintColourWords), or "".
+func sceneFinishPrompt(opts map[string]any, prompt string, refs []sceneRef, where, pose, colours string) string {
 	mode := optString(opts, "finish")
 	grounding := strings.TrimSpace(optString(opts, "grounding"))
 	if grounding == "" {
@@ -99,7 +107,7 @@ func sceneFinishPrompt(opts map[string]any, prompt string, refs []sceneRef, wher
 			self = t
 		}
 	}
-	return composeFinish(fillOrDrop(fillOrDrop(grounding, "{pose}", pose), "{self}", self), prompt, guide, where, target)
+	return composeFinish(fillOrDrop(fillOrDrop(fillOrDrop(grounding, "{pose}", pose), "{self}", self), "{colours}", colours), prompt, guide, where, target)
 }
 
 // fillOrDrop puts val in for key, or drops the sentences naming key when val

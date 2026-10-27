@@ -186,6 +186,12 @@ func (s *segSession) ask(req map[string]any, timeout time.Duration) (map[string]
 
 // segRequest runs one segment request on path in scene id's session.
 func segRequest(id, path string, req map[string]any) (map[string]any, error) {
+	// routed to a worker pool: the session lives on a worker node
+	if !engineRunsLocalOnly(segSpec.Bin) {
+		if resp, handled, err := remoteSegRequest(id, path, req); handled {
+			return resp, err
+		}
+	}
 	segReaper.Do(func() {
 		go func() {
 			for range time.Tick(30 * time.Second) {

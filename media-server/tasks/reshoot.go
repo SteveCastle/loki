@@ -290,6 +290,7 @@ func reshootTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 	if err != nil {
 		return fail(err.Error(), err)
 	}
+	defer bin.Release()
 	if p.Model == reshootModelFast {
 		if !aiToolHelpHas(ctx, bin, "--model") {
 			return fail("this loki-reshoot is too old for the fast model (FastH3 Omni); update it (Dependencies page, or your own build on PATH) or use the H3 model", nil)

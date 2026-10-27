@@ -45,8 +45,8 @@ func init() {
 
 	register(command{group: "category", name: "create", args: "<label>",
 		summary: "Create a category (POST /api/categories)", run: categoryLabelCommand("POST", "/api/categories", false)})
-	register(command{group: "category", name: "delete", args: "<label> --yes",
-		summary: "Delete a category (DELETE /api/categories)", run: categoryLabelCommand("DELETE", "/api/categories", true)})
+	register(command{group: "category", name: "delete", args: "<label> [--dry-run] --yes [--allow-nonempty]",
+		summary: "Delete a category, its tags, groups and their assignments (GET /api/categories/impact, then DELETE /api/categories); refuses to remove assignments without --allow-nonempty", run: cmdCategoryDelete})
 	register(command{group: "category", name: "rename", args: "<old> <new>",
 		summary: "Rename a category (POST /api/categories/rename)", run: cmdCategoryRename})
 	register(command{group: "category", name: "count", args: "<label>",
@@ -123,10 +123,13 @@ func cmdTagDelete(a *App, args []string) int {
 	if code >= 0 {
 		return code
 	}
-	if err := a.Client.DoJSON("DELETE", "/api/tags", tagBody{Label: label, CategoryLabel: cat}, nil); err != nil {
+	var removed struct {
+		Assignments *int64 `json:"assignments"`
+	}
+	if err := a.Client.DoJSON("DELETE", "/api/tags", tagBody{Label: label, CategoryLabel: cat}, &removed); err != nil {
 		return a.Fail(err)
 	}
-	return a.PrintJSON(map[string]string{"status": "deleted", "label": label, "category": cat})
+	return a.PrintJSON(map[string]any{"status": "deleted", "label": label, "category": cat, "assignmentsRemoved": removed.Assignments})
 }
 
 func cmdTagRename(a *App, args []string) int {
@@ -196,7 +199,9 @@ func cmdTagUnassign(a *App, args []string) int {
 }
 
 // bulkPaths resolves the media paths for a bulk command: positional args, or
-// newline-separated stdin when --stdin is passed.
+// newline-separated stdin when --stdin is passed. A leading UTF-8 BOM is
+// dropped: Windows PowerShell prepends one when piping to a native command,
+// which would otherwise become part of the first path.
 func bulkPaths(positional []string, useStdin bool) ([]string, error) {
 	if useStdin {
 		b, err := io.ReadAll(os.Stdin)
@@ -204,7 +209,7 @@ func bulkPaths(positional []string, useStdin bool) ([]string, error) {
 			return nil, fmt.Errorf("reading paths from stdin: %w", err)
 		}
 		var paths []string
-		for _, line := range strings.Split(string(b), "\n") {
+		for _, line := range strings.Split(strings.TrimPrefix(string(b), string(rune(0xFEFF))), "\n") {
 			if line = strings.TrimRight(strings.TrimSpace(line), "\r"); line != "" {
 				paths = append(paths, line)
 			}
@@ -447,6 +452,56 @@ func cmdCategoryCount(a *App, args []string) int {
 		return a.Fail(err)
 	}
 	return a.PrintJSON(map[string]any{"category": args[0], "count": out})
+}
+
+// categoryImpact mirrors the server's GET /api/categories/impact response.
+type categoryImpact struct {
+	Label       string `json:"label"`
+	Exists      bool   `json:"exists"`
+	Tags        int64  `json:"tags"`
+	Groups      int64  `json:"groups"`
+	Assignments int64  `json:"assignments"`
+	Media       int64  `json:"media"`
+}
+
+// cmdCategoryDelete always previews first. A category that looks empty can
+// still own assignments, so removing any needs --allow-nonempty on top of
+// --yes; a server that can't preview is refused rather than trusted.
+func cmdCategoryDelete(a *App, args []string) int {
+	fs := flag.NewFlagSet("category delete", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	dryRun := fs.Bool("dry-run", false, "only report what would be removed")
+	allowNonEmpty := fs.Bool("allow-nonempty", false, "also remove the category's tag assignments")
+	fs.Bool("yes", false, "confirm destructive action")
+	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+		return a.Usage(fs, "usage: lokictl category delete <label> [--dry-run] --yes [--allow-nonempty]")
+	}
+	label := args[0]
+	if err := fs.Parse(args[1:]); err != nil {
+		return a.Usage(fs, err.Error())
+	}
+	var im categoryImpact
+	if err := a.Client.DoJSON("GET", "/api/categories/impact?label="+url.QueryEscape(label), nil, &im); err != nil {
+		return a.Fail(fmt.Errorf("previewing the delete failed, so nothing was deleted (servers without GET /api/categories/impact can't be previewed — restart on a current build): %w", err))
+	}
+	if !im.Exists {
+		return a.Fail(fmt.Errorf("category %q does not exist", label))
+	}
+	if *dryRun {
+		return a.PrintJSON(map[string]any{"status": "dry-run", "wouldRemove": im})
+	}
+	summary := fmt.Sprintf("category %q: %d tags, %d groups, %d assignments on %d media", label, im.Tags, im.Groups, im.Assignments, im.Media)
+	if !hasYesFlag(args) {
+		return a.Usage(fs, "this deletes "+summary+" — re-run with --yes to confirm")
+	}
+	if im.Assignments > 0 && !*allowNonEmpty {
+		return a.Usage(fs, "refusing: deleting "+summary+" would untag media — pass --allow-nonempty as well if that's intended, or move its tags out first")
+	}
+	var removed categoryImpact
+	if err := a.Client.DoJSON("DELETE", "/api/categories", map[string]string{"label": label}, &removed); err != nil {
+		return a.Fail(err)
+	}
+	return a.PrintJSON(map[string]any{"status": "deleted", "removed": removed})
 }
 
 func categoryLabelCommand(method, path string, needYes bool) func(a *App, args []string) int {

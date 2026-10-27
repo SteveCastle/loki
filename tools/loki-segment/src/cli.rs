@@ -6,7 +6,7 @@ use crate::image::Rgb8;
 use crate::model::{mask_bbox, ms, Encoded, Model, ObjPrompt, Segment, MODEL_NAME};
 use crate::{info, models};
 use anyhow::{bail, Context, Result};
-use clap::Parser;
+use clap::{CommandFactory, Parser};
 use serde_json::{json, Value};
 use std::io::{IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
@@ -138,6 +138,10 @@ pub struct Cli {
     /// JSON-lines session on stdin/stdout (models load once; see SERVE below)
     #[arg(long)]
     pub serve: bool,
+    /// Run as a resident worker for supervisors such as loki-worker: one-shot command lines ("args") and any number of
+    /// named --serve sessions ("cmd": "session") share one resident model. See CONVENTIONS.md, "Worker mode".
+    #[arg(long)]
+    pub worker: bool,
     /// Model file (default: discovered next to the binary, ./models, $LOKI_MODELS; downloaded when missing)
     #[arg(long = "model", value_name = "PATH")]
     pub model: Option<PathBuf>,
@@ -150,18 +154,43 @@ pub struct Cli {
 }
 
 pub fn main() {
-    let cli = Cli::parse();
-    crate::log::set_quiet(cli.quiet);
-    let r = if cli.serve { crate::serve::run(&cli) } else { run(&cli) };
-    if let Err(e) = r {
+    if let Err(e) = run_argv(std::env::args().collect()) {
         eprintln!("{TOOL}: error: {e:#}");
-        std::process::exit(1);
+        std::process::exit(if e.is::<Usage>() { 2 } else { 1 });
     }
 }
 
-fn usage(msg: &str) -> ! {
-    eprintln!("{TOOL}: error: {msg}\n\nFor more information, try '--help'.");
-    std::process::exit(2);
+/// A usage error: exit status 2 on the command line (a plain request error in worker mode).
+#[derive(Debug)]
+struct Usage(String);
+impl std::fmt::Display for Usage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}\n\nFor more information, try '--help'.", self.0)
+    }
+}
+impl std::error::Error for Usage {}
+
+fn usage(msg: &str) -> anyhow::Error {
+    Usage(msg.to_string()).into()
+}
+
+/// A command line in worker mode (argv[0] is the tool).
+pub fn run_argv_pub(argv: Vec<String>) -> Result<()> {
+    run_argv(argv)
+}
+
+fn run_argv(argv: Vec<String>) -> Result<()> {
+    let Some(cli) = crate::worker::parse_args::<Cli>(Cli::command(), argv)? else { return Ok(()) };
+    crate::log::set_quiet(cli.quiet);
+    if cli.worker {
+        anyhow::ensure!(!crate::worker::active(), "--worker inside a worker request");
+        return crate::serve::worker(&cli);
+    }
+    if cli.serve {
+        anyhow::ensure!(!crate::worker::active(), "--serve inside a worker request: use a session (\"cmd\": \"session\")");
+        return crate::serve::run(&cli);
+    }
+    run(&cli)
 }
 
 pub fn parse_nums(s: &str, n: usize, what: &str) -> Result<Vec<f32>> {
@@ -217,6 +246,7 @@ pub fn prompts_from_cli(cli: &Cli) -> Result<Vec<ObjPrompt>> {
 }
 
 fn read_stdin_string() -> Result<String> {
+    crate::worker::forbid_stdin()?;
     let mut s = String::new();
     std::io::stdin().read_to_string(&mut s)?;
     Ok(s)
@@ -227,14 +257,17 @@ pub fn is_video_path(p: &str) -> bool {
     [".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v", ".gif", ".mpg", ".mpeg", ".wmv"].iter().any(|e| l.ends_with(e))
 }
 
-pub fn load_model(explicit: Option<PathBuf>) -> Result<Model> {
+/// The model, through the worker's residency cache (a plain load on the command line).
+pub fn load_model(explicit: Option<PathBuf>) -> Result<std::rc::Rc<Model>> {
     let path = models::resolve(explicit, &models::SAM31)?;
-    let dev = Device::new(0)?;
-    let t = Instant::now();
-    let m = Model::load(&path, dev)?;
-    m.dev.sync()?;
-    info!("loaded {} in {:.2}s ({} MB on the GPU)", path.display(), t.elapsed().as_secs_f64(), m.weights.uploaded.get() >> 20);
-    Ok(m)
+    crate::worker::load(&format!("sam {}", path.display()), &path, || {
+        let dev: std::sync::Arc<Device> = crate::worker::device()?;
+        let t = Instant::now();
+        let m = Model::load(&path, dev)?;
+        m.dev.sync()?;
+        info!("loaded {} in {:.2}s ({} MB on the GPU)", path.display(), t.elapsed().as_secs_f64(), m.weights.uploaded.get() >> 20);
+        Ok(m)
+    })
 }
 
 /// Where the masks of an image go.
@@ -370,19 +403,20 @@ pub fn base_record(prompts: &[ObjPrompt], threshold: f32, input: &str, w: usize,
 }
 
 fn run(cli: &Cli) -> Result<()> {
-    let Some(input) = cli.input.clone() else { usage("an INPUT image or video is required (or --serve)") };
+    let Some(input) = cli.input.clone() else { return Err(usage("an INPUT image or video is required (or --serve)")) };
     let meta = genmeta::read_meta(cli.meta.as_deref(), cli.meta_file.as_deref()).map_err(|e| anyhow::anyhow!(e))?;
     let prompts = match prompts_from_cli(cli) {
         Ok(p) => p,
-        Err(e) => usage(&format!("{e:#}")),
+        Err(e) => return Err(usage(&format!("{e:#}"))),
     };
     if prompts.is_empty() && !cli.everything {
-        usage("nothing to segment: give -p TEXT, --point/--neg, --box, --prompts FILE or --everything");
+        return Err(usage("nothing to segment: give -p TEXT, --point/--neg, --box, --prompts FILE or --everything"));
     }
     if is_video_path(&input) {
         return crate::video::run_cli(cli, &input, &prompts, meta.as_ref());
     }
     let img = if input == "-" {
+        crate::worker::forbid_stdin()?;
         let mut b = Vec::new();
         std::io::stdin().read_to_end(&mut b)?;
         Rgb8::from_bytes(&b)?
@@ -408,10 +442,10 @@ fn run(cli: &Cli) -> Result<()> {
     }
     if cli.json {
         let v = json!({"width": img.w, "height": img.h, "frames": 1, "fps": Value::Null, "model": MODEL_NAME, "objects": objs});
-        println!("{v}");
+        crate::worker::out_line(&v.to_string());
     } else if !plan.stdout {
         for p in paths {
-            println!("{}", p.display());
+            crate::worker::out_line(&p.display().to_string());
         }
     }
     Ok(())

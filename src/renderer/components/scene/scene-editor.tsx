@@ -27,6 +27,7 @@ import { pickOps, selectedObjects, usePick, type PickTarget } from './pick';
 import { PickBar, RotoBar } from './pick-bar';
 import MaskPanel from './mask-panel';
 import DreamDialog from './dream-dialog';
+import ColorPicker from './color-picker';
 import PaintPanel from './paint-panel';
 import { applyPreset, fromDetection, mirrorPose, presetPose } from './pose';
 import { Inspector, KEY_GENERATE, KEY_UNDO, LayerList } from './panel';
@@ -307,6 +308,9 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
   const [ink, setInk] = useState(() => loadSwatches()[0]);
   const [inkAlpha, setInkAlpha] = useState(1);
   const [swatches, setSwatches] = useState(loadSwatches);
+  // The colour picker, open beside the colour well (its rect) or closed.
+  const [inkPicker, setInkPicker] = useState<DOMRect | null>(null);
+  const closeInkPicker = useCallback(() => setInkPicker(null), []);
   const [selectedShape, setSelectedShape] = useState<number | null>(null);
   const [compare, setCompare] = useState(false);
   const [playing, setPlaying] = useState(true);
@@ -519,6 +523,16 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
       return next;
     });
   }, []);
+
+  const eyedrop = useCallback(async () => {
+    if (!EyeDropperApi) return;
+    try {
+      const r = await new EyeDropperApi().open();
+      if (r?.sRGBHex) rememberInk(r.sRGBHex);
+    } catch {
+      // cancelled
+    }
+  }, [rememberInk]);
 
   const commitOp = useCallback(
     (op: MaskOp) => {
@@ -1393,23 +1407,32 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
           </div>
           {selected?.kind === 'paint' && (
             <div className="sc-ink" aria-label="Paint colour">
-              <label className="sc-ink-current" title="Paint colour" style={{ background: ink }}>
-                <input type="color" value={ink} onChange={(e) => setInk(e.target.value)} aria-label="Paint colour" />
-              </label>
+              <button
+                type="button"
+                className={`sc-ink-current${inkPicker ? ' open' : ''}`}
+                title="Paint colour: any shade, in HEX, RGB, HSL, HSV or OKLCH"
+                style={{ background: ink }}
+                onClick={(e) => {
+                  const r = e.currentTarget.getBoundingClientRect();
+                  setInkPicker((cur) => (cur ? null : r));
+                }}
+                aria-label="Paint colour"
+                aria-expanded={!!inkPicker}
+              />
+              {inkPicker && (
+                <ColorPicker
+                  color={ink}
+                  alpha={inkAlpha}
+                  onChange={setInk}
+                  onAlpha={setInkAlpha}
+                  swatches={swatches}
+                  anchor={inkPicker}
+                  onClose={closeInkPicker}
+                  onEyedropper={EyeDropperApi ? eyedrop : undefined}
+                />
+              )}
               {EyeDropperApi && (
-                <button
-                  type="button"
-                  className="sc-ink-pick"
-                  title="Pick a colour from the screen"
-                  onClick={async () => {
-                    try {
-                      const r = await new EyeDropperApi().open();
-                      if (r?.sRGBHex) rememberInk(r.sRGBHex);
-                    } catch {
-                      // cancelled
-                    }
-                  }}
-                >
+                <button type="button" className="sc-ink-pick" title="Pick a colour from the screen" onClick={eyedrop}>
                   <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden>
                     <path d="M10.5 2.5l3 3-1.5 1.5-3-3zM9.5 4.5l2 2L5 13H3v-2z" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
                   </svg>

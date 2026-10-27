@@ -17,6 +17,7 @@ pub mod tracker;
 pub mod video;
 pub mod vit;
 pub mod weights;
+pub mod worker;
 
 /// Progress/diagnostic output (stderr), silenced by `--quiet`. Results go to stdout, never through this.
 pub mod log {

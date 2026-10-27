@@ -186,14 +186,14 @@ func jsonSame(a, b json.RawMessage) bool {
 // none (Kromoss) that sentence goes.
 func TestSceneSketchTargetPrompt(t *testing.T) {
 	refs := []sceneRef{{Kind: "image", Path: "t.png", Target: true}}
-	got := sceneFinishPrompt(map[string]any{"finish": FinishSketch}, "a scared man running", refs, " at the bottom left", "")
+	got := sceneFinishPrompt(map[string]any{"finish": FinishSketch}, "a scared man running", refs, " at the bottom left", "", "")
 	for _, want := range []string{"the rough painted sketch at the bottom left stands in for a scared man running", "<image2> shows the sketch alone on black",
 		"even one that looks like a scared man running"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("lacks %q:\n%s", want, got)
 		}
 	}
-	got = sceneFinishPrompt(map[string]any{"finish": FinishSketch}, "a sun", nil, "", "")
+	got = sceneFinishPrompt(map[string]any{"finish": FinishSketch}, "a sun", nil, "", "", "")
 	if strings.Contains(got, "{") || strings.Contains(got, "alone on black") || !strings.Contains(got, "the rough painted sketch stands in for a sun") {
 		t.Errorf("no target:\n%s", got)
 	}

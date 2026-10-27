@@ -218,10 +218,10 @@ export const FINISH_GROUNDING: Record<FinishMode, string> = {
     "it would have here, in the picture's own style. Leave everything that was not sketched exactly as it is: " +
     'do not change, move or replace any other figure or object, even one that looks like {what}.',
   colour:
-    'Colour <image1> using the rough colours painted on {guide} as a guide: {what}. ' +
-    'The paint is loose and only marks which colour goes where: give each whole object or area the colour painted mostly over it, ' +
-    'following the shapes and edges of <image1> rather than the edges of the brush strokes. ' +
-    'Keep every line and detail of <image1> as it is, and finish with clean, natural shading.',
+    'Finish the colouring of <image1>, whose new base colours are already laid in: {what}. ' +
+    'The new colours are {colours}: every object in one of them keeps it exactly; only even out patchy or uneven colour within an object. ' +
+    '{self} is the same picture before it was recoloured, for its light, shading and detail only, not its colours. ' +
+    'Keep every line, texture and detail, and the composition, unchanged.',
   repose:
     'New pose for the person in <image1>: {pose}. ' +
     'Make the person in <image1> do the exact same pose as shown in {guide}: {what}. ' +
@@ -256,13 +256,13 @@ export const FINISH_MODES: Record<
   },
   colour: {
     label: 'Recolour',
-    help: 'Colour what is under the paint the way it shows: loose strokes, whole objects recoloured',
+    help: 'A base colour coat from rough paint: each object the paint is mostly on takes its colour, edge to edge, keeping its shading',
     guide: true,
     expand: 0.01,
     refNote: 'the rough colour guide',
-    ask: 'Anything about the colours?',
-    placeholder: 'e.g. warm autumn light (optional)',
-    added: 'Added an Edit layer that colours the picture from your paint: add any notes, then generate.',
+    ask: 'Light or shading? (optional)',
+    placeholder: 'Leave empty for the base colours alone (exact shades, a few seconds). e.g. warm late-afternoon light, soft shadows',
+    added: 'Added a Recolour layer: generate for the base colours, or describe light and shading first to have the AI finish them.',
   },
   repose: {
     label: 'Repose',
@@ -284,6 +284,14 @@ export const FINISH_MODES: Record<
  */
 export function finishShapes(paint: SceneLayer, mode: FinishMode, prev: MaskOp[]): MaskOp[] {
   const own = prev.filter((op) => !op.subject);
+  // Recolour colours whole objects, past where the rough paint reaches: the cover is the paint's box padded out (the
+  // base coat leaves everything it doesn't recolour exactly as it was).
+  if (mode === 'colour') {
+    const b = maskBounds(paint.shapes || []);
+    if (!b) return own;
+    const pad = 0.1 * Math.max(b.w, b.h);
+    return [...own, { t: 'rect', x: b.x - pad, y: b.y - pad, w: b.w + 2 * pad, h: b.h + 2 * pad, subject: true }];
+  }
   if (mode !== 'repose') return own;
   const known = paint.options?.subject;
   if (known?.length) return [...own, ...known.map((op): MaskOp => ({ ...op, erase: undefined, subject: true }))];
@@ -306,9 +314,9 @@ export function finishStrength(finish: FinishMode | undefined): number {
  * and {self} (Repose: the token of the picture given again for identity) likewise go with their sentence when empty.
  * Mirrors composeFinish / sceneFinishPrompt.
  */
-export function composeFinish(grounding: string, what: string, guide: string, where = '', target = '', pose = '', self = ''): string {
+export function composeFinish(grounding: string, what: string, guide: string, where = '', target = '', pose = '', self = '', colours = ''): string {
   const w = what.trim().replace(/\.+$/, '');
-  let out = fillOrDrop(fillOrDrop(grounding, '{pose}', pose), '{self}', self);
+  let out = fillOrDrop(fillOrDrop(fillOrDrop(grounding, '{pose}', pose), '{self}', self), '{colours}', colours);
   if (!w) out = out.split(': {what}.').join('.').split(', even one that looks like {what}.').join('.');
   out = fillOrDrop(out, '{target}', target);
   return out

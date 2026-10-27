@@ -892,8 +892,9 @@ func sceneJobOutput(kind, input string) string {
 		return ""
 	}
 	stem := strings.TrimSuffix(input, filepath.Ext(input))
-	// loki-retouch writes <crop>_edit.png, loki-dream <crop>_dream.png.
-	outs := []string{stem + "_edit.png", stem + "_dream.png"}
+	// loki-retouch writes <crop>_edit.png, loki-dream <crop>_dream.png; a
+	// Recolour's coat is <crop>_edit.png, or finished by the engine <crop>_base_edit.png.
+	outs := []string{stem + "_base_edit.png", stem + "_edit.png", stem + "_dream.png"}
 	if kind == SceneKindMotion {
 		outs = []string{stem + "_locked.mp4", stem + "_reshoot.mp4"}
 	}
@@ -1981,6 +1982,11 @@ func GenerateLayerMask(ctx context.Context, q *jobqueue.Queue, id, lid string, g
 	var command string
 	var jobArgs []string
 	opt := func(k, v string) { jobArgs = append(jobArgs, "--"+k+"="+v) }
+	// Recolour: the base coat (scene-recolour) runs first; the engine, when
+	// the layer has words, then finishes the coat instead of the crop.
+	genInput := input
+	var recolour *jobqueue.WorkflowTask
+	colours := ""
 	seed := int64(-1)
 	if _, ok := l.Options["seed"]; ok {
 		seed = int64(optFloat(l.Options, "seed"))
@@ -1998,6 +2004,41 @@ func GenerateLayerMask(ctx context.Context, q *jobqueue.Queue, id, lid string, g
 			break
 		}
 		command = "retouch"
+		if optString(l.Options, "finish") == FinishColour {
+			var paint *SceneLayer
+			for _, pl := range s.Layers {
+				if pl.ID == optString(l.Options, "paint") && pl.Kind == SceneKindPaint && pl.Mask != "" {
+					paint = pl
+				}
+			}
+			if paint == nil {
+				os.Remove(input)
+				return nil, fmt.Errorf("the paint layer this recolours from is gone or empty")
+			}
+			stem := strings.TrimSuffix(input, filepath.Ext(input))
+			if err := renderPaintCrop(paint, s.Width, s.Height, region, stem+"-paint.png"); err != nil {
+				os.Remove(input)
+				return nil, err
+			}
+			colours = paintColourWords(stem + "-paint.png")
+			args := []string{"--scene=" + s.ID, "--paint=" + stem + "-paint.png"}
+			if prompt != "" {
+				genInput = stem + "_base.png"
+				args = append(args, "--out="+genInput)
+			}
+			recolour = &jobqueue.WorkflowTask{ID: uuid.NewString(), Command: "scene-recolour", Arguments: args, Input: input}
+			// The engine copies paint it is shown onto the picture: it gets the coat and, for light and shading, the crop.
+			kept := refs[:0]
+			for _, r := range refs {
+				if r.Layer == "" || r.Layer != paint.ID {
+					kept = append(kept, r)
+				}
+			}
+			refs = kept
+			if len(refs) < sceneMaxStillRefs {
+				refs = append(refs, sceneRef{Kind: "image", Path: input, Note: "the picture before recolouring", Identity: true})
+			}
+		}
 		// A sketch to make real: the engine is shown it alone, in place, and told where it is.
 		where := ""
 		if optString(l.Options, "finish") == FinishSketch {
@@ -2025,7 +2066,7 @@ func GenerateLayerMask(ctx context.Context, q *jobqueue.Queue, id, lid string, g
 				refs = append(refs, sceneRef{Kind: "image", Path: input, Note: "the same picture again", Identity: true})
 			}
 		}
-		opt("prompt", sceneFinishPrompt(l.Options, prompt, refs, where, pose))
+		opt("prompt", sceneFinishPrompt(l.Options, prompt, refs, where, pose, colours))
 		if len(refs) > 0 {
 			if err := checkSceneRefs(SceneKindStill, refs, false); err != nil {
 				os.Remove(input)
@@ -2113,8 +2154,15 @@ func GenerateLayerMask(ctx context.Context, q *jobqueue.Queue, id, lid string, g
 	}
 	opt("nolibrary", "true")
 
-	gen := jobqueue.WorkflowTask{ID: uuid.NewString(), Command: command, Arguments: jobArgs, Input: input}
+	gen := jobqueue.WorkflowTask{ID: uuid.NewString(), Command: command, Arguments: jobArgs, Input: genInput}
 	steps := []jobqueue.WorkflowTask{gen}
+	switch {
+	case recolour != nil && prompt == "":
+		steps = []jobqueue.WorkflowTask{*recolour}
+	case recolour != nil:
+		gen.Dependencies = []string{recolour.ID}
+		steps = []jobqueue.WorkflowTask{*recolour, gen}
+	}
 	// Motion: lock the static parts to the still (scene_lock.go) unless the
 	// layer opts out; that is what keeps the region's edges static.
 	// Detail (default on) brings it out at the region's own size with the

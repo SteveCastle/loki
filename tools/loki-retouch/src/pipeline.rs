@@ -172,6 +172,7 @@ impl Pipeline {
         let xb = Tensor::new(dev, DType::BF16, &[nt, 64])?;
         let v = Tensor::new(dev, DType::BF16, &[nt, 64])?;
         for i in 0..s.steps {
+            crate::worker::check_cancel()?;
             progress(i, s.steps);
             ops::to_bf16(dev, &x, &xb)?;
             model.forward(&mut run, &xb, sigmas[i], &v).with_context(|| format!("dit step {i}"))?;

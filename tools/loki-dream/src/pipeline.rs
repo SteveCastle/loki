@@ -67,6 +67,7 @@ pub fn sample(dev: &Device, dit: &Dit, s: &Settings, inp: &Inputs, progress: &dy
     let vu = Tensor::new(dev, DType::BF16, &[nt, LATENT])?;
     let total = n_steps - start;
     for (k, i) in (start..n_steps).enumerate() {
+        crate::worker::check_cancel()?;
         progress(k, total);
         let t = sampler::timestep(sig[i]);
         let m = dit.modulation(t)?;
