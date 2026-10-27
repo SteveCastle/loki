@@ -63,3 +63,30 @@ func TestEnvPoolsNotPersisted(t *testing.T) {
 		t.Fatalf("in memory the env pool must stay: %+v", got)
 	}
 }
+
+// Turning a switch off must reach the file: Save merges key by key, so a
+// false that marshals to nothing would leave the stored true behind.
+func TestEngineSwitchesOffPersist(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	old := getConfigPath
+	getConfigPath = func() (string, error) { return path, nil }
+	t.Cleanup(func() { getConfigPath = old })
+
+	c := defaultConfig()
+	c.Engines.LocalOnly, c.Engines.Fallback = true, true
+	if _, err := Save(c); err != nil {
+		t.Fatal(err)
+	}
+	c.Engines.LocalOnly, c.Engines.Fallback = false, false
+	if _, err := Save(c); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(path)
+	var onDisk Config
+	if err := json.Unmarshal(b, &onDisk); err != nil {
+		t.Fatal(err)
+	}
+	if onDisk.Engines.LocalOnly || onDisk.Engines.Fallback {
+		t.Fatalf("switches still on in the file: %+v", onDisk.Engines)
+	}
+}

@@ -41,11 +41,13 @@ type EnginesConfig struct {
 	Routes   map[string]string `json:"routes"`
 	// Fallback lets a run go to this machine's GPU when no pool worker is
 	// reachable (strategy "pool" only; "hybrid" always may).
-	Fallback bool `json:"fallback,omitempty"`
+	// No omitempty on the switches: Save merges into the file key by key,
+	// so an omitted false would leave a stored true in place.
+	Fallback bool `json:"fallback"`
 	// LocalOnly overrides the strategy and every route: all engines run on
 	// this machine's installs while the pools stay configured (a kill
 	// switch for working offline or when the cloud is misbehaving).
-	LocalOnly bool `json:"localOnly,omitempty"`
+	LocalOnly bool `json:"localOnly"`
 }
 
 // WorkerPool is a group of interchangeable GPU workers.
