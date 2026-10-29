@@ -49,6 +49,8 @@ import {
 } from '../../onboarding/requirements';
 import { DREAM_ENABLED } from '../../features';
 import TransformSection from '../transform/transform-section';
+import { GlyphScene } from '../transform/icons';
+import { canStartScene, openSceneEditor } from '../scene/launch';
 import { mediaKind, type IntentId } from '../transform/intents';
 import { openTransformFlow, templateSettings, type PromptTemplate } from '../transform/store';
 import SavedPicker, { type SavedWorkflow } from './saved-picker';
@@ -1105,6 +1107,8 @@ export default function ContextPalette() {
   // selection, so (in builds that have it) the Transform row is offered
   // whenever the server is.
   const canGenerate = !!serverAvailable && !!authToken && (DREAM_ENABLED || transformPaths.length > 0);
+  // The Scene editor (masked edit + animate, its own window) takes one image or video: a header icon like Studio.
+  const canScene = canTransform && transformPaths.length === 1 && canStartScene(transformPaths[0]);
   // Playback position (seconds) of the video on screen — only meaningful when
   // the ONE targeted file is that video; a retouch job samples that frame.
   const getTransformVideoTime = (): number | undefined => {
@@ -1459,6 +1463,19 @@ export default function ContextPalette() {
                 <path d="M13.7 5.4L12.2 9" />
                 <path d="M18.8 6L17.4 9" />
               </svg>
+            </button>
+          )}
+          {canScene && (
+            <button
+              className="find-similar-btn"
+              onClick={() => {
+                openSceneEditor(transformPaths[0], getTransformVideoTime());
+                libraryService.send('HIDE_CONTEXT_PALETTE');
+              }}
+              title="Scene editor (opens a window): mask parts of the picture, edit them, then animate them one by one"
+              aria-label="Open in Scene editor"
+            >
+              <GlyphScene size={14} />
             </button>
           )}
           {(capabilities.visualSearch || (serverAvailable && authToken)) &&

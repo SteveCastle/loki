@@ -63,9 +63,20 @@ describe('TransformSection (palette chips)', () => {
     expect(screen.getByRole('button', { name: /Restore/ })).toBeTruthy();
     expect(screen.getByRole('button', { name: /Upscale 2×/ })).toBeTruthy();
     expect(screen.getByRole('button', { name: /Wallpaper/ })).toBeTruthy();
-    expect(screen.getByRole('button', { name: /Edit…/ })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Edit photo…/ })).toBeTruthy();
     expect(screen.getByRole('button', { name: /Animate/ })).toBeTruthy();
     expect(screen.queryByRole('button', { name: /Combine/ })).toBeNull();
+  });
+
+  it('groups Edit and Direct as full control, apart from the one-click presets', () => {
+    setup([IMG]);
+    const group = screen.getByRole('group', { name: 'Full control' });
+    expect(Array.from(group.querySelectorAll('.transform-custom-title')).map((t) => t.textContent)).toEqual(['Edit photo…', 'Direct video…']);
+    const presets = screen.getByRole('group', { name: 'Presets' });
+    expect(presets.textContent).not.toMatch(/Edit|Direct/);
+    expect(presets.textContent).toMatch(/Restore/);
+    fireEvent.click(screen.getByRole('button', { name: /Direct video…/ }));
+    expect(getFlowRequest()).toMatchObject({ paths: [IMG], intent: 'direct', phase: 'shape' });
   });
 
   it('offers only Generate for a selection no other intent can use', () => {
@@ -135,7 +146,7 @@ describe('TransformSection (palette chips)', () => {
 
   it('prompt-driven chips open the flow, and "All options" opens the chooser', () => {
     setup([IMG]);
-    fireEvent.click(screen.getByRole('button', { name: /Edit…/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Edit photo…/ }));
     expect(getFlowRequest()).toMatchObject({ intent: 'edit', phase: 'shape' });
     closeTransformFlow();
     fireEvent.click(screen.getByRole('button', { name: /All options/ }));

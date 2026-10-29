@@ -22,16 +22,19 @@ import {
   useLastRun,
 } from './store';
 import { validateForRun } from './flow-view';
-import { GlyphReplay, GlyphScene, IntentIcon } from './icons';
-import { canStartScene, openSceneEditor } from '../scene/launch';
+import { GlyphReplay, IntentIcon } from './icons';
 import './transform-section.css';
 
-// The palette's "Transform" row: one-click presets (run with the settings you
-// used last time), the custom intents (open the flow at their prompt), the last run (“… again”: same action and settings on this
-// selection), and "All options" for the full flow. Shift-click a preset or
-// the last run to adjust it first.
-// Generate needs no selection, so the row is there (with just Generate) even when nothing is selected.
-const CHIP_ORDER: IntentId[] = ['restore', 'upscale', 'wallpaper', 'angle', 'edit', 'reimagine', 'alive', 'generate'];
+// The palette's "Transform" section, in two visually separate groups:
+// - Full control: the custom intents that run the prompt you write, with references and every setting (Edit a
+//   photo, Direct a video). They open the flow at their prompt.
+// - Presets: built-in treatments that run with the settings you used last time (Shift-click to adjust first; the
+//   ones ending in "…" open a short settings step), and the last run (“… again”).
+// The Scene editor is an icon in the palette header (context-palette.tsx), beside Open in Studio.
+// "All options" opens the full flow at its Choose step.
+// Generate needs no selection, so the section is there (with just Generate) even when nothing is selected.
+const CUSTOM_ORDER: IntentId[] = ['edit', 'direct'];
+const PRESET_ORDER: IntentId[] = ['restore', 'upscale', 'wallpaper', 'angle', 'reimagine', 'alive', 'generate'];
 
 export interface TransformSectionProps {
   /** The working set: the right-clicked file plus any multi-selection ([] = nothing: only Generate is offered). */
@@ -50,7 +53,9 @@ export default function TransformSection(props: TransformSectionProps) {
   const last = useLastRun();
   const lastOk = !!last && availability(last.intent, classify(paths)).ok;
   const inputs = classify(paths);
-  const chips = CHIP_ORDER.map(intentById).filter((i) => availability(i.id, inputs).ok);
+  const fits = (id: IntentId) => availability(id, inputs).ok;
+  const custom = CUSTOM_ORDER.filter(fits);
+  const chips = PRESET_ORDER.map(intentById).filter((i) => fits(i.id));
   const hasVideoOnly = inputs.images.length === 0 && inputs.videos.length === 1;
 
   const open = (intent: IntentId | undefined, start?: { prompt?: string; settings?: TransformSettings }) => {
@@ -104,7 +109,7 @@ export default function TransformSection(props: TransformSectionProps) {
     else quickRun(last.intent, settings, 'last');
   };
 
-  if (chips.length === 0) return null;
+  if (custom.length === 0 && chips.length === 0) return null;
   return (
     <div className="context-palette-merge transform-section">
       <div className="workflow-picker-header">
@@ -118,52 +123,70 @@ export default function TransformSection(props: TransformSectionProps) {
           All options ▸
         </button>
       </div>
-      <div className="type-chips" role="group" aria-label="Transform">
-        {last && lastOk && (
-          <button
-            type="button"
-            className="type-chip transform-chip transform-chip-last"
-            disabled={busy !== null}
-            onClick={onLast}
-            title={`Last run: ${intentById(last.intent).title} · ${runSummary(last.intent, last.settings)}\nClick to run it again on this selection, Shift-click to adjust first.`}
-          >
-            <GlyphReplay size={13} />
-            {busy === 'last' ? 'Queuing…' : `${intentById(last.intent).title} again`}
-          </button>
-        )}
-        {chips.map((c) => (
-          <button
-            key={c.id}
-            type="button"
-            className="type-chip transform-chip"
-            disabled={busy !== null}
-            onClick={(e) => onChip(e, c.id)}
-            title={chipTitle(c.id)}
-          >
-            <IntentIcon id={c.id} size={13} />
-            {busy === c.id ? 'Queuing…' : chipLabel(c.id, hasVideoOnly)}
-          </button>
-        ))}
-        {paths.length === 1 && canStartScene(paths[0]) && (
-          <button
-            type="button"
-            className="type-chip transform-chip"
-            disabled={busy !== null}
-            onClick={() => {
-              openSceneEditor(paths[0], getVideoTime());
-              onDone();
-            }}
-            title="Scene editor (opens a window): mask parts of the picture, edit them, then animate them one by one"
-          >
-            <GlyphScene size={13} />
-            Scene…
-          </button>
-        )}
-      </div>
+      {custom.length > 0 && (
+        <div className="transform-custom" role="group" aria-label="Full control">
+          <span className="transform-group-label">
+            Full control <span className="transform-group-hint">your prompt, references, every setting</span>
+          </span>
+          <div className="transform-custom-cards">
+            {custom.map((id) => (
+              <button
+                key={id}
+                type="button"
+                className="transform-custom-card"
+                disabled={busy !== null}
+                onClick={() => open(id)}
+                title={chipTitle(id)}
+              >
+                <IntentIcon id={id} size={18} />
+                <span className="transform-custom-text">
+                  <span className="transform-custom-title">{customTitle(id, hasVideoOnly)}</span>
+                  <span className="transform-custom-sub">{customSub(id, inputs.images.length > 1)}</span>
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      {(chips.length > 0 || (last && lastOk)) && (
+        <>
+          <span className="transform-group-label">
+            Presets <span className="transform-group-hint">built-in, with your last settings</span>
+          </span>
+          <div className="type-chips" role="group" aria-label="Presets">
+            {last && lastOk && (
+              <button
+                type="button"
+                className="type-chip transform-chip transform-chip-last"
+                disabled={busy !== null}
+                onClick={onLast}
+                title={`Last run: ${intentById(last.intent).title} · ${runSummary(last.intent, last.settings)}
+Click to run it again on this selection, Shift-click to adjust first.`}
+              >
+                <GlyphReplay size={13} />
+                {busy === 'last' ? 'Queuing…' : `${intentById(last.intent).title} again`}
+              </button>
+            )}
+            {chips.map((c) => (
+              <button
+                key={c.id}
+                type="button"
+                className="type-chip transform-chip"
+                disabled={busy !== null}
+                onClick={(e) => onChip(e, c.id)}
+                title={chipTitle(c.id)}
+              >
+                <IntentIcon id={c.id} size={13} />
+                {busy === c.id ? 'Queuing…' : chipLabel(c.id, hasVideoOnly)}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
       <span className="merge-selection-note">
         {paths.length === 0 ? 'nothing selected: Generate makes a new picture from a description · ' : ''}
         {hasVideoOnly ? 'acts on the frame you are looking at · ' : ''}
-        {last && lastOk ? '“again” repeats your last run · ' : ''}presets run with your last settings · Shift-click to adjust first
+        {last && lastOk ? '“again” repeats your last run · ' : ''}Shift-click a preset to adjust it first · “…” opens its settings
       </span>
     </div>
   );
@@ -175,6 +198,18 @@ function chipTitle(id: IntentId): string {
   if (intentKind(id) === 'custom') return `Custom: ${def.tagline}. Opens the prompt box.`;
   if (def.oneClick) return `Preset: ${def.tagline}. Click to run with your last settings, Shift-click to adjust first.`;
   return `Preset: ${def.tagline}. Opens its settings.`;
+}
+
+function customTitle(id: IntentId, videoFrame: boolean): string {
+  if (id === 'edit') return videoFrame ? 'Edit frame…' : 'Edit photo…';
+  if (id === 'direct') return 'Direct video…';
+  return chipLabel(id, videoFrame);
+}
+
+function customSub(id: IntentId, severalImages: boolean): string {
+  if (id === 'edit') return severalImages ? 'Any change, using the others as references' : 'Describe any change';
+  if (id === 'direct') return 'Images, clips & music → video';
+  return intentById(id).tagline;
 }
 
 function chipLabel(id: IntentId, videoFrame: boolean): string {

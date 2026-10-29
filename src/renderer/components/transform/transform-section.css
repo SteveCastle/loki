@@ -20,3 +20,90 @@
 .transform-chip-last {
   border-style: dashed;
 }
+
+/* Group labels: "Full control" over the custom box, "Presets" over the chips. */
+.transform-group-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.transform-group-hint {
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  color: rgba(255, 255, 255, 0.4);
+  margin-left: 4px;
+}
+
+/* Full control: one accented box holding the custom intents. */
+.transform-custom {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--ctx-accent-strong);
+  border-radius: 6px;
+  background: rgba(0, 200, 150, 0.06);
+}
+
+.transform-custom-cards {
+  display: flex;
+  gap: 6px;
+}
+
+.transform-custom-card {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--ctx-accent-strong);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.05);
+  color: white;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.transform-custom-card .ts-icon {
+  flex: none;
+  color: var(--ctx-accent);
+}
+
+.transform-custom-card:hover {
+  background: var(--ctx-accent-soft);
+  border-color: var(--ctx-accent);
+}
+
+.transform-custom-card:active {
+  background: var(--ctx-accent-strong);
+}
+
+.transform-custom-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.transform-custom-title {
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.transform-custom-sub {
+  font-size: 10px;
+  line-height: 1.3;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+
+.transform-custom-card:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
