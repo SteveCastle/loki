@@ -177,7 +177,8 @@ impl Dit {
         }
         let final_norm = l.bf16("final_norm_video.weight")?;
         let final_linear = l.bf16("final_linear_video.weight")?;
-        crate::info!("  dit: {} {:.1} GB uploaded in {:.1}s", if int8 { "int8 convrot" } else { "bf16" }, l.uploaded as f64 / 1e9, t0.elapsed().as_secs_f64());
+        let fp16 = st.info("final_linear_video.weight")?.dtype == "F16";
+        crate::info!("  dit: {} {:.1} GB uploaded in {:.1}s", if int8 { "int8 convrot" } else if fp16 { "bf16 (from fp16)" } else { "bf16" }, l.uploaded as f64 / 1e9, t0.elapsed().as_secs_f64());
         let sage = match std::env::var("LOKI_ATTN").ok().as_deref() {
             Some("bf16") => false,
             Some("sage") | Some("int8") => true,

@@ -302,6 +302,12 @@ type Config struct {
 	TranscriptionHotwords      string `json:"transcriptionHotwords"`
 	TranscriptionVocalExtract  bool   `json:"transcriptionVocalExtract"`
 
+	// DreamModel swaps loki-dream's diffusion model for another file with the
+	// same (MOSS-Image) architecture, passed as --dit. Best given as a bare
+	// file name: each engine (this machine or a pool worker) finds it in its
+	// own models folder. Empty = the engine's default (Kromoss).
+	DreamModel string `json:"dreamModel,omitempty"`
+
 	// Optional path to a user-supplied faster-whisper executable. Overrides
 	// the binary installed via the Dependencies downloader.
 	FasterWhisperPath string `json:"fasterWhisperPath"`

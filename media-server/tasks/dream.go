@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/stevecastle/shrike/appconfig"
 	"github.com/stevecastle/shrike/jobqueue"
 	"github.com/stevecastle/shrike/platform"
 )
@@ -60,6 +61,8 @@ type dreamParams struct {
 	OutDir                 string
 	Meta, MetaFile         string
 	NoLibrary              bool
+	// Model is the --dit swap (Config.DreamModel); empty = the engine's default.
+	Model string
 }
 
 func dreamParamsFromOptions(opts map[string]any) dreamParams {
@@ -122,6 +125,9 @@ func buildDreamArgs(p dreamParams, init, output, promptFile string) []string {
 	for _, l := range p.LoRAs {
 		args = append(args, "--lora", l)
 	}
+	if p.Model != "" {
+		args = append(args, "--dit", p.Model)
+	}
 	if init != "" {
 		args = append(args, "--init", init, "--strength", formatFloatArg(p.Strength))
 		if p.Mask != "" {
@@ -170,6 +176,9 @@ func dreamTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 	p := dreamParamsFromOptions(ParseOptions(j, dreamOptions))
 	if p.Prompt == "" {
 		return fail("needs a prompt", nil)
+	}
+	if p.Model = strings.TrimSpace(appconfig.Get().DreamModel); p.Model != "" {
+		q.PushJobStdout(j.ID, tag+": model "+p.Model)
 	}
 	tool, err := resolveAITool(ctx, q, j.ID, tag, dreamTool)
 	if err != nil {

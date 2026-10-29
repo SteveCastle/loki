@@ -46,7 +46,7 @@ loki-dream [OPTIONS] -p PROMPT
   --shift F (5)  --skip-layers LIST|none (22)   official sampler knobs
   -o PATH|DIR|-  --json  -q  --show-prompt  --meta JSON | --meta-file FILE
   --precision int8|bf16    the diffusion model (default int8 ConvRot when present)
-  --dit / --text-encoder / --vae PATH
+  --dit / --text-encoder / --vae PATH|NAME   (a bare NAME is looked up in the model folders)
 ```
 
 **Output naming.** `-o FILE.png` for one image. With several images (`--count`, several prompts), `-o FILE.png` gives
@@ -65,7 +65,7 @@ and `step i/n` lines (`step (\d+)/(\d+)`, restarting for every image).
 ```
 
 `generation` is the record stamped into the PNG: `prompt`, `negative`, `seed`, `steps`, `cfg`, `shift`, `turbo`,
-`sampler`, `skip_layers`, `precision`, `width`/`height` (and `generated_width`/`generated_height` when resampled),
+`sampler`, `skip_layers`, `precision`, `dit` (the diffusion model file), `width`/`height` (and `generated_width`/`generated_height` when resampled),
 `strength`, `loras` (path and strength), `inputs` (`init` and `mask`), `meta`, `args`.
 
 **Sizes.** The model works in multiples of 16 pixels, and about one megapixel is its home ground (Kromoss was fine-tuned at
@@ -116,6 +116,12 @@ into `models/` next to the binary.
 | text encoder | `qwen3.5_9b_bf16.safetensors` (Qwen3.5-9B, language model used) | 19.3 GB | always |
 | VAE | `flux2-vae_small.safetensors` (FLUX.2 encoder + small decoder) | 0.25 GB | always |
 | turbo LoRA | `8-steps-dmd2-lora.safetensors` (`8-steps-dmd-lora.safetensors` with `--turbo-lora dmd`) | 1.2 GB | `--turbo` |
+
+**Swapping the diffusion model.** Any fine-tune with the same MOSS-Image architecture (the same tensor names and shapes
+as Kromoss) can stand in for it: `--dit FILE`, or `LOKI_DREAM_DIT=FILE` for every run on the machine (`--dit` and
+`--precision` override it). bf16, fp16 (converted to bf16 as it loads) and int8 ConvRot files work; a bare file name is
+looked up in the model folders. The file name is recorded as `dit` in each PNG's generation record. The media server
+passes its `dreamModel` config value (config.json) as `--dit`.
 
 First run total: 25 GB (26.2 GB with `--turbo`). The tokenizer (Qwen3.5's 248k BPE, from the repo's `tokenizer/`) is
 embedded in the binary (`assets/`).

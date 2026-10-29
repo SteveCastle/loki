@@ -156,7 +156,9 @@ struct Cli {
     /// Diffusion model precision: int8 (ConvRot W8A8, 5.4 GB, default when present) or bf16 (10.2 GB).
     #[arg(long, value_name = "int8|bf16")]
     precision: Option<String>,
-    /// Kromoss diffusion model file (overrides discovery; its format decides the precision).
+    /// Diffusion model file: Kromoss or any fine-tune with the same MOSS-Image architecture (bf16, fp16 or int8 ConvRot;
+    /// its format decides the precision). A bare file name is looked up in the models folders. Default: $LOKI_DREAM_DIT,
+    /// else the Kromoss weights found or downloaded.
     #[arg(long)]
     dit: Option<PathBuf>,
     /// Qwen3.5-9B text encoder file.
@@ -254,8 +256,12 @@ fn load_dit(dev: &std::sync::Arc<Device>, p: &Path) -> Result<std::rc::Rc<std::c
     crate::worker::load(&format!("dit {}", p.display()), p, || Ok(std::cell::RefCell::new(Dit::load(dev.clone(), p, None)?)))
 }
 
+/// The diffusion model: --dit, else --precision's Kromoss file, else $LOKI_DREAM_DIT (a machine-wide swap to a
+/// same-architecture fine-tune), else the Kromoss weights found locally (int8 first) or downloaded.
 fn dit_path(cli: &Cli) -> Result<PathBuf> {
-    Ok(match (&cli.dit, cli.precision.as_deref()) {
+    let env_dit = || std::env::var_os("LOKI_DREAM_DIT").filter(|v| !v.is_empty()).map(PathBuf::from);
+    let dit = cli.dit.clone().or_else(|| if cli.precision.is_none() { env_dit() } else { None });
+    Ok(match (&dit, cli.precision.as_deref()) {
         (Some(p), _) => models::resolve(Some(p.clone()), &models::DIT_INT8)?,
         (None, Some("bf16")) => models::resolve(None, &models::DIT_BF16)?,
         (None, Some("int8")) => models::resolve(None, &models::DIT_INT8)?,
@@ -537,6 +543,7 @@ fn run(prog: &'static str, argv: Vec<String>) -> Result<()> {
             .set("sampler", "euler")
             .set("skip_layers", if negative.is_some() { Some(skip_layers.clone()) } else { None })
             .set("precision", if dit.int8 { "int8" } else { "bf16" })
+            .set("dit", dit_path.file_name().map(|f| f.to_string_lossy().into_owned()))
             .set("width", ow)
             .set("height", oh)
             .set("generated_width", if (gw, gh) != (ow, oh) { Some(gw) } else { None })

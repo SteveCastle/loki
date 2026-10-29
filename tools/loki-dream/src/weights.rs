@@ -1,4 +1,5 @@
-//! Loading safetensors weights onto the GPU, including ComfyUI int8 ConvRot linears.
+//! Loading safetensors weights onto the GPU, including ComfyUI int8 ConvRot linears. Float weights stored as fp16 (some
+//! fine-tunes are published that way) are converted to bf16 on the host as they are uploaded.
 use crate::cuda::Device;
 use crate::safetensors::SafeTensors;
 use crate::tensor::{DType, Tensor};
@@ -11,6 +12,24 @@ pub struct QLinear {
     pub scale: Tensor,
     pub n: usize,
     pub k: usize,
+}
+
+/// fp16 bytes -> bf16 bytes (round to nearest even), split across threads: a 10 GB checkpoint is ~5G values.
+fn f16_to_bf16(src: &[u8]) -> Vec<u8> {
+    let mut out = vec![0u8; src.len()];
+    let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).min(16);
+    let chunk = (src.len() / 2).div_ceil(threads).max(1 << 16) * 2;
+    std::thread::scope(|s| {
+        for (i, o) in src.chunks(chunk).zip(out.chunks_mut(chunk)) {
+            s.spawn(move || {
+                for (a, b) in i.chunks_exact(2).zip(o.chunks_exact_mut(2)) {
+                    let v = half::f16::from_bits(u16::from_le_bytes([a[0], a[1]])).to_f32();
+                    b.copy_from_slice(&half::bf16::from_f32(v).to_bits().to_le_bytes());
+                }
+            });
+        }
+    });
+    out
 }
 
 pub struct Loader<'a> {
@@ -33,11 +52,27 @@ impl<'a> Loader<'a> {
         Ok(t)
     }
 
-    /// bf16 tensor as stored.
+    /// A float tensor's bytes as bf16: as stored, or converted from fp16.
+    fn bf16_bytes(&self, name: &str) -> Result<std::borrow::Cow<'a, [u8]>> {
+        let st: &'a SafeTensors = self.st;
+        let info = st.info(name)?;
+        let bytes = st.bytes(name)?;
+        match info.dtype.as_str() {
+            "BF16" => Ok(std::borrow::Cow::Borrowed(bytes)),
+            "F16" => Ok(std::borrow::Cow::Owned(f16_to_bf16(bytes))),
+            other => bail!("tensor {name}: expected BF16 or F16, got {other}"),
+        }
+    }
+
+    /// bf16 tensor (stored as bf16, or fp16 converted).
     pub fn bf16(&mut self, name: &str) -> Result<Tensor> {
-        let info = self.st.info(name)?.clone();
-        ensure!(info.dtype == "BF16", "tensor {name}: expected BF16, got {}", info.dtype);
-        self.upload_raw(name, DType::BF16, info.shape)
+        let shape = self.st.info(name)?.shape.clone();
+        let bytes = self.bf16_bytes(name)?;
+        let t = Tensor::new(&self.dev, DType::BF16, &shape)?;
+        ensure!(t.bytes() == bytes.len(), "tensor {name}: byte size mismatch {} vs {}", t.bytes(), bytes.len());
+        self.dev.htod_at(t.ptr, &bytes)?;
+        self.uploaded += bytes.len();
+        Ok(t)
     }
     /// Any float tensor converted to f32 on the host (used for biases and small vectors).
     pub fn f32(&mut self, name: &str) -> Result<Tensor> {
@@ -99,13 +134,13 @@ impl<'a> Loader<'a> {
         Ok(QLinear { w, scale, n: n_total, k })
     }
 
-    /// bf16 linears concatenated along N.
+    /// bf16 linears concatenated along N (bf16 or fp16 converted).
     pub fn bf16_cat(&mut self, names: &[&str]) -> Result<Tensor> {
         let mut n_total = 0;
         let mut k = 0;
         for name in names {
             let info = self.st.info(name)?;
-            ensure!(info.dtype == "BF16");
+            ensure!(info.dtype == "BF16" || info.dtype == "F16", "tensor {name}: expected BF16 or F16, got {}", info.dtype);
             let kk: usize = info.shape[1..].iter().product();
             if k == 0 {
                 k = kk;
@@ -116,8 +151,8 @@ impl<'a> Loader<'a> {
         let t = Tensor::new(&self.dev, DType::BF16, &[n_total, k])?;
         let mut off = 0;
         for name in names {
-            let b = self.st.bytes(name)?;
-            self.dev.htod_at(t.ptr + (off * k * 2) as u64, b)?;
+            let b = self.bf16_bytes(name)?;
+            self.dev.htod_at(t.ptr + (off * k * 2) as u64, &b)?;
             off += b.len() / (k * 2);
             self.uploaded += b.len();
         }

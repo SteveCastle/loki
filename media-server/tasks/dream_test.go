@@ -20,9 +20,15 @@ func TestBuildDreamArgs(t *testing.T) {
 			t.Errorf("args %v miss %q", args, want)
 		}
 	}
-	if slices.Contains(args, "--init") || slices.Contains(args, "--count") {
+	if slices.Contains(args, "--init") || slices.Contains(args, "--count") || slices.Contains(args, "--dit") {
 		t.Errorf("text -> image args: %v", args)
 	}
+	// A swapped model (Config.DreamModel) rides along as --dit.
+	p.Model = "finetune.safetensors"
+	if args = buildDreamArgs(p, "", "out.png", ""); !slices.Contains(args, "--dit") || !slices.Contains(args, "finetune.safetensors") {
+		t.Errorf("model args: %v", args)
+	}
+	p.Model = ""
 	// Turbo: no negative branch; inpainting: init, strength, mask.
 	p.Turbo, p.Mask, p.Strength = true, "m.png", 1
 	args = buildDreamArgs(p, "in.png", "o.png", "")
