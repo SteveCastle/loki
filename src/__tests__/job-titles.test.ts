@@ -1,7 +1,7 @@
 import { getJobTitle } from '../renderer/components/controls/toast-system';
 
-const job = (command: string, args: string[] = []) =>
-  ({ id: 'j', command, arguments: args, input: 'C:/a.png', state: 'pending', created_at: '' } as Parameters<typeof getJobTitle>[0]);
+const job = (command: string, args: string[] = [], input = 'C:/a.png') =>
+  ({ id: 'j', command, arguments: args, input, state: 'pending', created_at: '' } as Parameters<typeof getJobTitle>[0]);
 
 describe('getJobTitle for the AI transform tasks', () => {
   it('names retouch jobs by what they do', () => {
@@ -16,5 +16,12 @@ describe('getJobTitle for the AI transform tasks', () => {
   it('names reshoot jobs', () => {
     expect(getJobTitle(job('reshoot', ['--animate', 'true']))).toBe('Bringing Photo to Life');
     expect(getJobTitle(job('reshoot', ['--prompt', 'x']))).toBe('Generating Video');
+  });
+
+  it('names dream jobs by mode', () => {
+    expect(getJobTitle(job('dream', ['--prompt', 'a fox'], ''))).toBe('Generating Image');
+    expect(getJobTitle(job('dream', ['--prompt', 'a fox', '--count', '4'], ''))).toBe('Generating Images');
+    expect(getJobTitle(job('dream', ['--prompt', 'oil painting', '--strength', '0.8']))).toBe('Reimagining Image');
+    expect(getJobTitle(job('dream', ['--prompt', 'sky', '--mask', 'C:/m.png']))).toBe('Inpainting Image');
   });
 });

@@ -4,7 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { GlobalStateContext } from '../../state';
 import { send, mediaServerBase, isElectron, on } from '../../platform';
 import { subscribeStream } from '../../stream-bus';
-import { navigateToMedia } from '../../job-paths';
+import { jobInputPaths, navigateToMedia } from '../../job-paths';
 import './toast-system.css';
 
 type JobState =
@@ -106,6 +106,13 @@ export const getJobTitle = (job: JobRunnerJob): string => {
     }
     case 'reshoot':
       return (job.arguments || []).includes('--animate') ? 'Bringing Photo to Life' : 'Generating Video';
+    case 'dream': {
+      // No input image: a new picture (Generate); an image: img2img (Reimagine), or inpainting with a mask.
+      const args = job.arguments || [];
+      if (args.includes('--mask')) return 'Inpainting Image';
+      if (jobInputPaths(job.input).length > 0) return 'Reimagining Image';
+      return Number(argValue(args, 'count')) > 1 ? 'Generating Images' : 'Generating Image';
+    }
     case 'faces':
       return 'Scanning Faces';
     case 'faces-cluster':
@@ -165,6 +172,10 @@ const getJobSubtitle = (job: JobRunnerJob): string | null => {
       return 'Running the local image model on your GPU.';
     case 'reshoot':
       return 'Running the local video model on your GPU. This can take a few minutes.';
+    case 'dream':
+      return jobInputPaths(job.input).length > 0
+        ? 'Running the local image model on your GPU.'
+        : 'Painting a new picture on your GPU; it lands in your Generated folder.';
     case 'faces':
       return 'Finding faces and characters so they can be grouped into people.';
     case 'faces-cluster':

@@ -226,6 +226,7 @@ const JOB_TITLES: Record<string, string> = {
   '4kify': '4K Upscale',
   retouch: 'Retouch',
   reshoot: 'Reshoot',
+  dream: 'Dream',
   'find-duplicates': 'Find Duplicates',
   'merge-duplicates': 'Merge Duplicate Groups',
 };

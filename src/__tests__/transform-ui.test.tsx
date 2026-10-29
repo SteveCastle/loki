@@ -68,12 +68,12 @@ describe('TransformSection (palette chips)', () => {
     expect(screen.queryByRole('button', { name: /Combine/ })).toBeNull();
   });
 
-  it('groups Edit and Direct as full control, apart from the one-click presets', () => {
+  it('groups Edit, Direct and Generate as full control, apart from the one-click presets', () => {
     setup([IMG]);
     const group = screen.getByRole('group', { name: 'Full control' });
-    expect(Array.from(group.querySelectorAll('.transform-custom-title')).map((t) => t.textContent)).toEqual(['Edit photo…', 'Direct video…']);
+    expect(Array.from(group.querySelectorAll('.transform-custom-title')).map((t) => t.textContent)).toEqual(['Edit photo…', 'Direct video…', 'Generate…']);
     const presets = screen.getByRole('group', { name: 'Presets' });
-    expect(presets.textContent).not.toMatch(/Edit|Direct/);
+    expect(presets.textContent).not.toMatch(/Edit|Direct|Generate/);
     expect(presets.textContent).toMatch(/Restore/);
     fireEvent.click(screen.getByRole('button', { name: /Direct video…/ }));
     expect(getFlowRequest()).toMatchObject({ paths: [IMG], intent: 'direct', phase: 'shape' });
@@ -81,7 +81,8 @@ describe('TransformSection (palette chips)', () => {
 
   it('offers only Generate for a selection no other intent can use', () => {
     setup(['C:/media/notes.txt']);
-    expect(Array.from(document.querySelectorAll('.transform-chip')).map((c) => c.textContent)).toEqual(['Generate…']);
+    expect(Array.from(document.querySelectorAll('.transform-custom-title')).map((c) => c.textContent)).toEqual(['Generate…']);
+    expect(document.querySelectorAll('.transform-chip')).toHaveLength(0);
   });
 
   it('with nothing selected, Generate is there and opens the flow at its prompt', () => {

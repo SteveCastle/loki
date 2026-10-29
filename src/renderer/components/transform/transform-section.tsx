@@ -27,14 +27,14 @@ import './transform-section.css';
 
 // The palette's "Transform" section, in two visually separate groups:
 // - Full control: the custom intents that run the prompt you write, with references and every setting (Edit a
-//   photo, Direct a video). They open the flow at their prompt.
+//   photo, Direct a video, Generate a new picture). They open the flow at their prompt.
 // - Presets: built-in treatments that run with the settings you used last time (Shift-click to adjust first; the
 //   ones ending in "…" open a short settings step), and the last run (“… again”).
 // The Scene editor is an icon in the palette header (context-palette.tsx), beside Open in Studio.
 // "All options" opens the full flow at its Choose step.
 // Generate needs no selection, so the section is there (with just Generate) even when nothing is selected.
-const CUSTOM_ORDER: IntentId[] = ['edit', 'direct'];
-const PRESET_ORDER: IntentId[] = ['restore', 'upscale', 'wallpaper', 'angle', 'reimagine', 'alive', 'generate'];
+const CUSTOM_ORDER: IntentId[] = ['edit', 'direct', 'generate'];
+const PRESET_ORDER: IntentId[] = ['restore', 'upscale', 'wallpaper', 'angle', 'reimagine', 'alive'];
 
 export interface TransformSectionProps {
   /** The working set: the right-clicked file plus any multi-selection ([] = nothing: only Generate is offered). */
@@ -203,12 +203,14 @@ function chipTitle(id: IntentId): string {
 function customTitle(id: IntentId, videoFrame: boolean): string {
   if (id === 'edit') return videoFrame ? 'Edit frame…' : 'Edit photo…';
   if (id === 'direct') return 'Direct video…';
+  if (id === 'generate') return 'Generate…';
   return chipLabel(id, videoFrame);
 }
 
 function customSub(id: IntentId, severalImages: boolean): string {
   if (id === 'edit') return severalImages ? 'Any change, using the others as references' : 'Describe any change';
   if (id === 'direct') return 'Images, clips & music → video';
+  if (id === 'generate') return 'A new picture from a description';
   return intentById(id).tagline;
 }
 
