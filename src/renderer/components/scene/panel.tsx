@@ -5,7 +5,7 @@ import { maskBounds, rectContains, type ContextSize } from './mask';
 import { PromptLibrary } from './prompt-library';
 import References from './references';
 import { refTokens, type RefKind } from './refs';
-import { composeFinish, FINISH_GROUNDING, FINISH_MODES, finishStrength, sketchWhere, DIALOGUE_LANGUAGES, MAX_GENERATIONS, dialogueSeconds, generationsInFlight, jobPhase, layerTiming, type DialogueLine, type FinishMode, type LayerOptions, type LoopKind, type SceneLayer } from './scene-api';
+import { shownStitch, composeFinish, FINISH_GROUNDING, FINISH_MODES, finishStrength, sketchWhere, DIALOGUE_LANGUAGES, MAX_GENERATIONS, dialogueSeconds, generationsInFlight, jobPhase, layerTiming, type DialogueLine, type FinishMode, type LayerOptions, type LoopKind, type SceneLayer } from './scene-api';
 
 // Shortcut labels: ⌃/↵ have no glyph in Windows' UI fonts and render as junk.
 const IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
@@ -232,6 +232,13 @@ export interface InspectorProps {
   onLoop: (n: number, kind: LoopKind) => void;
   /** Redo version n's finish (edges, detail) with the current settings. */
   onRefinish: (n: number) => void;
+  /** Stitches are being made (Scene.stitching). */
+  stitching: boolean;
+  /** Whether the shown version's seam is drawn on the stage; toggled by onShowSeam. */
+  seamShown: boolean;
+  onShowSeam: () => void;
+  /** Redraw where version n's seam still shows (loki-dream), as a new version. */
+  onHeal: (n: number) => void;
   /** A finish layer: switch what it does with its paint (add, recolour, repose). */
   onFinishMode: (mode: FinishMode) => void;
   /** Whether the active version's motion map is shown; toggled by onShowMotion. */
@@ -946,6 +953,38 @@ export function Inspector(props: InspectorProps) {
                   </button>
                 </div>
               )}
+              {!motion && (
+                <div className="sc-version-actions">
+                  <span className="sc-label" title="Stitching blends the shown version into the picture under it: aligns what drifted, matches tone and grain, and moves the seam to where the two agree">
+                    Edges
+                  </span>
+                  <button
+                    type="button"
+                    className={`sc-btn${o.stitch === false ? '' : ' on'}`}
+                    onClick={() => props.onOptions({ stitch: o.stitch === false })}
+                    title="Blend this layer's edges into the picture under it (preview, export, and what layers above are made from). Off: the plain feathered mask."
+                  >
+                    {o.stitch === false ? 'Blend edges off' : 'Blend edges'}
+                  </button>
+                  {o.stitch !== false && <StitchStatus stitch={shownStitch(l)} stitching={props.stitching} />}
+                  {shownStitch(l)?.seam && (
+                    <button type="button" className={`sc-btn${props.seamShown ? ' on' : ''}`} onClick={props.onShowSeam} title="Draw the seam (cyan) and where it still shows (orange) over the picture">
+                      Show seam
+                    </button>
+                  )}
+                  {DREAM_ENABLED && (shownStitch(l)?.report.healPixels || 0) > 0 && (
+                    <button
+                      type="button"
+                      className="sc-btn on"
+                      disabled={busy || full}
+                      onClick={() => props.onHeal(l.active)}
+                      title="Redraw, with loki-dream at low strength, only the stretches of seam that still show (orange in Show seam), so lines that don't continue are reworked to meet. Everything else stays exactly as it is. Makes a new version."
+                    >
+                      Heal seam
+                    </button>
+                  )}
+                </div>
+              )}
               {motion && (
                 <>
                   <div className="sc-version-actions">
@@ -1036,5 +1075,22 @@ export function Inspector(props: InspectorProps) {
         </div>
       )}
     </section>
+  );
+}
+
+/** What the stitch of the shown version did, in a few words. */
+function StitchStatus({ stitch, stitching }: { stitch: ReturnType<typeof shownStitch>; stitching: boolean }) {
+  if (!stitch) return <span className="sc-faint">{stitching ? 'blending…' : ''}</span>;
+  const r = stitch.report;
+  if (r.skipped) return <span className="sc-faint" title={r.skipped}>plain (nothing to match)</span>;
+  const parts: string[] = [];
+  if (r.drift >= 0.3) parts.push(`aligned ${r.driftMax.toFixed(1)} px`);
+  if (r.tone >= 1) parts.push(`tone ${Math.round(r.tone)}`);
+  if (r.grainAdded >= 0.5) parts.push('grain');
+  if (r.healPixels > 0) parts.push('seam shows in places');
+  return (
+    <span className="sc-faint" title={`Band ${r.band} px · drift ${r.drift.toFixed(1)} px (95%: ${r.driftMax.toFixed(1)}) · tone shift ${r.tone.toFixed(1)} · grain +${r.grainAdded.toFixed(1)} · seam ${r.seamLength} px · residual ${r.residual.toFixed(2)}`}>
+      {parts.length ? parts.join(' · ') : 'matched'}
+    </span>
   );
 }

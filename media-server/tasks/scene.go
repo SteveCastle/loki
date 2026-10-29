@@ -149,8 +149,11 @@ type SceneVersion struct {
 	// its mask back on the layer, so each result keeps the shape it was made
 	// with. Editor-owned (UpdateScene takes it by Path); nil on versions from
 	// before masks were kept per version.
-	Mask    *SceneMask `json:"mask,omitempty"`
-	Created time.Time  `json:"created"`
+	Mask *SceneMask `json:"mask,omitempty"`
+	// Stitch is the active still version blended into the picture under it
+	// (scene_stitch.go): derived on every read, nil while it is being made.
+	Stitch  *SceneStitch `json:"stitch,omitempty"`
+	Created time.Time    `json:"created"`
 }
 
 // SceneJob is a layer's generation in flight (server-owned).
@@ -265,8 +268,10 @@ type Scene struct {
 	// the scene length (loopSpeed), so the export itself loops seamlessly.
 	FreeLoops bool         `json:"freeLoops,omitempty"`
 	Render    *SceneRender `json:"render,omitempty"`
-	Created   time.Time    `json:"created"`
-	Updated   time.Time    `json:"updated"`
+	// Stitching: stitches are being made (the editor polls until they are).
+	Stitching bool      `json:"stitching,omitempty"`
+	Created   time.Time `json:"created"`
+	Updated   time.Time `json:"updated"`
 }
 
 // SceneSummary is a scene in a list (no masks).
@@ -523,6 +528,7 @@ func GetScene(q *jobqueue.Queue, id string) (*Scene, error) {
 			return nil, err
 		}
 	}
+	decorateStitches(s)
 	return s, nil
 }
 
@@ -632,6 +638,7 @@ func UpdateScene(q *jobqueue.Queue, id string, in *Scene) (*Scene, error) {
 	if err := saveSceneLocked(s); err != nil {
 		return nil, err
 	}
+	decorateStitches(s)
 	return s, nil
 }
 
@@ -894,7 +901,8 @@ func sceneJobOutput(kind, input string) string {
 	stem := strings.TrimSuffix(input, filepath.Ext(input))
 	// loki-retouch writes <crop>_edit.png, loki-dream <crop>_dream.png; a
 	// Recolour's coat is <crop>_edit.png, or finished by the engine <crop>_base_edit.png.
-	outs := []string{stem + "_base_edit.png", stem + "_edit.png", stem + "_dream.png"}
+	// A heal: <crop>_healed.png (its dream step's <crop>_dream.png is only the raw band).
+	outs := []string{stem + "_healed.png", stem + "_base_edit.png", stem + "_edit.png", stem + "_dream.png"}
 	if kind == SceneKindMotion {
 		outs = []string{stem + "_locked.mp4", stem + "_reshoot.mp4"}
 	}
@@ -951,6 +959,9 @@ type sceneGraphLayer struct {
 	Audio  bool // mix its soundtrack (motion only)
 	Region SceneRect
 	Mask   string // mask PNG, full frame at any resolution; alpha = coverage
+	// OwnAlpha: Media carries its own alpha over Region (a stitched patch);
+	// there is no Mask.
+	OwnAlpha bool
 	// Duration of a motion clip, and Speed: its PTS multiplier (loopSpeed;
 	// 0 or 1 = as generated).
 	Duration float64
@@ -1005,8 +1016,12 @@ func sceneGraph(base string, w, h int, layers []sceneGraphLayer, video bool, dur
 			still(l.Media)
 		}
 		ki := in + 1
-		still(l.Mask)
-		in += 2
+		if l.OwnAlpha {
+			in++
+		} else {
+			still(l.Mask)
+			in += 2
+		}
 		// The roto: the clip's matte sequence, looped and phased like the clip.
 		ti := -1
 		if l.Motion && l.Matte != "" {
@@ -1028,6 +1043,12 @@ func sceneGraph(base string, w, h int, layers []sceneGraphLayer, video bool, dur
 		retime := ""
 		if l.Motion && video && l.Speed > 0 && math.Abs(l.Speed-1) > 1e-4 {
 			retime = fmt.Sprintf("setpts=PTS*%.6f,", l.Speed)
+		}
+		if l.OwnAlpha {
+			f = append(f,
+				fmt.Sprintf("[%d:v]scale=%d:%d:flags=lanczos,setsar=1,format=rgba[l%d]", mi, r.W, r.H, i),
+				fmt.Sprintf("[b%d][l%d]overlay=%d:%d:format=auto:eof_action=repeat[b%d]", i, i, r.X, r.Y, i+1))
+			continue
 		}
 		alpha := fmt.Sprintf("a%d", i)
 		f = append(f,
@@ -1100,6 +1121,9 @@ func sceneGraph(base string, w, h int, layers []sceneGraphLayer, video bool, dur
 // their masks.
 func sceneGraphLayers(dir string, w, h int, layers []*SceneLayer, stillsOnly bool) ([]sceneGraphLayer, error) {
 	var out []sceneGraphLayer
+	// Stitched stills go in as their stitch (layers is always a bottom-up
+	// prefix of the scene, so these are the keys the stitches were made for).
+	keys := sceneStitchKeys(layers)
 	for _, l := range layers {
 		if l.Kind == SceneKindPaint {
 			if !paintInPicture(l) {
@@ -1118,6 +1142,12 @@ func sceneGraphLayers(dir string, w, h int, layers []*SceneLayer, stillsOnly boo
 		}
 		if _, err := os.Stat(v.Path); err != nil {
 			continue
+		}
+		if key, ok := keys[l.ID]; ok {
+			if st := readStitch(dir, l.ID, key); st != nil {
+				out = append(out, sceneGraphLayer{Media: st.Path, Region: v.Region, OwnAlpha: true, Speed: 1})
+				continue
+			}
 		}
 		mask, err := writeSceneMask(dir, l)
 		if err != nil {
@@ -1956,6 +1986,10 @@ func GenerateLayerMask(ctx context.Context, q *jobqueue.Queue, id, lid string, g
 	}
 	dir, _ := sceneDir(id)
 
+	// The engine is shown the picture as the stage shows it: stitched.
+	if err := ensureStitches(ctx, s, idx); err != nil {
+		fmt.Fprintf(os.Stderr, "scene %s: stitching below %q (cropping the plain picture): %v\n", id, l.Name, err)
+	}
 	below, err := sceneGraphLayers(dir, s.Width, s.Height, s.Layers[:idx], true)
 	if err != nil {
 		return nil, err
@@ -2511,6 +2545,9 @@ func sceneRenderTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 		return fail("cannot load scene "+id+": "+err.Error(), err)
 	}
 	dir, _ := sceneDir(id)
+	if err := ensureStitches(ctx, s, len(s.Layers)); err != nil {
+		q.PushJobStdout(j.ID, tag+": stitching failed, exporting the plain composite: "+err.Error())
+	}
 	sceneMu.Lock()
 	layers, err := sceneGraphLayers(dir, s.Width, s.Height, s.Layers, false)
 	sceneMu.Unlock()

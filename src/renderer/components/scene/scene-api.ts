@@ -28,7 +28,35 @@ export interface SceneVersion {
    * puts it back on the layer. Editor-owned (the server keeps it by path); absent on versions from before.
    */
   mask?: VersionMask;
+  /** A still version blended into the picture under it (server-made; absent while it is being made or when off). */
+  stitch?: SceneStitch | null;
   created: string;
+}
+
+/**
+ * A stitched still version: `path` is the patch (the version's region, alpha = the blend) shown in place of the
+ * version through its mask; `seam` draws the seam, `heal` where it still shows.
+ */
+export interface SceneStitch {
+  path: string;
+  seam?: string;
+  heal?: string;
+  key: string;
+  report: {
+    band: number;
+    /** Mean displacement corrected near the edge (px), and its 95th percentile. */
+    drift: number;
+    driftMax: number;
+    /** The overall colour shift corrected (0-255). */
+    tone: number;
+    /** Grain added (0-255 sd). */
+    grainAdded: number;
+    seamLength: number;
+    residual: number;
+    /** Pixels where the seam still shows (Heal redraws them). */
+    healPixels: number;
+    skipped?: string;
+  };
 }
 
 const roundRect = (r: Rect): Rect => ({ x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.w), h: Math.round(r.h) });
@@ -189,6 +217,8 @@ export interface LayerOptions {
    * still: fit the mask to the shown version, adding wherever it changed the picture near the mask, so a result
    * that corrects a rough sketch's shape (or casts a shadow) is not cut off at the sketch's edge.
    */
+  /** still: blend the shown version's edges into the picture under it (stitch; default on) */
+  stitch?: boolean;
   fit?: boolean;
   /** still: a finish layer ("Finish with AI"): its prompt is what the paint is, wrapped in this grounding. */
   finish?: FinishMode;
@@ -404,6 +434,8 @@ export interface Scene {
   /** Each motion layer loops at its own length (default false: retimed to fit the scene length, see loopSpeed). */
   freeLoops?: boolean;
   render?: SceneRender | null;
+  /** Stitches are being made (polled until they are). */
+  stitching?: boolean;
   created: string;
   updated: string;
 }
@@ -498,6 +530,8 @@ export const sceneApi = {
   keepOnly: (id: string, layer: string, n: number) => call<Scene>('DELETE', `/api/scenes/${enc(id)}/layers/${enc(layer)}/versions?keep=${n}`),
   /** Redo version n's finish (edges, detail) from the engine's output with the layer's current settings: a new version. */
   refinish: (id: string, layer: string, n: number) => call<Scene>('POST', `/api/scenes/${enc(id)}/layers/${enc(layer)}/versions/${n}/refinish`, {}),
+  /** Redraw where version n's stitched seam still shows (loki-dream), as a new version. */
+  heal: (id: string, layer: string, n: number) => call<Scene>('POST', `/api/scenes/${enc(id)}/layers/${enc(layer)}/versions/${n}/heal`, {}),
   loop: (id: string, layer: string, n: number, kind: LoopKind) =>
     call<Scene>('POST', `/api/scenes/${enc(id)}/layers/${enc(layer)}/versions/${n}/loop`, { kind }, 180000),
   /** Where version n moves: a PNG data URL (alpha = motion) covering `region`. */
@@ -622,7 +656,7 @@ export function generationsInFlight(l: SceneLayer): number {
 /** Whether a layer (or the scene's export) has server work in flight. */
 export function sceneBusy(s: Scene): boolean {
   const live = (st: string | undefined) => !!st && ['pending', 'in_progress', 'paused'].includes(st);
-  return s.layers.some((l) => !!l.job || l.versions.some((v) => live(v.track?.state))) || live(s.render?.state);
+  return s.layers.some((l) => !!l.job || l.versions.some((v) => live(v.track?.state))) || live(s.render?.state) || !!s.stitching;
 }
 
 /**
@@ -635,14 +669,33 @@ export function mergeServer(local: Scene, server: Scene): Scene {
   return {
     ...local,
     render: server.render,
+    stitching: server.stitching,
     updated: server.updated,
     layers: local.layers.map((l) => {
       const s = byId.get(l.id);
       if (!s) return l;
       const grew = s.versions.length !== l.versions.length;
       const masks = new Map(l.versions.filter((v) => v.mask).map((v) => [v.path, v.mask]));
-      const versions = masks.size ? s.versions.map((v) => (masks.has(v.path) ? { ...v, mask: masks.get(v.path) } : v)) : s.versions;
+      let versions = masks.size ? s.versions.map((v) => (masks.has(v.path) ? { ...v, mask: masks.get(v.path) } : v)) : s.versions;
+      // A stitch is made for the mask the server has: while a mask edit is still on its way it would show the old one.
+      if (s.mask !== l.mask) versions = versions.map((v) => (v.stitch ? { ...v, stitch: null } : v));
+      versions.forEach((v) => v.stitch && stitchMasks.set(v.stitch, s.mask));
       return { ...l, versions, job: s.job || null, queued: s.queued || [], error: s.error, active: grew ? s.active : l.active };
     }),
   };
+}
+
+/** The mask each stitch was made for (as the server had it when the stitch arrived). */
+const stitchMasks = new WeakMap<SceneStitch, string>();
+
+/**
+ * The stitch to show for a layer: its shown version's, when it is a still that is stitched and its mask is still the
+ * one the stitch was made for (a mask being edited shows plainly until the new stitch arrives).
+ */
+export function shownStitch(l: SceneLayer): SceneStitch | null {
+  if (l.kind !== 'still' || l.options?.stitch === false) return null;
+  const st = l.versions[l.active]?.stitch;
+  if (!st) return null;
+  const made = stitchMasks.get(st);
+  return made === undefined || made === l.mask ? st : null;
 }

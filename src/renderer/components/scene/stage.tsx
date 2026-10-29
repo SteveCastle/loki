@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { mediaUrl } from '../../platform';
 import { mapOp, moveVertex, opBox, pointInRect, simplifyPath, type MaskOp, type Rect } from './mask';
-import { jobPhase, layerRate, layerTiming, type Scene, type SceneLayer, type SceneVersion } from './scene-api';
+import { jobPhase, layerRate, layerTiming, shownStitch, type Scene, type SceneLayer, type SceneVersion } from './scene-api';
 import { selectedObjects, type PickState } from './pick';
 import { POSE_COLORS, POSE_JOINTS, POSE_LIMBS, POSE_ROOT, poseHit, posed, restPose, type PoseDrag, type PoseOp } from './pose';
 
@@ -100,6 +100,8 @@ export interface StageProps {
   roto: RotoView | null;
   /** Hide every layer (hold-to-compare with the base). */
   compare: boolean;
+  /** A stitched layer whose seam is drawn over the picture (the panel's Show seam). */
+  seamOf: SceneLayer | null;
   playing: boolean;
   soundOn: boolean;
   /** Bumped to restart every motion layer from its first frame together. */
@@ -204,7 +206,7 @@ function MotionMedia({ src, playing, muted, syncKey, style, rate, offset, clock:
 
 export default function Stage(props: StageProps) {
   const { scene, selected, tool, brush, hardness, ink, maskView, selectedShape, compare, playing, soundOn, syncKey, fitKey, protectMask, motionOverlay, onCommit, onSelect } = props;
-  const { pick, pickArea, roto } = props;
+  const { pick, pickArea, roto, seamOf } = props;
   const clock = useRef<SceneClock>({ t0: performance.now(), pausedAt: null });
   useEffect(() => {
     const c = clock.current;
@@ -769,6 +771,15 @@ export default function Stage(props: StageProps) {
             const matted = l.kind === 'motion' && v.track?.state === 'completed' && v.track.video && l.options?.matte !== false;
             const src = mediaUrl(matted ? (v.track?.video as string) : v.path);
             const style = regionStyle(v.region, scene);
+            // Stitched: the patch carries the blend in its own alpha (no mask over it).
+            const stitch = shownStitch(l);
+            if (stitch) {
+              return (
+                <div key={l.id} className="sc-layer">
+                  <img className="sc-media" src={mediaUrl(stitch.path)} style={style} alt="" draggable={false} />
+                </div>
+              );
+            }
             return (
               <div key={l.id} className="sc-layer" style={maskStyle(l.mask)}>
                 {l.kind === 'motion' ? (
@@ -789,6 +800,11 @@ export default function Stage(props: StageProps) {
               </div>
             );
           })}
+        {seamOf && !compare && (() => {
+          const st = shownStitch(seamOf);
+          const v = seamOf.versions[seamOf.active];
+          return st?.seam && v ? <img className="sc-seam" src={mediaUrl(st.seam)} style={regionStyle(v.region, scene)} alt="" draggable={false} /> : null;
+        })()}
         {sel && maskView === 'matte' && !compare && (
           <div className="sc-matte">{sel.mask && <div className="sc-matte-white" style={maskStyle(sel.mask)} />}</div>
         )}

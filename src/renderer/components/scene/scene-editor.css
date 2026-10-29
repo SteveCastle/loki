@@ -410,6 +410,12 @@ body.sc-body {
 }
 
 /* Where a version moves: a warm tint over the area that really changes. */
+.sc-seam {
+  position: absolute;
+  pointer-events: none;
+  image-rendering: pixelated;
+}
+
 .sc-motion-tint {
   position: absolute;
   background: #ff7a3c;

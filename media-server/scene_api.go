@@ -18,6 +18,7 @@ package main
 //                                                               (crossfade | natural | boomerang)
 //   POST   /api/scenes/{id}/layers/{lid}/versions/{n}/motion    where a motion version moves {dataUrl, region}
 //   POST   /api/scenes/{id}/layers/{lid}/versions/{n}/refinish  redo its finish (edges, detail) from the engine output
+//   POST   /api/scenes/{id}/layers/{lid}/versions/{n}/heal      redraw where its stitched seam still shows {strength?} (loki-dream)
 //   DELETE /api/scenes/{id}/layers/{lid}/versions/{n}            drop a version
 //   DELETE /api/scenes/{id}/layers/{lid}/versions?keep=N         drop every version but N
 //   POST   /api/scenes/{id}/render {format}          export video | still beside the source
@@ -65,6 +66,8 @@ func sceneReply(w http.ResponseWriter, s *tasks.Scene, err error) {
 		sceneError(w, err)
 		return
 	}
+	// Every answer carries the stitches as they stand (and starts any due).
+	tasks.DecorateStitches(s)
 	writeJSON(w, s)
 }
 
@@ -303,6 +306,13 @@ func sceneVersionActionHandler(deps *Dependencies) http.HandlerFunc {
 			sceneReply(w, s, err)
 		case "refinish":
 			s, err := tasks.RefinishVersion(deps.Queue, id, lid, n)
+			sceneReply(w, s, err)
+		case "heal":
+			var req struct {
+				Strength float64 `json:"strength"`
+			}
+			_ = readJSONBody(r, &req)
+			s, err := tasks.HealVersion(r.Context(), deps.Queue, id, lid, n, req.Strength)
 			sceneReply(w, s, err)
 		case "change":
 			url, region, err := tasks.VersionChangeMap(id, lid, n)

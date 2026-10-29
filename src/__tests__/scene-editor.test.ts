@@ -1,5 +1,5 @@
 import { maskBounds, motionRegion, regionFor, rectContains, simplifyPath, maskSize, type MaskOp } from '../renderer/components/scene/mask';
-import { composeFinish, FINISH_GROUNDING, finishShapes, mergeServer, sceneBusy, sketchWhere, type Scene, type SceneLayer } from '../renderer/components/scene/scene-api';
+import { composeFinish, FINISH_GROUNDING, finishShapes, mergeServer, sceneBusy, shownStitch, sketchWhere, type Scene, type SceneLayer } from '../renderer/components/scene/scene-api';
 import { applyPreset, fromDetection, mirrorPose, POSE_PRESETS, POSE_ROOT, poseHit, posed, poseSubtree, restPose, type PoseOp } from '../renderer/components/scene/pose';
 import { canStartScene } from '../renderer/components/scene/launch';
 
@@ -92,6 +92,23 @@ describe('scene documents', () => {
     const m = mergeServer(local, server).layers[0];
     expect(m.versions[0].mask).toBe(edited); // edited since the server last saw it
     expect(m.versions[1].mask).toBe(made); // generated with this mask
+  });
+
+  it('a stitch shows while its mask is the one it was made for, and polling continues while stitches are made', () => {
+    const report = { band: 25, drift: 1, driftMax: 2, tone: 3, grainAdded: 0, seamLength: 10, residual: 0.5, healPixels: 0 };
+    const stitched = { ...v('1.png'), stitch: { path: 'stitch.png', key: 'k', report } };
+    const server = scene([layer('a', { mask: 'M1', active: 0, versions: [stitched] })], { stitching: true });
+    const m = mergeServer(scene([layer('a', { mask: 'M1', active: 0, versions: [v('1.png')] })]), server);
+    expect(sceneBusy(m)).toBe(true);
+    expect(shownStitch(m.layers[0])?.path).toBe('stitch.png');
+    // The mask edited locally: the stitch (made for M1) steps aside until the new one arrives.
+    expect(shownStitch({ ...m.layers[0], mask: 'M2' })).toBeNull();
+    // Edited before the server saw it: the merge drops it outright.
+    expect(shownStitch(mergeServer(scene([layer('a', { mask: 'M2', active: 0, versions: [v('1.png')] })]), server).layers[0])).toBeNull();
+    // Opted out: never shown.
+    expect(shownStitch({ ...m.layers[0], options: { stitch: false } })).toBeNull();
+    // Motion layers aren't stitched.
+    expect(shownStitch({ ...m.layers[0], kind: 'motion' })).toBeNull();
   });
 
   it('a scene starts from an image or a video frame', () => {

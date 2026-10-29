@@ -298,6 +298,8 @@ interface Undo {
 
 export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onSwitch: (s: Scene) => void }) {
   const [doc, setDoc] = useState<Scene>(initial);
+  /** The layer whose stitched seam is drawn on the stage (panel: Show seam). */
+  const [seamLayerId, setSeamLayerId] = useState<string | null>(null);
   const docRef = useRef(doc);
   docRef.current = doc;
   const [selectedId, setSelectedId] = useState<string | null>(initial.layers.length ? initial.layers[initial.layers.length - 1].id : null);
@@ -1477,6 +1479,7 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
             onPoseBox={detectPose}
             roto={rotoView}
             compare={compare}
+            seamOf={seamLayerId && selected?.id === seamLayerId ? selected : null}
             playing={playing}
             soundOn={soundOn}
             syncKey={syncKey}
@@ -1589,6 +1592,10 @@ export default function SceneEditor({ initial, onSwitch }: { initial: Scene; onS
               onLoop={(n, kind) => loopVersion(selected.id, n, kind)}
               onFinishMode={(mode) => changeFinish(selected.id, mode)}
               onRefinish={(n) => serverAction(() => sceneApi.refinish(doc.id, selected.id, n), 'Could not re-finish the version')}
+              stitching={!!doc.stitching}
+              seamShown={seamLayerId === selected.id}
+              onShowSeam={() => setSeamLayerId((cur) => (cur === selected.id ? null : selected.id))}
+              onHeal={(n) => serverAction(() => sceneApi.heal(doc.id, selected.id, n), 'Could not heal the seam')}
               motionShown={!!motionView && motionView.layerId === selected.id && motionView.n === selected.active}
               onShowMotion={() => toggleMotion(selected)}
               onGrowToMotion={() => growToMotion(selected)}

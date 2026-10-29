@@ -160,6 +160,7 @@ func init() {
 	RegisterTask("splat", "Gaussian Splat (3D scene)", splatOptions, splatTask)
 	RegisterTask("scene-render", "Render Scene", sceneRenderOptions, sceneRenderTask)
 	RegisterTask("scene-lock", "Lock Scene Motion Edges", sceneLockOptions, sceneLockTask)
+	RegisterTask("scene-heal-merge", "Merge Healed Scene Seam", sceneHealMergeOptions, sceneHealMergeTask)
 	RegisterTask("scene-track", "Track Scene Roto", sceneTrackOptions, sceneTrackTask)
 	RegisterTask("scene-recolour", "Recolour Scene Base Coat", sceneRecolourOptions, sceneRecolourTask)
 	// Deprecated alias of retouch --preset 4kify|4kify-phone (saved workflows).
