@@ -66,13 +66,27 @@ fn download_dir() -> PathBuf {
     std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.join("models"))).unwrap_or_else(|| PathBuf::from("models"))
 }
 
-/// Resolve a model file: explicit path, else search, else download into `<binary dir>/models`.
+/// A bare file name (no folder) looked up in the model folders, with or without its `.safetensors` extension.
+fn find_named(p: &Path) -> Option<PathBuf> {
+    if p.components().count() != 1 {
+        return None;
+    }
+    let name = p.as_os_str().to_string_lossy();
+    let names = [name.to_string(), format!("{name}.safetensors")];
+    search_dirs().into_iter().flat_map(|d| names.iter().map(move |n| d.join(n)).collect::<Vec<_>>()).find(|c| c.is_file())
+}
+
+/// Resolve a model file: explicit path (or bare file name in the model folders), else search, else download into
+/// `<binary dir>/models`.
 pub fn resolve(explicit: Option<PathBuf>, spec: &ModelSpec) -> Result<PathBuf> {
     if let Some(p) = explicit {
-        if !p.exists() {
-            bail!("{}: {} does not exist", spec.what, p.display());
+        if p.is_file() {
+            return Ok(p);
         }
-        return Ok(p);
+        if let Some(found) = find_named(&p) {
+            return Ok(found);
+        }
+        bail!("{}: {} does not exist (a bare file name is looked up in: {})", spec.what, p.display(), search_dirs().iter().map(|d| d.display().to_string()).collect::<Vec<_>>().join(", "));
     }
     if let Some(p) = find_local(spec) {
         return Ok(p);

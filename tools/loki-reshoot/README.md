@@ -59,7 +59,7 @@ loki-reshoot --prompt TEXT [OPTIONS]
       --model h3|fast                   h3 = MiniMax H3 (default, best quality); fast = FastH3 Omni (8 steps + sparse attention)
       --dense-attention                 fast: full attention instead of VSA
       --steps N (20 h3 / 8 fast)  --seed N  --ref-image-size match|max  --no-audio  --crf N (18)  -q  --json  --show-prompt  --prompt-guide  --meta JSON|--meta-file FILE
-      --dit / --text-encoder / --video-vae / --audio-vae PATH   model files
+      --dit / --text-encoder / --video-vae / --audio-vae PATH|NAME   model files (a bare NAME is looked up in the model folders)
       --ffmpeg PATH
 ```
 
@@ -116,6 +116,18 @@ Two diffusion models share one text encoder and the VAEs, chosen with `--model`:
   at 1344x768 / 10 s. End to end it is ~2.5x faster at 5 s; the text encoder and VAE decode cost the same for both models.
   The gate weights (1.9 GB) stay in pinned host memory and are streamed per layer. Runs under 12288 tokens stay dense.
   `LOKI_VSA_SIGMA=s` keeps steps above sigma `s` dense; ComfyUI's default `start_percent` 0.2 is about 0.98.
+
+**Swapping the diffusion model.** Any finetune with the same H3 architecture (the same tensor names and shapes) can stand
+in: `--dit FILE`, or `LOKI_RESHOOT_DIT=FILE` (with `--model h3`) / `LOKI_RESHOOT_FAST_DIT=FILE` (with `--model fast`) for
+every run on the machine. `--model` still picks the recipe: `h3` = 20 `res_multistep` steps for a base-style model,
+`fast` = 8 Euler steps for a few-step (turbo) finetune; PDD heads and VSA gates are used when the file has them, and a
+fast finetune without gates runs dense attention. int8 ConvRot files work, including "HQ" builds that keep some blocks
+in bf16/fp16 (those are quantized to int8 ConvRot as they load, as the block GEMMs are int8 only), and bf16 adaLN tables
+are converted to fp16. A bare file name is looked up in the model folders; the file name is recorded as `dit` in the
+generation record. The media server offers the files in its `reshootModels` config list (each with its recipe) as a per-job
+choice in the Transform flow, passed as `--dit`.
+Turbo finetunes are often sampled in ComfyUI with a second pass (latent upscale + a few low-denoise refinement steps);
+this engine runs the single pass.
 
 Looked up next to the binary, in `./models`, and in `$LOKI_MODELS` (a path list); any that are missing are downloaded (resumable)
 from Hugging Face into `models/` next to the binary (~42 GB for `h3`; `fast` adds 22 GB).

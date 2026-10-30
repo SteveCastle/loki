@@ -66,6 +66,8 @@ pub struct Request {
     pub no_audio: bool,
     /// Video Sparse Attention on a model that supports it (FastH3); otherwise ignored
     pub sparse: bool,
+    /// A few-step distilled (turbo) model: plain Euler steps instead of res_multistep. Implied by PDD output heads.
+    pub distilled: bool,
     pub crf: u32,
     pub out: PathBuf,
 }
@@ -344,8 +346,9 @@ pub fn run(dev: Arc<Device>, req: &Request, paths: &Paths, ff: &Ffmpeg, record: 
         let xa = sampler::randn(&dev, &[32, 2, audio_t], req.seed ^ 0x9E37_79B9_7F4A_7C15)?;
         let sigmas = sampler::simple_sigmas(req.steps, sampler::SHIFT_VIDEO);
         run.sigmas = sigmas.clone();
-        // a PDD (few-step distilled) model is trained for plain Euler steps; the base model for res_multistep
-        let distilled = dit.pdd_heads() > 1;
+        // a few-step distilled model (--model fast, or any with PDD heads) is trained for plain Euler steps; the base
+        // model for res_multistep
+        let distilled = req.distilled || dit.pdd_heads() > 1;
         let show_bar = std::io::IsTerminal::is_terminal(&std::io::stderr()) && !crate::log::quiet();
         let bar = if show_bar { indicatif::ProgressBar::new(req.steps as u64) } else { indicatif::ProgressBar::hidden() };
         bar.set_style(indicatif::ProgressStyle::with_template("  sampling {bar:40} {pos}/{len} steps  {elapsed_precise} eta {eta_precise}").unwrap());

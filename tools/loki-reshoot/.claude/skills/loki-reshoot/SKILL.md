@@ -19,6 +19,9 @@ composable tools: see the sibling `loki-retouch` (image editing/upscaling) and t
   finetune with sparse attention (VSA): ~4-5x faster sampling, ~2.5x end to end, quality may be a little lower). Same prompts, references, sizes and lengths; `fast` only adds its own
   22 GB diffusion model (`fasth3_omniref_8step_pruned_int8_convrot.safetensors`, downloaded on first use). Use `fast` for drafts,
   iterating on prompts/seeds and long or large clips; `h3` for finals when quality matters most. Don't raise `--steps` for `fast`.
+- `--dit FILE|NAME` swaps in a same-architecture H3 finetune (a bare NAME is found in the model folders) and keeps `--model`'s
+  recipe: a few-step turbo finetune goes with `--model fast`, a base-style one with `h3`. `LOKI_RESHOOT_DIT` / `LOKI_RESHOOT_FAST_DIT`
+  set a machine default; the record's `dit` field names the file used.
 - The GPU must be free (~22 GB). If ComfyUI or another big GPU job is running the run fails with an allocation error. Check
   `nvidia-smi --query-gpu=memory.used --format=csv`; ask before stopping the user's processes.
 - ffmpeg/ffprobe are required (PATH, or next to the exe; auto-downloaded on Windows if absent).

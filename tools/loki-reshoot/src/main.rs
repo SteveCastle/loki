@@ -81,6 +81,10 @@ MODELS
   Attention: ~4-5x faster sampling, ~2.5x end to end at 1024x768 / 5 s (quality may be a little lower; --dense-attention). Both share the text encoder and VAEs; fast only adds its own diffusion model (22 GB).
   Looked up next to the binary, in ./models, $LOKI_MODELS (a path list); missing ones are downloaded from Hugging Face
   (~42 GB for h3, +22 GB for fast).
+  Swapping the diffusion model: --dit FILE runs any same-architecture H3 finetune (int8 ConvRot, bf16 linears are
+  quantized as they load) with --model's recipe: h3 = 20 res_multistep steps, fast = 8 Euler steps for few-step (turbo)
+  finetunes. $LOKI_RESHOOT_DIT / $LOKI_RESHOOT_FAST_DIT set a machine default per model. A bare NAME is looked up in the
+  model folders.
 
 ",
         include_str!("../docs/PROMPT_CHEATSHEET.txt")
@@ -188,8 +192,9 @@ struct Cli {
     /// x264 CRF of the output.
     #[arg(long, default_value_t = 18)]
     crf: u32,
-    /// Diffusion model file (overrides --model's file; a FastH3 file is recognised and sampled as such). Default: auto-discover
-    /// (or download).
+    /// Diffusion model file or bare file name (looked up in the model folders): any same-architecture H3 finetune, sampled
+    /// with --model's recipe (a FastH3 file is recognised as such). Default: $LOKI_RESHOOT_DIT (h3) /
+    /// $LOKI_RESHOOT_FAST_DIT (fast), else --model's own file, auto-discovered (or downloaded).
     #[arg(long)]
     dit: Option<PathBuf>,
     /// Qwen3-VL text encoder file.
@@ -258,9 +263,16 @@ fn main() {
     }
 }
 
+/// The diffusion model: --dit, else the machine-wide swap for --model ($LOKI_RESHOOT_DIT / $LOKI_RESHOOT_FAST_DIT: a
+/// same-architecture finetune), else --model's own file.
+fn dit_choice(cli: &Cli) -> Option<PathBuf> {
+    let var = if cli.model == ModelArg::Fast { "LOKI_RESHOOT_FAST_DIT" } else { "LOKI_RESHOOT_DIT" };
+    cli.dit.clone().or_else(|| std::env::var_os(var).filter(|v| !v.is_empty()).map(PathBuf::from))
+}
+
 fn model_paths(cli: &Cli) -> Result<Paths> {
     Ok(Paths {
-        dit: models::resolve(cli.dit.clone(), if cli.model == ModelArg::Fast { &models::FAST_DIT } else { &models::DIT })?,
+        dit: models::resolve(dit_choice(cli), if cli.model == ModelArg::Fast { &models::FAST_DIT } else { &models::DIT })?,
         text_encoder: models::resolve(cli.text_encoder.clone(), &models::TEXT_ENCODER)?,
         video_vae: models::resolve(cli.video_vae.clone(), &models::VIDEO_VAE)?,
         audio_vae: models::resolve(cli.audio_vae.clone(), &models::AUDIO_VAE)?,
@@ -432,6 +444,7 @@ fn run(argv: Vec<String>) -> Result<()> {
         video_audio: !cli.no_video_audio,
         no_audio: cli.no_audio,
         sparse: !cli.dense_attention,
+        distilled: cli.model == ModelArg::Fast,
         crf: cli.crf,
         out,
     };
@@ -442,6 +455,14 @@ fn run(argv: Vec<String>) -> Result<()> {
     record.set("meta", meta);
 
     let paths = model_paths(&cli)?;
+    record.set("dit", paths.dit.file_name().map(|f| f.to_string_lossy().into_owned()));
+    // VSA needs the model's coarse gates: a fast finetune without them runs dense
+    if record.get("attention").and_then(|a| a.as_str()) == Some("vsa") {
+        let gated = loki_reshoot::safetensors::SafeTensors::open(&paths.dit).map(|st| st.has("blocks.0.attn.to_gate_compress.weight")).unwrap_or(true);
+        if !gated {
+            record.set("attention", "dense");
+        }
+    }
     eprintln!("  dit: {}\n  text encoder: {}\n  video vae: {}\n  audio vae: {}", paths.dit.display(), paths.text_encoder.display(), paths.video_vae.display(), paths.audio_vae.display());
     let dev = worker::device()?;
     eprintln!("  gpu: {} MB free of {} MB", dev.free_mem()? >> 20, dev.total_mem >> 20);

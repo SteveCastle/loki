@@ -287,6 +287,81 @@ enum Fc1W {
 }
 const FC1_BYTES: usize = 2 * FFN * HIDDEN;
 
+/// A block linear as int8 ConvRot weight bytes [n, k] + per-row f32 scale bytes [n]: as stored, or quantized here from a
+/// float (bf16/fp16) weight. Finetunes are published either way, and some int8 builds keep their first and last blocks
+/// in bf16 ("HQ" edges). Those are quantized like the rest, since the engine's block GEMMs are int8 only.
+fn int8_linear<'a>(st: &'a SafeTensors, prefix: &str, n: usize, k: usize) -> Result<(std::borrow::Cow<'a, [u8]>, std::borrow::Cow<'a, [u8]>)> {
+    use std::borrow::Cow;
+    let name = format!("{prefix}.weight");
+    let info = st.info(&name)?;
+    ensure!(info.shape.iter().product::<usize>() == n * k, "{name}: shape {:?}, expected [{n}, {k}]", info.shape);
+    match info.dtype.as_str() {
+        "I8" => {
+            let m: serde_json::Value = serde_json::from_slice(st.bytes(&format!("{prefix}.comfy_quant"))?)?;
+            ensure!(m["format"] == "int8_tensorwise" && m["convrot"] == true && m["convrot_groupsize"] == 256, "{prefix}: unsupported quant format {m}");
+            let scale = st.bytes(&format!("{prefix}.weight_scale"))?;
+            ensure!(scale.len() == n * 4, "{prefix}.weight_scale: {} bytes, expected {}", scale.len(), n * 4);
+            Ok((Cow::Borrowed(st.bytes(&name)?), Cow::Borrowed(scale)))
+        }
+        "BF16" | "F16" => {
+            let (w, s) = quantize_convrot(st.bytes(&name)?, info.dtype == "BF16", n, k);
+            Ok((Cow::Owned(w), Cow::Owned(s)))
+        }
+        other => anyhow::bail!("{name}: unsupported dtype {other}"),
+    }
+}
+
+/// Float rows [n, k] (bf16 or fp16 bytes) -> int8 ConvRot: each 256-group rotated by the normalized Hadamard matrix
+/// (the activations' rotation in `hadamard_quant_row`, so the int8 GEMM sees (xH)(WH)^T = xW^T), then per-row absmax.
+fn quantize_convrot(src: &[u8], bf16: bool, n: usize, k: usize) -> (Vec<u8>, Vec<u8>) {
+    let (mut w, mut s) = (vec![0u8; n * k], vec![0u8; n * 4]);
+    let threads = std::thread::available_parallelism().map(|t| t.get()).unwrap_or(4).min(16);
+    let rows = n.div_ceil(threads);
+    std::thread::scope(|sc| {
+        for ((src, w), s) in src.chunks(rows * k * 2).zip(w.chunks_mut(rows * k)).zip(s.chunks_mut(rows * 4)) {
+            sc.spawn(move || {
+                let mut row = vec![0f32; k];
+                for ((r, q), sc) in src.chunks_exact(k * 2).zip(w.chunks_exact_mut(k)).zip(s.chunks_exact_mut(4)) {
+                    for (v, b) in row.iter_mut().zip(r.chunks_exact(2)) {
+                        let bits = u16::from_le_bytes([b[0], b[1]]);
+                        *v = if bf16 { half::bf16::from_bits(bits).to_f32() } else { half::f16::from_bits(bits).to_f32() };
+                    }
+                    for g in row.chunks_exact_mut(256) {
+                        let mut st = 1;
+                        while st < 256 {
+                            for j in 0..64 {
+                                let base = (j / st) * st * 4 + j % st;
+                                let (x0, x1, x2, x3) = (g[base], g[base + st], g[base + 2 * st], g[base + 3 * st]);
+                                g[base] = x0 + x1 + x2 - x3;
+                                g[base + st] = x0 + x1 - x2 + x3;
+                                g[base + 2 * st] = x0 - x1 + x2 + x3;
+                                g[base + 3 * st] = -x0 + x1 + x2 + x3;
+                            }
+                            st <<= 2;
+                        }
+                    }
+                    let amax = row.iter().fold(0f32, |a, v| a.max(v.abs())) * 0.0625;
+                    let scale = amax / 127.0;
+                    let inv = if scale > 0.0 { 0.0625 / scale } else { 0.0 };
+                    for (o, v) in q.iter_mut().zip(&row) {
+                        *o = ((v * inv).round_ties_even().clamp(-128.0, 127.0) as i8) as u8;
+                    }
+                    sc.copy_from_slice(&(if scale > 0.0 { scale } else { f32::MIN_POSITIVE }).to_le_bytes());
+                }
+            });
+        }
+    });
+    (w, s)
+}
+
+/// A small float tensor's bytes as fp16 (what the adaLN kernels read): as stored, or converted from bf16/f32.
+fn f16_bytes<'a>(st: &'a SafeTensors, name: &str) -> Result<std::borrow::Cow<'a, [u8]>> {
+    if st.info(name)?.dtype == "F16" {
+        return Ok(std::borrow::Cow::Borrowed(st.bytes(name)?));
+    }
+    Ok(std::borrow::Cow::Owned(st.f32s(name)?.iter().flat_map(|v| half::f16::from_f32(*v).to_bits().to_le_bytes()).collect()))
+}
+
 /// Prepared per-run state (layout, tables, refined text, buffers).
 pub struct Run {
     pub seq: usize,
@@ -640,13 +715,6 @@ impl Dit {
             let names = |i: usize| -> Vec<(String, usize)> {
                 let p = format!("blocks.{i}");
                 vec![
-                    (format!("{p}.attn.qkv_proj.weight"), 3 * INNER * HIDDEN),
-                    (format!("{p}.attn.qkv_proj.weight_scale"), 3 * INNER * 4),
-                    (format!("{p}.attn.out_proj.weight"), HIDDEN * INNER),
-                    (format!("{p}.attn.out_proj.weight_scale"), HIDDEN * 4),
-                    (format!("{p}.mlp.fc1.weight_scale"), 2 * FFN * 4),
-                    (format!("{p}.mlp.fc2.weight"), HIDDEN * FFN),
-                    (format!("{p}.mlp.fc2.weight_scale"), HIDDEN * 4),
                     (format!("{p}.norm1.weight"), HIDDEN * 2),
                     (format!("{p}.norm2.weight"), HIDDEN * 2),
                     (format!("{p}.attn.q_norm.weight"), HEAD_DIM * 2),
@@ -654,19 +722,40 @@ impl Dit {
                 ]
             };
             let align = |x: usize| (x + 255) / 256 * 256;
+            // block linears (int8 + per-row scale; fc1's int8 weight lives outside the arena, see Fc1W)
+            let linears = [("attn.qkv_proj", 3 * INNER, HIDDEN), ("attn.out_proj", HIDDEN, INNER), ("mlp.fc1", 2 * FFN, HIDDEN), ("mlp.fc2", HIDDEN, FFN)];
             let mut total = align(LAYERS * no * T_DIM * 2) + align(LAYERS * no * 2);
+            let mut float_blocks = Vec::new();
             for i in 0..LAYERS {
                 for (name, bytes) in names(i) {
                     let have = st.bytes(&name)?.len();
                     ensure!(have == bytes, "{name}: {have} bytes, expected {bytes}");
                     total += align(bytes);
                 }
-                let meta: serde_json::Value = serde_json::from_slice(st.bytes(&format!("blocks.{i}.mlp.fc1.comfy_quant"))?)?;
-                for q in ["attn.qkv_proj", "attn.out_proj", "mlp.fc1", "mlp.fc2"].into_iter().chain(vsa.map(|_| "attn.to_gate_compress")) {
-                    let m: serde_json::Value = serde_json::from_slice(st.bytes(&format!("blocks.{i}.{q}.comfy_quant"))?)?;
-                    ensure!(m["format"] == "int8_tensorwise" && m["convrot"] == true && m["convrot_groupsize"] == 256, "blocks.{i}.{q}: unsupported quant format {m}");
+                for (q, n, k) in linears {
+                    let (name, info) = (format!("blocks.{i}.{q}.weight"), st.info(&format!("blocks.{i}.{q}.weight"))?);
+                    ensure!(info.shape.iter().product::<usize>() == n * k, "{name}: shape {:?}, expected [{n}, {k}]", info.shape);
+                    match info.dtype.as_str() {
+                        "I8" => {
+                            let m: serde_json::Value = serde_json::from_slice(st.bytes(&format!("blocks.{i}.{q}.comfy_quant"))?)?;
+                            ensure!(m["format"] == "int8_tensorwise" && m["convrot"] == true && m["convrot_groupsize"] == 256, "blocks.{i}.{q}: unsupported quant format {m}");
+                        }
+                        "BF16" | "F16" => {
+                            if !float_blocks.contains(&i) {
+                                float_blocks.push(i);
+                            }
+                        }
+                        other => anyhow::bail!("{name}: unsupported dtype {other}"),
+                    }
+                    total += align(n * 4) + if q == "mlp.fc1" { 0 } else { align(n * k) };
                 }
-                let _ = meta;
+                if vsa.is_some() {
+                    let m: serde_json::Value = serde_json::from_slice(st.bytes(&format!("blocks.{i}.attn.to_gate_compress.comfy_quant"))?)?;
+                    ensure!(m["format"] == "int8_tensorwise" && m["convrot"] == true && m["convrot_groupsize"] == 256, "blocks.{i}.attn.to_gate_compress: unsupported quant format {m}");
+                }
+            }
+            if !float_blocks.is_empty() {
+                crate::info!("  dit: blocks {float_blocks:?} are stored in bf16/fp16; quantizing them to int8 ConvRot as they load");
             }
             let arena = Arc::new(dev.alloc(total)?);
             let mut off = 0usize;
@@ -689,8 +778,9 @@ impl Dit {
             for i in 0..LAYERS {
                 let p = format!("blocks.{i}");
                 let qlin = |take: &mut dyn FnMut(DType, &[usize], Option<&[u8]>) -> Result<Tensor>, q: &str, n: usize, k: usize| -> Result<QLinear> {
-                    let w = take(DType::I8, &[n, k], Some(st.bytes(&format!("{p}.{q}.weight"))?))?;
-                    let scale = take(DType::F32, &[n], Some(st.bytes(&format!("{p}.{q}.weight_scale"))?))?;
+                    let (wb, sb) = int8_linear(&st, &format!("{p}.{q}"), n, k)?;
+                    let w = take(DType::I8, &[n, k], Some(&wb))?;
+                    let scale = take(DType::F32, &[n], Some(&sb))?;
                     Ok(QLinear { w, scale, n, k })
                 };
                 let qkv = qlin(&mut take, "attn.qkv_proj", 3 * INNER, HIDDEN)?;
@@ -698,8 +788,7 @@ impl Dit {
                 // fc1: [gate | up] rows interleaved (gate_j, up_j) on the host for the fused SwiGLU epilogue
                 let (fc1_scale, fc1_w) = {
                     let (n, k) = (2 * FFN, HIDDEN);
-                    let wb = st.bytes(&format!("{p}.mlp.fc1.weight"))?;
-                    let sb = st.bytes(&format!("{p}.mlp.fc1.weight_scale"))?;
+                    let (wb, sb) = int8_linear(&st, &format!("{p}.mlp.fc1"), n, k)?;
                     let mut wi = vec![0u8; n * k];
                     let mut si = vec![0u8; n * 4];
                     for r in 0..n {
@@ -725,20 +814,24 @@ impl Dit {
                     k: HIDDEN,
                 };
                 blocks.push(Block { q: sub(0, INNER), kv: sub(INNER, 2 * INNER), out, fc1_scale, fc2, norm1, norm2, q_norm, k_norm });
+                // adaLN tables: fp16 as H3 ships them (some finetunes store bf16: converted)
                 let wi = st.info(&format!("{p}.adaln_proj.linear.weight"))?;
-                ensure!(wi.dtype == "F16" && wi.shape == vec![no, T_DIM], "unexpected adaln weight {:?} {:?}", wi.dtype, wi.shape);
-                let wb = st.bytes(&format!("{p}.adaln_proj.linear.weight"))?;
-                dev.htod_at(adaln_w.ptr + (i * no * T_DIM * 2) as u64, wb)?;
-                let bb = st.bytes(&format!("{p}.adaln_proj.linear.bias"))?;
-                dev.htod_at(adaln_b.ptr + (i * no * 2) as u64, bb)?;
+                ensure!(wi.shape == vec![no, T_DIM], "unexpected adaln weight {:?} {:?}", wi.dtype, wi.shape);
+                let wb = f16_bytes(&st, &format!("{p}.adaln_proj.linear.weight"))?;
+                dev.htod_at(adaln_w.ptr + (i * no * T_DIM * 2) as u64, &wb)?;
+                let bb = f16_bytes(&st, &format!("{p}.adaln_proj.linear.bias"))?;
+                ensure!(bb.len() == no * 2, "unexpected adaln bias size");
+                dev.htod_at(adaln_b.ptr + (i * no * 2) as u64, &bb)?;
                 adaln_bytes += wb.len() + bb.len();
             }
             drop(take);
             (blocks, adaln_w, adaln_b, uploaded + adaln_bytes + LAYERS * FC1_BYTES)
         };
         let mut l = Loader::new(&st, dev.clone());
-        let fin_adaln_w = Tensor::from_buf(dev.upload(st.bytes("final_layer.adaln_proj.linear.weight")?)?, DType::U8, &[2 * HIDDEN * T_DIM * 2]);
-        let fin_adaln_b = Tensor::from_buf(dev.upload(st.bytes("final_layer.adaln_proj.linear.bias")?)?, DType::U8, &[2 * HIDDEN * 2]);
+        let (fw, fb) = (f16_bytes(&st, "final_layer.adaln_proj.linear.weight")?, f16_bytes(&st, "final_layer.adaln_proj.linear.bias")?);
+        ensure!(fw.len() == 2 * HIDDEN * T_DIM * 2 && fb.len() == 2 * HIDDEN * 2, "unexpected final adaln size");
+        let fin_adaln_w = Tensor::from_buf(dev.upload(&fw[..])?, DType::U8, &[2 * HIDDEN * T_DIM * 2]);
+        let fin_adaln_b = Tensor::from_buf(dev.upload(&fb[..])?, DType::U8, &[2 * HIDDEN * 2]);
         let fin_norm = l.bf16("final_layer.norm.weight")?;
         let heads = st.info("final_layer.video_out.weight")?.shape[0];
         ensure!(heads % 96 == 0, "unexpected final_layer.video_out rows {heads}");
@@ -1644,6 +1737,31 @@ impl Dit {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn float_linears_quantize_like_convrot() {
+        // bf16 rows -> the reference H256 rotation + per-row absmax int8 (what ComfyUI's ConvRot files hold)
+        let (n, k) = (37, 512);
+        let x: Vec<f32> = (0..n * k).map(|i| half::bf16::from_f32(((i * 7919 % 1013) as f32 / 1013.0 - 0.5) * (1.0 + (i / k) as f32)).to_f32()).collect();
+        let src: Vec<u8> = x.iter().flat_map(|v| half::bf16::from_f32(*v).to_bits().to_le_bytes()).collect();
+        let (w, s) = quantize_convrot(&src, true, n, k);
+        let (wq, ws) = crate::reference::quant_rows_i8(&crate::reference::hadamard256_rows(&x, k), k);
+        let scales: Vec<f32> = s.chunks_exact(4).map(|c| f32::from_le_bytes(c.try_into().unwrap())).collect();
+        for r in 0..n {
+            assert!((scales[r] - ws[r]).abs() <= ws[r] * 1e-5, "row {r} scale {} vs {}", scales[r], ws[r]);
+        }
+        let off = w.iter().zip(&wq).filter(|(a, b)| (**a as i8 as i32 - **b as i32).abs() > 1).count();
+        assert_eq!(off, 0, "int8 values off by more than one step");
+        // and dequantized, un-rotated rows come back close to the input
+        let deq: Vec<f32> = (0..n * k).map(|i| w[i] as i8 as f32 * scales[i / k]).collect();
+        let back = crate::reference::hadamard256_rows(&deq, k);
+        for r in 0..n {
+            let (a, b) = (&x[r * k..(r + 1) * k], &back[r * k..(r + 1) * k]);
+            let dot: f32 = a.iter().zip(b).map(|(p, q)| p * q).sum();
+            let cos = dot / (a.iter().map(|v| v * v).sum::<f32>().sqrt() * b.iter().map(|v| v * v).sum::<f32>().sqrt());
+            assert!(cos > 0.999, "row {r}: cos {cos}");
+        }
+    }
 
     #[test]
     fn pdd_span_follows_the_step_grid() {
