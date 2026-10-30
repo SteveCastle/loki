@@ -665,7 +665,7 @@ func TestSceneGenerateWithRefs(t *testing.T) {
 	in := *s
 	in.Layers = []*SceneLayer{{ID: "m", Kind: SceneKindMotion, Mask: mask, Region: SceneRect{X: 60, Y: 40, W: 200, H: 160}, Prompt: "the person puts on the hat from <Picture 2>",
 		Options: map[string]any{"refs": []any{map[string]any{"path": img, "note": "a red hat"}, map[string]any{"path": vid}},
-			"dialogue": []any{map[string]any{"text": "Nice hat"}}, "voiceRef": voice}}}
+			"dialogue": []any{map[string]any{"text": "Nice hat"}}, "voiceRef": voice, "model": "fast", "dit": " extra-model.safetensors "}}}
 	if _, err := UpdateScene(q, s.ID, &in); err != nil {
 		t.Fatal(err)
 	}
@@ -675,9 +675,11 @@ func TestSceneGenerateWithRefs(t *testing.T) {
 	}
 	job, _, _ := q.JobSnapshot(s2.Layers[0].Job.Chain[0], 0)
 	var refsArg, prompt string
-	novideo := false
+	novideo, dit := false, false
 	for _, a := range job.Arguments {
 		switch {
+		case a == "--dit=extra-model.safetensors":
+			dit = true
 		case strings.HasPrefix(a, "--refs="):
 			refsArg = strings.TrimPrefix(a, "--refs=")
 		case strings.HasPrefix(a, "--prompt="):
@@ -692,6 +694,10 @@ func TestSceneGenerateWithRefs(t *testing.T) {
 	}
 	if !novideo {
 		t.Error("a reference video's soundtrack must stay out")
+	}
+	// the layer's extra model goes to the reshoot job, which checks it against the server's list
+	if !dit {
+		t.Errorf("the layer's model file must reach the job: %q", job.Arguments)
 	}
 	for _, w := range []string{"<Picture 2> is a reference image: a red hat.", "<Video 1> is a reference video", "<Audio 1> is the voice-timbre reference"} {
 		if !strings.Contains(prompt, w) {

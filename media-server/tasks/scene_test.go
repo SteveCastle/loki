@@ -434,7 +434,7 @@ func TestSceneFlattenWithFFmpeg(t *testing.T) {
 
 func TestSceneMotionPrompt(t *testing.T) {
 	p := sceneMotionPrompt(sceneMotionPromptInput{Motion: "the clouds roll.", LockEdges: true})
-	for _, want := range []string{"[keyframe completion]", "starts exactly from <Picture 1>", "The motion: the clouds roll.", "locked off", "no people, faces", "Silent.", "near the edges of the frame stays perfectly still", "no fade-out", "stays plain, flat and empty"} {
+	for _, want := range []string{"[keyframe completion]", "<Picture 1> is the first frame of [Shot 1]", "<Picture 1> ([Shot 1] first frame): fully_preserved", "stays drawn in exactly the same style", "starts exactly from <Picture 1>", "The motion: the clouds roll.", "locked off", "no people, faces", "Silent.", "near the edges of the frame stays perfectly still", "no fade-out", "stays plain, flat and empty"} {
 		if !strings.Contains(p, want) {
 			t.Errorf("prompt lacks %q:\n%s", want, p)
 		}
@@ -445,8 +445,13 @@ func TestSceneMotionPrompt(t *testing.T) {
 	if strings.Contains(p, "breathing") || strings.Contains(p, "blinks") {
 		t.Errorf("region prompts must not assume a person:\n%s", p)
 	}
+	// The crop is the first frame, not a subject to reuse: as a <Subject> some
+	// seeds redrew the scene from it in another style.
+	if strings.Contains(p, "<Subject 1>") {
+		t.Errorf("without a subject description the crop is only <Picture 1>:\n%s", p)
+	}
 	p = sceneMotionPrompt(sceneMotionPromptInput{Subject: "the waterfall", Sound: true})
-	if !strings.Contains(p, "the waterfall, as shown in <Picture 1>") || !strings.Contains(p, "drift gently") || strings.Contains(p, "Silent.") || strings.Contains(p, "edges of the frame stays") {
+	if !strings.Contains(p, "<Subject 1> is the waterfall exactly as it appears in <Picture 1>.") || !strings.Contains(p, "<Picture 1> is the first frame of [Shot 1]") || !strings.Contains(p, "drift gently") || strings.Contains(p, "Silent.") || strings.Contains(p, "edges of the frame stays") {
 		t.Errorf("ambient + subject + sound prompt:\n%s", p)
 	}
 }
@@ -510,6 +515,46 @@ func TestSceneLockStaticEdges(t *testing.T) {
 	// The moving square is still there and moves.
 	if diff(f1, 5+32+8, 18) < 40 || diff(f0, 5+32+8, 18) > 40 {
 		t.Errorf("the motion should survive the lock")
+	}
+}
+
+// A clip that opens with a white flash (a finetune did, two frames): the flash is
+// covered by the first real frame, the clip keeps its length, and it is still
+// locked against the still (the flash read as a reframed first frame).
+func TestSceneLockStartFlash(t *testing.T) {
+	if deps.BundledOrEmpty("ffmpeg") == "" {
+		t.Skip("bundled ffmpeg not available")
+	}
+	dir := t.TempDir()
+	still := filepath.Join(dir, "crop.png")
+	video := filepath.Join(dir, "crop_reshoot.mp4")
+	out := filepath.Join(dir, "crop_locked.mp4")
+	if err := runSceneFFmpeg(context.Background(), []string{"-f", "lavfi", "-i", "gradients=s=192x128:c0=0x203040:c1=0xc08040:x0=0:y0=0:x1=192:y1=128", "-frames:v", "1", still}); err != nil {
+		t.Fatal(err)
+	}
+	if err := runSceneFFmpeg(context.Background(), []string{"-loop", "1", "-i", still,
+		"-vf", "drawbox=x=0:y=0:w=iw:h=ih:color=white:t=fill:enable='lt(n,2)',format=yuv420p",
+		"-t", "1.5", "-r", "24", "-c:v", "libx264", "-crf", "12", video}); err != nil {
+		t.Fatal(err)
+	}
+	stats, err := lockMotionEdges(context.Background(), video, still, out, func(int) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Flash != 2 || stats.Misaligned {
+		t.Fatalf("stats %+v", stats)
+	}
+	if n, err := countFrames(context.Background(), out); err != nil || n != 36 {
+		t.Fatalf("frames %d (%v), want the clip's 36", n, err)
+	}
+	p := filepath.Join(dir, "f0.png")
+	if err := runSceneFFmpeg(context.Background(), []string{"-i", out, "-frames:v", "1", p}); err != nil {
+		t.Fatal(err)
+	}
+	r, _, _, _ := readPNG(t, p).At(170, 110).RGBA()
+	sr, _, _, _ := readPNG(t, still).At(170, 110).RGBA()
+	if d := int(r>>8) - int(sr>>8); d > 6 || d < -6 {
+		t.Errorf("frame 0 is %d levels off the still: the flash is still there", d)
 	}
 }
 
@@ -919,6 +964,46 @@ func TestEndFadeKeep(t *testing.T) {
 	}
 	if k := endFadeKeep(ramp(flat(124, 116), 20, 15)); k != 124 {
 		t.Errorf("night falling over the whole clip: keep %d", k)
+	}
+}
+
+func TestStartFlashFrames(t *testing.T) {
+	flat := func(n int, v float64) []float64 {
+		y := make([]float64, n)
+		for i := range y {
+			y[i] = v + float64(i%3)
+		}
+		return y
+	}
+	// The measured case: two frames at ~229, then ~122.
+	y := flat(124, 122)
+	y[0], y[1] = 229, 230
+	if k := startFlashFrames(y); k != 2 {
+		t.Errorf("white flash: %d frames, want 2", k)
+	}
+	y = flat(124, 122)
+	y[0] = 4
+	if k := startFlashFrames(y); k != 1 {
+		t.Errorf("black flash: %d frames, want 1", k)
+	}
+	if k := startFlashFrames(flat(124, 122)); k != 0 {
+		t.Errorf("steady clip: %d", k)
+	}
+	// A clip that fades in over a second is the content, and so is one that
+	// starts bright and stays so for a while.
+	y = flat(124, 122)
+	for i := 0; i < 24; i++ {
+		y[i] = 230 - float64(i)*4.5
+	}
+	if k := startFlashFrames(y); k != 0 {
+		t.Errorf("slow fade-in: %d", k)
+	}
+	y = flat(124, 122)
+	for i := 0; i < 30; i++ {
+		y[i] = 230
+	}
+	if k := startFlashFrames(y); k != 0 {
+		t.Errorf("long bright opening: %d", k)
 	}
 }
 

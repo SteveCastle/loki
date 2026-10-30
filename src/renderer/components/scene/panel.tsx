@@ -5,7 +5,9 @@ import { maskBounds, rectContains, type ContextSize } from './mask';
 import { PromptLibrary } from './prompt-library';
 import References from './references';
 import { refTokens, type RefKind } from './refs';
-import { shownStitch, composeFinish, FINISH_GROUNDING, FINISH_MODES, finishStrength, sketchWhere, DIALOGUE_LANGUAGES, MAX_GENERATIONS, dialogueSeconds, generationsInFlight, jobPhase, layerTiming, type DialogueLine, type FinishMode, type LayerOptions, type LoopKind, type SceneLayer } from './scene-api';
+import { reshootFileLabel } from '../transform/intents';
+import { useReshootModelList, type ReshootModelChoice } from '../transform/reshoot-models';
+import { shownStitch, composeFinish, FINISH_GROUNDING, FINISH_MODES, finishStrength, sketchWhere, DIALOGUE_LANGUAGES, MAX_GENERATIONS, dialogueSeconds, generationsInFlight, jobPhase, layerTiming, type DialogueLine, type FinishMode, type LayerOptions, type LoopKind, type SceneLayer, sceneApi } from './scene-api';
 
 // Shortcut labels: ⌃/↵ have no glyph in Windows' UI fonts and render as junk.
 const IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
@@ -51,6 +53,28 @@ function Seg<T extends string | number>(props: { value: T; options: Array<{ valu
       ))}
     </div>
   );
+}
+
+/**
+ * A motion layer's Engine options: H3, Fast, then the server's extra models (value `file:<name>`). A chosen file the
+ * server no longer lists is still shown, so the setting stays visible (its generation will say it is not configured).
+ */
+function engineOptions(extra: ReshootModelChoice[], chosen: string): Array<{ value: string; label: string; title: string }> {
+  const out = [
+    { value: 'h3', label: 'Best', title: 'MiniMax H3, 20 steps' },
+    { value: 'fast', label: 'Fast', title: 'FastH3 Omni, 8 steps: about 2.5× faster, may lose some quality' },
+    ...extra.map((m) => ({ value: `file:${m.file}`, label: m.label, title: `${m.file}: ${m.recipe === 'fast' ? '8-step' : 'H3'} recipe` })),
+  ];
+  if (chosen && !extra.some((m) => m.file === chosen)) out.push({ value: `file:${chosen}`, label: reshootFileLabel(chosen), title: `${chosen}: not on this server` });
+  return out;
+}
+
+/** The options an Engine choice sets: the model's recipe, and its file for an extra model ('' for H3 / Fast). */
+export function pickEngine(value: string, extra: ReshootModelChoice[]): LayerOptions {
+  if (value === 'h3' || value === 'fast') return { model: value, dit: '' };
+  const file = value.slice('file:'.length);
+  const m = extra.find((x) => x.file === file);
+  return m ? { model: m.recipe, dit: m.file } : { dit: file };
 }
 
 export function KindIcon({ kind, size = 14 }: { kind: 'still' | 'motion' | 'paint'; size?: number }) {
@@ -398,6 +422,7 @@ export function Inspector(props: InspectorProps) {
   const { layer: l, busy } = props;
   const o = l.options || {};
   const motion = l.kind === 'motion';
+  const extraModels = useReshootModelList('scene', () => sceneApi.reshootModels());
   const painted = !!l.mask;
   // Whether the shapes reach past the version's area (only measurable for plain shapes: no links, no invert).
   const mo = l.maskOpts || {};
@@ -637,12 +662,9 @@ export function Inspector(props: InspectorProps) {
             />
             <span className="sc-label">Engine</span>
             <Seg
-              value={o.model || 'h3'}
-              onChange={(model) => props.onOptions({ model })}
-              options={[
-                { value: 'h3', label: 'Best', title: 'MiniMax H3, 20 steps' },
-                { value: 'fast', label: 'Fast', title: 'FastH3 Omni, 8 steps: about 2.5× faster, may lose some quality' },
-              ]}
+              value={o.dit ? `file:${o.dit}` : o.model || 'h3'}
+              onChange={(v) => props.onOptions(pickEngine(v, extraModels))}
+              options={engineOptions(extraModels, o.dit || '')}
             />
             <span className="sc-label" title="How many pixels the engine renders the area at">
               Resolution

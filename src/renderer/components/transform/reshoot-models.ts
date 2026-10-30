@@ -1,6 +1,6 @@
-// The server's extra video models (config.json reshootModels, GET /api/reshoot/models), offered in the Transform
-// flow's Model control beside H3 and FastH3 Omni. The list is fetched each time the flow opens (config edits show up
-// after a server restart) and kept between openings so the control does not flicker.
+// The server's extra video models (config.json reshootModels, GET /api/reshoot/models), offered beside H3 and FastH3
+// Omni in the Transform flow's Model control and the Scene editor's motion Engine control. The list is fetched each
+// time a control mounts (config edits show up after a server restart) and kept between mounts so it does not flicker.
 import { useEffect, useState } from 'react';
 import { mediaServerBase } from '../../platform';
 import type { ReshootModel } from './intents';
@@ -22,16 +22,18 @@ export function parseReshootModels(body: unknown): ReshootModelChoice[] {
     .map((m) => ({ file: m.file, label: typeof m.label === 'string' && m.label ? m.label : m.file, recipe: m.recipe === 'fast' ? 'fast' : 'h3' }));
 }
 
-export function useReshootModels(authToken: string | null): ReshootModelChoice[] {
+/**
+ * The models, loaded with `load` (the answer's body, or null) whenever `key` changes; a null key loads nothing. An
+ * older server has no such endpoint: no extra models.
+ */
+export function useReshootModelList(key: string | null, load: (signal: AbortSignal) => Promise<unknown>): ReshootModelChoice[] {
   const [models, setModels] = useState<ReshootModelChoice[]>(cached);
   useEffect(() => {
-    if (!authToken) return undefined;
+    if (key === null) return undefined;
     const ctl = new AbortController();
     const giveUp = window.setTimeout(() => ctl.abort(), 10000);
-    fetch(`${mediaServerBase}/api/reshoot/models`, { headers: { Authorization: `Bearer ${authToken}` }, signal: ctl.signal })
-      .then((res) => (res.ok ? res.json() : null))
+    load(ctl.signal)
       .then((body) => {
-        // an older server has no such endpoint: no extra models
         cached = parseReshootModels(body);
         setModels(cached);
       })
@@ -41,6 +43,13 @@ export function useReshootModels(authToken: string | null): ReshootModelChoice[]
       window.clearTimeout(giveUp);
       ctl.abort();
     };
-  }, [authToken]);
+    // load is the caller's way to fetch; key says when to fetch again
+  }, [key]);
   return models;
+}
+
+export function useReshootModels(authToken: string | null): ReshootModelChoice[] {
+  return useReshootModelList(authToken, (signal) =>
+    fetch(`${mediaServerBase}/api/reshoot/models`, { headers: { Authorization: `Bearer ${authToken}` }, signal }).then((res) => (res.ok ? res.json() : null)),
+  );
 }

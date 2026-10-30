@@ -1781,10 +1781,6 @@ func sceneMotionPrompt(in sceneMotionPromptInput) string {
 	subject := strings.TrimSpace(in.Subject)
 	talking := len(in.Lines) > 0
 	sound, lockEdges := in.Sound || talking, in.LockEdges
-	what := "the scene shown in <Picture 1>"
-	if subject != "" {
-		what = subject + ", as shown in <Picture 1>"
-	}
 	action := "Everything already visible moves naturally and subtly, the way it would in the world of the picture: light shifts softly, and elements that would move on their own (water, clouds, foliage, smoke, fire, fabric) drift gently."
 	if motion != "" {
 		action = "The motion: " + strings.TrimRight(motion, ". ") + ". Only what is already visible in <Picture 1> moves; the rest of the frame stays as it is."
@@ -1792,7 +1788,8 @@ func sceneMotionPrompt(in sceneMotionPromptInput) string {
 	// The picture may be a photo or a painting: motion must not turn painted
 	// smoke into photographic smoke (measured: an impressionist plume drifted
 	// to realistic grey within a second).
-	action += " Whatever moves keeps the picture's own look and medium for the whole shot: in a painting it moves as paint, its brushstrokes and colours included; in a photograph it stays photographic."
+	// Measured too: an anime crop came back as a photoreal re-imagining.
+	action += " Whatever moves keeps the picture's own look and medium for the whole shot: in a painting it moves as paint, its brushstrokes and colours included; in an illustration, drawing or anime picture it stays drawn in exactly the same style; in a photograph it stays photographic."
 	// A subject on a plain or flat-colour background gets scenery invented
 	// behind it; the region composites back over the still, so the
 	// background must stay exactly as painted.
@@ -1827,11 +1824,16 @@ func sceneMotionPrompt(in sceneMotionPromptInput) string {
 			scape = "Natural ambience of the depicted elements and their motion" + quietScape
 		}
 	}
-	defs := []string{"<Subject 1> is " + what + ", to be kept exactly as shown: its content, shapes, colors, lighting, texture, style and framing."}
+	// The crop is the shot's first frame: a standalone <Picture 1> (the
+	// reference guide, docs/VIDEO_PROMPT_WRITING_GUIDE_ref_en.md 2.2). Defined
+	// as a <Subject> ("the scene shown in <Picture 1>") it is only content to
+	// reuse, and some seeds redrew the whole scene from it in another style.
+	defs := []string{"<Picture 1> is the first frame of [Shot 1], one region of a larger still picture, to be kept exactly as shown: its content, composition, shapes, colors, lighting, texture, rendering style and framing."}
 	task := "[keyframe completion]"
-	retain := []string{
-		"<Subject 1> (appears in [Shot 1]): fully_preserved - content, appearance, style and framing are retained.",
-		"<Picture 1> ([Shot 1] first frame): fully_preserved - the video begins from this exact composition and keeps its look.",
+	retain := []string{"<Picture 1> ([Shot 1] first frame): fully_preserved - the video begins from this exact frame and keeps its composition, content and rendering style."}
+	if subject != "" {
+		defs = append(defs, "<Subject 1> is "+subject+" exactly as it appears in <Picture 1>.")
+		retain = append(retain, "<Subject 1> (appears in [Shot 1]): fully_preserved - appearance, style and position are retained.")
 	}
 	hasVisual, hasAudio := false, false
 	for _, r := range in.Refs {
@@ -2178,6 +2180,11 @@ func GenerateLayerMask(ctx context.Context, q *jobqueue.Queue, id, lid string, g
 		opt("size", fmt.Sprintf("%dx%d", w, h))
 		if m := optString(l.Options, "model"); m == reshootModelFast {
 			opt("model", reshootModelFast)
+		}
+		// one of the server's extra models (Config.ReshootModels): the reshoot
+		// task checks it against the list and takes that model's recipe
+		if d := strings.TrimSpace(optString(l.Options, "dit")); d != "" {
+			opt("dit", d)
 		}
 		if !sceneLayerSound(l.Options) {
 			opt("noaudio", "true")

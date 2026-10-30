@@ -236,7 +236,7 @@ const paintFor = (paint: SceneLayer, mode: FinishMode): SceneLayer =>
 const DEFAULTS_KEY = 'loki.scene.layerDefaults.v1';
 const REMEMBERED: Record<LayerKind, Array<keyof LayerOptions>> = {
   still: ['steps', 'context'],
-  motion: ['duration', 'model', 'megapixels', 'sound', 'voices', 'lock', 'detail', 'context'],
+  motion: ['duration', 'model', 'dit', 'megapixels', 'sound', 'voices', 'lock', 'detail', 'context'],
   paint: ['guide'],
 };
 const BASE_OPTIONS: Record<LayerKind, LayerOptions> = {

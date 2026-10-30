@@ -186,6 +186,8 @@ export interface LayerOptions {
   /** motion */
   duration?: number;
   model?: 'h3' | 'fast';
+  /** motion: one of the server's extra video models (its file name); `model` is then that model's recipe */
+  dit?: string;
   sound?: boolean;
   megapixels?: number;
   describe?: string;
@@ -517,6 +519,8 @@ export type LoopKind = 'crossfade' | 'natural' | 'boomerang';
 
 export const sceneApi = {
   list: (source?: string) => call<SceneSummary[]>('GET', `/api/scenes${source ? `?source=${enc(source)}` : ''}`),
+  /** The server's extra video models (config.json reshootModels), offered in a motion layer's Engine control. */
+  reshootModels: () => call<unknown>('GET', '/api/reshoot/models'),
   // Starting a scene normalises the base frame with ffmpeg: allow it longer.
   open: (source: string, time: number, fresh = false) => call<Scene>('POST', '/api/scenes', { source, time, fresh }, 60000),
   get: (id: string) => call<Scene>('GET', `/api/scenes/${enc(id)}`),
