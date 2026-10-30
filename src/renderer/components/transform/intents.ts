@@ -140,8 +140,13 @@ export interface TransformSettings {
   /** Seconds of video. */
   duration: number;
   refSize: 'match' | 'max';
-  /** Video model (reshoot only). */
+  /** Video model (reshoot only): its recipe (steps), and the engine's own file unless reshootFile names another. */
   reshootModel: ReshootModel;
+  /**
+   * One of the server's extra video models (config.json reshootModels, by file name; '' = reshootModel's own file).
+   * reshootModel holds its recipe.
+   */
+  reshootFile: string;
   noAudio: boolean;
   keepSoundtrack: boolean;
   /** What the picture should not have (Generate, Reimagine; the turbo quality ignores it). */
@@ -191,6 +196,7 @@ export const BASE_SETTINGS: TransformSettings = {
   duration: 5,
   refSize: 'match',
   reshootModel: 'h3',
+  reshootFile: '',
   noAudio: false,
   keepSoundtrack: true,
   pinned: [],
@@ -399,7 +405,8 @@ export function runSummary(id: IntentId, s: TransformSettings): string {
     if (size) parts.push(`${size[0]}×${size[1]}`);
   } else if (id === 'reimagine') parts.push(`strength ${strengthOf(s)}`);
   else parts.push(`${s.duration.toFixed(1).replace(/\.0$/, '')} s`);
-  parts.push(engine === 'reshoot' && s.reshootModel === 'fast' ? 'fast model' : qualityLabel(engine, s.quality));
+  if (engine === 'reshoot' && s.reshootFile) parts.push(reshootFileLabel(s.reshootFile));
+  else parts.push(engine === 'reshoot' && s.reshootModel === 'fast' ? 'fast model' : qualityLabel(engine, s.quality));
   if (s.variations > 1) parts.push(`${s.variations} variations`);
   if (s.seedMode === 'fixed') parts.push(`seed ${s.seed}`);
   const refs = pinnable(id) ? (s.pinned || []).length : 0;
@@ -633,6 +640,11 @@ export function stepsFor(engine: EngineId, q: Quality): number {
 export const FAST_STEPS = 8;
 
 /** The step count a run of these settings uses: the quality's, except the fast video model's fixed count. */
+/** An extra video model's file, shown without its extension (when the server's label is not at hand). */
+export function reshootFileLabel(file: string): string {
+  return file.replace(/^.*[\\/]/, '').replace(/\.safetensors$/i, '');
+}
+
 export function stepsForSettings(engine: EngineId, s: Pick<TransformSettings, 'quality' | 'reshootModel'>): number {
   return engine === 'reshoot' && s.reshootModel === 'fast' ? FAST_STEPS : stepsFor(engine, s.quality);
 }
@@ -900,6 +912,8 @@ export function buildJobs(
   const common = (f: Record<string, string>, seed: number) => {
     // Only the fast model is named: H3 is the engine's default, so its jobs run on engines from before --model.
     if (s.reshootModel === 'fast') put(f, 'model', 'fast');
+    // An extra model is named by file; the server checks it against its list and runs it with its own recipe.
+    put(f, 'dit', s.reshootFile.trim());
     put(f, 'duration', Math.min(MAX_DURATION, Math.max(MIN_DURATION, s.duration)));
     put(f, 'steps', steps);
     put(f, 'seed', seed);

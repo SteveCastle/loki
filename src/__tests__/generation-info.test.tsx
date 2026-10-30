@@ -83,6 +83,36 @@ describe('Save as Transform task', () => {
     },
   };
 
+  test('Regenerate queues the same run with a new random seed, only when jobs can be queued', async () => {
+    // eslint-disable-next-line global-require
+    const store = require('../renderer/components/transform/store');
+    const submit = jest.spyOn(store, 'submitJobs').mockResolvedValue(['j1']);
+    const chunks = { loki: JSON.stringify(stamped) };
+    const { queryByText, rerender, getByText } = render(<GenerationInfo chunks={chunks} />);
+    expect(queryByText('↻ Regenerate')).toBeNull();
+    rerender(<GenerationInfo chunks={chunks} jobs={{ authToken: 'tok', notify: jest.fn() }} />);
+    await act(async () => { fireEvent.click(getByText('↻ Regenerate')); });
+    expect(submit).toHaveBeenCalledTimes(1);
+    const [jobs, ctx] = submit.mock.calls[0] as [Array<{ input: string; fields: Record<string, string> }>, { authToken: string }];
+    expect(ctx.authToken).toBe('tok');
+    expect(jobs).toHaveLength(1); // the recipe asked for 2 variations; a regenerate is one
+    expect(jobs[0].input).toBe('retouch "C:/m/me.png\nC:/m/jacket.png"');
+    expect(jobs[0].fields.prompt).toBe('put the jacket of <image2> on <image1>');
+    expect(getByText('✓ Queued')).toBeTruthy();
+    submit.mockRestore();
+  });
+
+  test('switching between images keeps exactly one Regenerate and one Save button', () => {
+    const jobs = { authToken: 'tok', notify: jest.fn() };
+    const other = { ...stamped, seed: 6, meta: { ...stamped.meta, paths: ['C:/m/you.png', 'C:/m/jacket.png'] } };
+    const { rerender, getAllByText } = render(<GenerationInfo chunks={{ loki: JSON.stringify(stamped) }} jobs={jobs} />);
+    for (const rec of [other, stamped, other]) {
+      rerender(<GenerationInfo chunks={{ loki: JSON.stringify(rec) }} jobs={jobs} />);
+      expect(getAllByText('↻ Regenerate')).toHaveLength(1);
+      expect(getAllByText('☆ Save as Edit task')).toHaveLength(1);
+    }
+  });
+
   test('saves the stamped recipe under a name, the other image pinned', () => {
     const { getByText, getByLabelText, queryByText } = render(<GenerationInfo chunks={{ loki: JSON.stringify(stamped) }} />);
     fireEvent.click(getByText('☆ Save as Edit task'));

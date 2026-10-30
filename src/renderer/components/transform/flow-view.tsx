@@ -29,6 +29,7 @@ import {
   referenceTokens,
   runGroups,
   retouchPreset,
+  reshootFileLabel,
   runSummary,
   SAME_VIEW,
   suggestTemplateName,
@@ -39,7 +40,6 @@ import {
   type EngineId,
   type IntentKind,
   type Quality,
-  type ReshootModel,
   type Shake,
   type TransformSettings,
 } from './intents';
@@ -47,6 +47,7 @@ import { deleteTemplate, saveTemplate, templateSettings, templateSummary, useAll
 import { GlyphCheck, GlyphDie, GlyphMusic, GlyphPin, GlyphScene, IntentIcon } from './icons';
 import { markUsed, savedTransformKey } from '../../saved-recent';
 import CameraRig from './camera-rig';
+import type { ReshootModelChoice } from './reshoot-models';
 import './transform-flow.css';
 
 // ---------------------------------------------------------------------------
@@ -610,6 +611,8 @@ function TokenWarnings({ prompt, refs, shared }: { prompt: string; refs: RefItem
 
 export interface FlowViewProps {
   paths: string[];
+  /** The server's extra video models (reshoot-models.ts), offered after H3 and Fast. */
+  reshootModels?: ReshootModelChoice[];
   intent: IntentId | null;
   phase: FlowPhase;
   settings: TransformSettings;
@@ -919,10 +922,32 @@ const ASPECT_OPTIONS: Array<SegOption<DreamAspect>> = [
   { value: 'custom', label: 'Custom' },
 ];
 
-const MODEL_OPTIONS: Array<SegOption<ReshootModel>> = [
+const MODEL_OPTIONS: Array<SegOption<string>> = [
   { value: 'h3', label: 'H3', sub: 'best quality' },
   { value: 'fast', label: 'Fast', sub: `${FAST_STEPS} steps, ~4x faster` },
 ];
+
+/**
+ * The Model control's options: H3, Fast, then the server's extra models (value `file:<name>`). A chosen file the
+ * server no longer lists is still shown, so the setting is visible (its job will say it is not configured).
+ */
+function modelOptions(extra: ReshootModelChoice[], chosen: string): Array<SegOption<string>> {
+  const out = [...MODEL_OPTIONS, ...extra.map((m) => ({ value: `file:${m.file}`, label: m.label, sub: m.recipe === 'fast' ? `${FAST_STEPS} steps` : 'H3 recipe' }))];
+  if (chosen && !extra.some((m) => m.file === chosen)) out.push({ value: `file:${chosen}`, label: reshootFileLabel(chosen), sub: 'not on this server' });
+  return out;
+}
+
+/** An extra model's name: the server's label, else the file's. */
+function reshootModelLabel(file: string, extra: ReshootModelChoice[] = []): string {
+  return extra.find((m) => m.file === file)?.label || reshootFileLabel(file);
+}
+
+function pickModel(value: string, extra: ReshootModelChoice[]): Partial<TransformSettings> {
+  if (value === 'h3' || value === 'fast') return { reshootModel: value, reshootFile: '' };
+  const file = value.slice('file:'.length);
+  const m = extra.find((x) => x.file === file);
+  return m ? { reshootModel: m.recipe, reshootFile: m.file } : { reshootFile: file };
+}
 
 function promptLabel(id: IntentId, shared: boolean, stills: number): string {
   if (id === 'direct') return 'Describe the scene';
@@ -1258,7 +1283,12 @@ function ShapeView(props: FlowViewProps & { def: ReturnType<typeof intentById> }
 
         {isReshoot && (
           <Field label="Model">
-            <Segmented<ReshootModel> label="Model" value={s.reshootModel} options={MODEL_OPTIONS} onChange={(v) => onSettings({ reshootModel: v })} />
+            <Segmented<string>
+              label="Model"
+              value={s.reshootFile ? `file:${s.reshootFile}` : s.reshootModel}
+              options={modelOptions(props.reshootModels || [], s.reshootFile)}
+              onChange={(v) => onSettings(pickModel(v, props.reshootModels || []))}
+            />
           </Field>
         )}
 
@@ -1270,7 +1300,11 @@ function ShapeView(props: FlowViewProps & { def: ReturnType<typeof intentById> }
             ) : null}
           </Field>
         ) : (
-          <p className="ts-note">The fast model always runs {FAST_STEPS} steps, the count it was distilled for: there is no quality setting. It may look less refined than H3.</p>
+          <p className="ts-note">
+            {s.reshootFile
+              ? `This model runs ${FAST_STEPS} steps, the count few-step models are distilled for: there is no quality setting.`
+              : `The fast model always runs ${FAST_STEPS} steps, the count it was distilled for: there is no quality setting. It may look less refined than H3.`}
+          </p>
         )}
 
         <div className="ts-row2">
@@ -1613,7 +1647,12 @@ function ReviewView(props: FlowViewProps & { def: ReturnType<typeof intentById> 
           ) : null}
           <dt>Settings</dt>
           <dd>
-            {def.engine === 'reshoot' && s.reshootModel === 'fast' ? 'fast model' : `${qualityLabel(def.engine, s.quality)} quality`} ({plan.steps} steps) ·{' '}
+            {def.engine === 'reshoot' && s.reshootFile
+              ? `${reshootModelLabel(s.reshootFile, props.reshootModels)} model${s.reshootModel === 'fast' ? '' : `, ${qualityLabel(def.engine, s.quality)} quality`}`
+              : def.engine === 'reshoot' && s.reshootModel === 'fast'
+                ? 'fast model'
+                : `${qualityLabel(def.engine, s.quality)} quality`}{' '}
+            ({plan.steps} steps) ·{' '}
             {s.seedMode === 'fixed' ? `seed ${s.seed}` : 'random seed'}
             {def.id === 'reimagine' ? ` · strength ${strengthOf(s).toFixed(2)}` : ''}
             {s.variations > 1 ? ` · ${Math.min(s.variations, maxVariations(def.id))} variations` : ''}

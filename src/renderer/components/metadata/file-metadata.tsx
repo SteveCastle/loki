@@ -14,6 +14,7 @@ import GenerationInfo from './generation-info';
 import { useCanWrite } from '../../hooks/useCanWrite';
 import { useContext } from 'react';
 import { GlobalStateContext } from '../../state';
+import { useSelector } from '@xstate/react';
 
 const loadFileMetadata = (path: string) => async (): Promise<Metadata> => {
   let metadata: any;
@@ -29,6 +30,7 @@ export default function FileMetadata({ item }: { item: any }) {
   const { libraryService } = useContext(GlobalStateContext);
   const queryClient = useQueryClient();
   const canWrite = useCanWrite();
+  const authToken = useSelector(libraryService, (s) => s.context.authToken);
   const path = item?.path;
   const { data, error, isLoading } = useQuery<Metadata, Error>(
     ['file-metadata', path],
@@ -145,7 +147,14 @@ export default function FileMetadata({ item }: { item: any }) {
         </div>
       </div>
 
-      <GenerationInfo chunks={data.textChunks} />
+      <GenerationInfo
+        chunks={data.textChunks}
+        jobs={
+          canWrite && authToken
+            ? { authToken, notify: (type, title, message) => libraryService.send({ type: 'ADD_TOAST', data: { type, title, message } }) }
+            : undefined
+        }
+      />
 
       {item?.path && <Embeddings path={item.path} key={item.path} />}
 

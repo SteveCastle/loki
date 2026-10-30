@@ -1,8 +1,10 @@
 import React, { useMemo, useState } from 'react';
 import { parseGenerationMetadata } from '../../generation-metadata';
-import { suggestTaskName, taskFromRecord, type RebuiltTask } from '../transform/recipe';
-import { intentById } from '../transform/intents';
-import { saveTemplate } from '../transform/store';
+import { mediaServerBase } from '../../platform';
+import { rerunFromRecord, suggestTaskName, taskFromRecord, type RebuiltTask, type Rerun } from '../transform/recipe';
+import { buildJobs, intentById } from '../transform/intents';
+import { EngineSetupDeferred } from '../transform/engine-setup';
+import { saveTemplate, submitJobs } from '../transform/store';
 import copyIcon from '../../../../assets/copy.svg';
 
 import './generation-info.css';
@@ -111,14 +113,64 @@ function SaveTask({ task }: { task: RebuiltTask }) {
   );
 }
 
+/** What queuing a job from the panel needs (the viewer's job service); absent = no Regenerate (read-only, no server). */
+export interface JobAccess {
+  authToken: string | null;
+  notify: (type: 'error' | 'info', title: string, message: string) => void;
+}
+
+/* "Regenerate": the same run queued again in one click, with a fresh random seed. The result arrives like any other
+ * Transform job's (job toast, then the library). */
+function Regenerate({ rerun, jobs }: { rerun: Rerun; jobs: JobAccess }) {
+  const { authToken, notify: toast } = jobs;
+  const [state, setState] = useState<'idle' | 'busy' | 'queued'>('idle');
+  const { task, paths } = rerun;
+  const title = intentById(task.intent).title;
+  const run = async () => {
+    const built = buildJobs(task.intent, task.settings, paths, { recipe: true });
+    if (built.error || built.jobs.length === 0) {
+      toast('error', 'Cannot regenerate', built.error || 'Nothing to run');
+      return;
+    }
+    setState('busy');
+    try {
+      await submitJobs(built.jobs, { mediaServerBase, authToken });
+      setState('queued');
+      setTimeout(() => setState('idle'), 2500);
+    } catch (e) {
+      setState('idle');
+      if (e instanceof EngineSetupDeferred) {
+        if (e.result === 'background') toast('info', 'Downloading', 'The download continues in the background. Regenerate again when it has finished.');
+      } else {
+        toast('error', 'Failed to Create Job', 'Could not communicate with job service');
+      }
+    }
+  };
+  return (
+    <button
+      type="button"
+      className="gen-copy labelled"
+      disabled={state === 'busy' || !authToken}
+      title={
+        `Queue this ${title} run again with the same prompt, inputs and settings and a new random seed` +
+        (task.approximate ? ' (rebuilt from the engine settings: this file predates stamped recipes, so it may differ a little)' : '')
+      }
+      onClick={run}
+    >
+      <span>{state === 'queued' ? '✓ Queued' : state === 'busy' ? 'Queuing…' : '↻ Regenerate'}</span>
+    </button>
+  );
+}
+
 const sizeOf = (text: string) => {
   const bytes = new Blob([text]).size;
   return bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
 };
 
-export default function GenerationInfo({ chunks }: { chunks?: Record<string, string> | null }) {
+export default function GenerationInfo({ chunks, jobs }: { chunks?: Record<string, string> | null; jobs?: JobAccess }) {
   const info = useMemo(() => parseGenerationMetadata(chunks), [chunks]);
   const task = useMemo(() => (info?.lokiRecord ? taskFromRecord(info.lokiRecord) : null), [info]);
+  const rerun = useMemo(() => (info?.lokiRecord ? rerunFromRecord(info.lokiRecord) : null), [info]);
   const [showRaw, setShowRaw] = useState(false);
   if (!info) return null;
 
@@ -180,7 +232,12 @@ export default function GenerationInfo({ chunks }: { chunks?: Record<string, str
         </div>
       )}
 
-      {task && <SaveTask key={info.recordJson} task={task} />}
+      {(task || (rerun && jobs)) && (
+        <div className="gen-run-actions">
+          {rerun && jobs && <Regenerate key={`regen:${info.recordJson}`} rerun={rerun} jobs={jobs} />}
+          {task && <SaveTask key={`save:${info.recordJson}`} task={task} />}
+        </div>
+      )}
 
       {copyables.length > 0 && (
         <div className="gen-actions">

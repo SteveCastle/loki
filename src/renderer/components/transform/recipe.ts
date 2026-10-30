@@ -173,6 +173,8 @@ function fromReshoot(rec: Json, args: string[]): RebuiltTask | null {
   // The fast model always runs its own fixed steps: the quality (which picks H3's steps) stays at its default.
   if (rec.model_id === 'fast' || argValue(args, '--model') === 'fast') s.reshootModel = 'fast';
   else s.quality = nearestQuality('reshoot', rec.steps);
+  // An extra model (the record names the file it ran): not H3's or FastH3's own.
+  if (typeof rec.dit === 'string' && rec.dit && !/minimax_h3_ref2va|fasth3_omniref/i.test(rec.dit)) s.reshootFile = rec.dit;
   if (rec.ref_image_size === 'max') s.refSize = 'max';
   s.noAudio = rec.audio === false;
   s.keepSoundtrack = !hasArg(args, '--no-video-audio');
@@ -221,6 +223,27 @@ export function taskFromRecord(rec: Json): RebuiltTask | null {
   if (rec.tool === 'loki-reshoot') return fromReshoot(rec, args);
   if (rec.tool === 'loki-dream') return DREAM_ENABLED ? fromDream(rec, args) : null;
   return null;
+}
+
+export interface Rerun {
+  task: RebuiltTask;
+  /** The run's own inputs (the item it ran on, then its references), for buildJobs. */
+  paths: string[];
+}
+
+/**
+ * The run that made this file, ready to queue again as it was but with a fresh random seed (one result): the
+ * Generation panel's one-click Regenerate. The inputs are the run's own (the recipe's `paths`, else the record's
+ * inputs); buildJobs regroups them with the carried pins exactly as the first run did.
+ */
+export function rerunFromRecord(rec: Json): Rerun | null {
+  const task = taskFromRecord(rec);
+  if (!task) return null;
+  const recipePaths = task.approximate ? null : rec.meta.paths;
+  const paths = (Array.isArray(recipePaths) ? recipePaths.filter((p: unknown) => typeof p === 'string') : inputPaths(rec)).filter(
+    (p: string) => p && p !== '-'
+  );
+  return { task: { ...task, settings: { ...task.settings, seedMode: 'random', variations: 1 } }, paths };
 }
 
 /** A name for the saved task: a custom prompt's first words, else what the preset does. */

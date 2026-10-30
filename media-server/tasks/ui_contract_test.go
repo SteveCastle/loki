@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stevecastle/shrike/appconfig"
 	"github.com/stevecastle/shrike/jobqueue"
 )
 
@@ -152,6 +153,20 @@ func TestUIContractReshoot(t *testing.T) {
 		p = parse(map[string]string{"prompt": "x", "steps": "20"})
 		if args := buildReshootArgs(p, []string{"a.png"}, nil, nil, "o.mp4", ""); hasArg(args, "--model") || p.Model != "h3" {
 			t.Errorf("h3 args = %q (model %q)", args, p.Model)
+		}
+	})
+
+	t.Run("an extra model: dit=FILE becomes --dit FILE with the model's recipe", func(t *testing.T) {
+		p := parse(map[string]string{"prompt": "x", "model": "fast", "dit": "turbo.safetensors", "steps": "8", "duration": "5"})
+		c := appconfig.Config{ReshootModels: []appconfig.ReshootModel{{File: "turbo.safetensors", Recipe: "fast"}}}
+		if err := applyReshootDit(c, &p); err != nil {
+			t.Fatal(err)
+		}
+		got := strings.Join(buildReshootArgs(p, []string{"a.png"}, nil, nil, "o.mp4", ""), "|")
+		for _, want := range []string{"--model|fast", "--dit|turbo.safetensors", "--steps|8"} {
+			if !strings.Contains(got, want) {
+				t.Errorf("args %q missing %q", got, want)
+			}
 		}
 	})
 

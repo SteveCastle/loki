@@ -182,9 +182,11 @@ func previewReshoot(ctx context.Context, p reshootParams, files []string) (Promp
 		out.References = append(out.References, PromptReference{Token: fmt.Sprintf("<Audio %d>", i+1), Path: f, Kind: "audio"})
 	}
 
-	if tool, ok := locateAITool(reshootSpec(p.Model)); ok {
+	if tool, ok := locateAITool(reshootSpec(p.Model, "")); ok {
 		ip := p
 		ip.Seed = 0
+		// nor on the diffusion model file: a preview never names one
+		ip.Dit = ""
 		// The prompt does not depend on the model; an engine too old for
 		// --model still previews it (the job itself will ask for an update).
 		if ip.Model == reshootModelFast && !aiToolHelpHas(ctx, tool, "--model") {

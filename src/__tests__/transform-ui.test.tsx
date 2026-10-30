@@ -267,10 +267,25 @@ describe('TransformFlowView', () => {
     const { rerender } = render(<TransformFlowView {...h3} />);
     expect(screen.getByRole('radiogroup', { name: 'Quality' })).toBeTruthy();
     fireEvent.click(screen.getByRole('radio', { name: /^Fast/ }));
-    expect(h3.onSettings).toHaveBeenCalledWith({ reshootModel: 'fast' });
+    expect(h3.onSettings).toHaveBeenCalledWith({ reshootModel: 'fast', reshootFile: '' });
     rerender(<TransformFlowView {...baseProps({ intent: 'alive', phase: 'shape', settings: { ...settingsFor('alive'), describe: 'x', reshootModel: 'fast' } })} />);
     expect(screen.queryByRole('radiogroup', { name: 'Quality' })).toBeNull();
     expect(screen.getByText(/always runs 8 steps/)).toBeTruthy();
+  });
+
+  it("shape (video): the server's extra models are offered after H3 and Fast, each with its recipe", () => {
+    const models = [{ file: 'turbo.safetensors', label: 'Turbo tune', recipe: 'fast' as const }];
+    const props = { ...baseProps({ intent: 'alive', phase: 'shape', settings: { ...settingsFor('alive'), describe: 'x' } }), reshootModels: models };
+    const { rerender } = render(<TransformFlowView {...props} />);
+    fireEvent.click(screen.getByRole('radio', { name: /^Turbo tune/ }));
+    expect(props.onSettings).toHaveBeenCalledWith({ reshootModel: 'fast', reshootFile: 'turbo.safetensors' });
+    const chosen = { ...settingsFor('alive'), describe: 'x', reshootModel: 'fast' as const, reshootFile: 'turbo.safetensors' };
+    rerender(<TransformFlowView {...baseProps({ intent: 'alive', phase: 'shape', settings: chosen })} reshootModels={models} />);
+    expect(screen.getByRole('radio', { name: /^Turbo tune/ }).getAttribute('aria-checked')).toBe('true');
+    expect(screen.queryByRole('radiogroup', { name: 'Quality' })).toBeNull();
+    // A file the server no longer lists stays visible as the choice.
+    rerender(<TransformFlowView {...baseProps({ intent: 'alive', phase: 'shape', settings: { ...chosen, reshootFile: 'gone.safetensors' } })} reshootModels={models} />);
+    expect(screen.getByRole('radio', { name: /^gone.*not on this server/ })).toBeTruthy();
   });
 
   it('shape (image): no Model control', () => {

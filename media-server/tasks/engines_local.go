@@ -27,7 +27,7 @@ type LocalEngine struct {
 
 // localEngineSpecs are the engines and their models, in display order.
 func localEngineSpecs() []aiToolSpec {
-	specs := []aiToolSpec{retouchTool, reshootSpec(reshootModelFast)}
+	specs := []aiToolSpec{retouchTool, reshootSpec(reshootModelFast, "")}
 	if features.Dream {
 		specs = append(specs, dreamTool)
 	}

@@ -119,6 +119,20 @@
   opacity: 1;
 }
 
+/* Regenerate + Save as task, side by side */
+.GenerationInfo .gen-run-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 0.4em;
+  margin-bottom: 0.6em;
+}
+
+.GenerationInfo .gen-run-actions .gen-task {
+  flex: 1 1 auto;
+  margin-bottom: 0;
+}
+
 .GenerationInfo .gen-task {
   display: flex;
   flex-wrap: wrap;

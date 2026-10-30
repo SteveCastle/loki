@@ -30,6 +30,7 @@ import {
 } from './store';
 import { EngineSetupDeferred } from './engine-setup';
 import { markUsed, savedTransformKey } from '../../saved-recent';
+import { useReshootModels } from './reshoot-models';
 import { TransformFlowView, validateForRun, validateShape, type PromptPreviewState } from './flow-view';
 import { canStartScene, openSceneEditor } from '../scene/launch';
 import { requestLibraryPick } from '../scene/pick-bridge';
@@ -78,6 +79,7 @@ export default function TransformFlow() {
 function FlowSession({ req }: { req: NonNullable<ReturnType<typeof useFlowRequest>> }) {
   const { libraryService } = useContext(GlobalStateContext);
   const authToken = useSelector(libraryService, (state) => state.context.authToken);
+  const reshootModels = useReshootModels(authToken);
   const [paths, setPaths] = useState<string[]>(req.paths);
   const [intent, setIntent] = useState<IntentId | null>(req.intent || null);
   const [phase, setPhase] = useState<FlowPhase>(req.phase || (req.intent ? 'shape' : 'choose'));
@@ -310,6 +312,7 @@ function FlowSession({ req }: { req: NonNullable<ReturnType<typeof useFlowReques
   const view = (
     <TransformFlowView
       paths={paths}
+      reshootModels={reshootModels}
       intent={intent}
       phase={phase}
       settings={settings}

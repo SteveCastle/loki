@@ -72,6 +72,7 @@ const REMEMBER_KEYS: Array<keyof TransformSettings> = [
   'duration',
   'refSize',
   'reshootModel',
+  'reshootFile',
   'noAudio',
   'keepSoundtrack',
   'aspect',

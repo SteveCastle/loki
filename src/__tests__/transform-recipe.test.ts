@@ -1,5 +1,5 @@
 import { BASE_SETTINGS, buildJobs, settingsFor, type TransformSettings } from '../renderer/components/transform/intents';
-import { carriedPins, nearestQuality, suggestTaskName, taskFromRecord } from '../renderer/components/transform/recipe';
+import { carriedPins, nearestQuality, rerunFromRecord, suggestTaskName, taskFromRecord } from '../renderer/components/transform/recipe';
 import { loadTemplates, resetTemplateCache, saveTemplate, templateSettings } from '../renderer/components/transform/store';
 
 /* A Transform result back into a saved task: the flow stamps its recipe into
@@ -216,5 +216,63 @@ describe('loki-dream results back into tasks', () => {
     expect(nearestQuality('dream', 8)).toBe('draft');
     expect(nearestQuality('dream', 28)).toBe('balanced');
     expect(nearestQuality('dream', 50)).toBe('fine');
+  });
+});
+
+describe('Regenerate: the same run again with a new seed', () => {
+  const jobsFor = (id: Parameters<typeof buildJobs>[0], s: TransformSettings, paths: string[]) => buildJobs(id, s, paths, { recipe: true }).jobs;
+
+  test('a stamped multi-image Edit queues the same inputs and prompt with a fresh random seed', () => {
+    const s: TransformSettings = { ...settingsFor('edit'), prompt: 'put the jacket of <image2> on <image1>', seedMode: 'fixed', seed: 42, variations: 3 };
+    const first = jobsFor('edit', s, [IMG, REF])[0];
+    const rerun = rerunFromRecord(recordWith(recipeOf(first.fields)))!;
+    expect(rerun.paths).toEqual([IMG, REF]);
+    expect(rerun.task.settings).toMatchObject({ seedMode: 'random', variations: 1 });
+    const again = buildJobs(rerun.task.intent, rerun.task.settings, rerun.paths, { recipe: true, random: () => 0.25 }).jobs;
+    expect(again).toHaveLength(1);
+    expect(again[0].input).toBe(first.input);
+    expect(again[0].fields.prompt).toBe(first.fields.prompt);
+    expect(again[0].fields.seed).not.toBe('42');
+  });
+
+  test('pinned references and a run of nothing but pins regroup as they ran', () => {
+    const pinned: TransformSettings = { ...settingsFor('edit'), prompt: 'dress <image1> in <image2>', pinned: [REF] };
+    const first = jobsFor('edit', pinned, ['C:/media/b.jpg'])[0];
+    const rerun = rerunFromRecord(recordWith(recipeOf(first.fields)))!;
+    expect(buildJobs('edit', rerun.task.settings, rerun.paths).jobs[0].input).toBe(first.input);
+
+    const direct: TransformSettings = { ...settingsFor('direct'), prompt: 'She dances to <Audio 1>', pinned: [IMG, AUD] };
+    const d = jobsFor('direct', direct, [])[0];
+    const dr = rerunFromRecord(recordWith(recipeOf(d.fields), 'loki-reshoot'))!;
+    expect(buildJobs('direct', dr.task.settings, dr.paths).jobs[0].input).toBe(d.input);
+  });
+
+  test('an older record reruns from its own inputs', () => {
+    const rec = { loki: 1, tool: 'loki-retouch', steps: 25, seed: 7, prompt: 'make it night', args: ['--prompt=make it night', IMG], inputs: [{ tag: '<image1>', path: IMG }] };
+    const rerun = rerunFromRecord(rec)!;
+    expect(rerun.task.approximate).toBe(true);
+    expect(rerun.paths).toEqual([IMG]);
+    expect(rerun.task.settings.seedMode).toBe('random');
+  });
+
+  test('nothing to rerun for records that are not Transform-shaped', () => {
+    expect(rerunFromRecord({ loki: 1, tool: 'something-else' })).toBeNull();
+  });
+});
+
+describe('the video model file', () => {
+  test('a stamped recipe keeps the chosen extra model, so Regenerate and saved tasks run it again', () => {
+    const s: TransformSettings = { ...settingsFor('direct'), prompt: 'a dance', reshootModel: 'fast', reshootFile: 'turbo.safetensors' };
+    const meta = recipeOf(buildJobs('direct', s, [IMG], { recipe: true }).jobs[0].fields);
+    const rerun = rerunFromRecord(recordWith(meta, 'loki-reshoot'))!;
+    expect(rerun.task.settings).toMatchObject({ reshootModel: 'fast', reshootFile: 'turbo.safetensors' });
+    expect(buildJobs('direct', rerun.task.settings, rerun.paths).jobs[0].fields.dit).toBe('turbo.safetensors');
+  });
+
+  test("an older record's dit names an extra model; H3's and FastH3's own files do not", () => {
+    const rec = (dit: string) => taskFromRecord({ loki: 1, tool: 'loki-reshoot', model_id: 'fast', steps: 8, dit, prompt: 'p', args: ['--prompt=p', '-i', IMG], inputs: [{ path: IMG }] })!;
+    expect(rec('turbo.safetensors').settings.reshootFile).toBe('turbo.safetensors');
+    expect(rec('fasth3_omniref_8step_pruned_int8_convrot.safetensors').settings.reshootFile).toBe('');
+    expect(rec('minimax_h3_ref2va_pruned_int8_convrot.safetensors').settings.reshootFile).toBe('');
   });
 });

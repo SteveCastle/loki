@@ -41,8 +41,9 @@ var (
 // reshootSpec is the engine spec for a reshoot model: the fast model
 // (FastH3 Omni) adds its own diffusion model to MiniMax H3's text encoder
 // and VAEs, so it needs both dependencies.
-func reshootSpec(model string) aiToolSpec {
-	if model == reshootModelFast {
+func reshootSpec(model, dit string) aiToolSpec {
+	// a fast-recipe extra model (`dit`, Config.ReshootModels) needs no FastH3 download
+	if model == reshootModelFast && dit == "" {
 		s := reshootTool
 		s.Extra = []string{"fasth3-omni"}
 		return s

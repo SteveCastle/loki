@@ -308,6 +308,12 @@ type Config struct {
 	// own models folder. Empty = the engine's default (Kromoss).
 	DreamModel string `json:"dreamModel,omitempty"`
 
+	// ReshootModels are extra diffusion models for loki-reshoot (finetunes
+	// with the same MiniMax H3 architecture), offered beside H3 and FastH3
+	// Omni as a per-job choice (the reshoot task's `dit` option, passed as
+	// --dit). Only files listed here can be chosen.
+	ReshootModels []ReshootModel `json:"reshootModels,omitempty"`
+
 	// Optional path to a user-supplied faster-whisper executable. Overrides
 	// the binary installed via the Dependencies downloader.
 	FasterWhisperPath string `json:"fasterWhisperPath"`
@@ -468,6 +474,18 @@ func defaultConfig() Config {
 		JWTSecret: uuid.New().String(),
 		Roots:     []StorageRoot{},
 	}
+}
+
+// ReshootModel is one extra loki-reshoot diffusion model (Config.ReshootModels).
+type ReshootModel struct {
+	// File is a bare file name, like DreamModel: each engine (this machine
+	// or a pool worker) finds it in its own models folder.
+	File string `json:"file"`
+	// Label names it in the Transform flow; empty = the file name.
+	Label string `json:"label,omitempty"`
+	// Recipe is how it samples: "fast" (8 Euler steps, for few-step turbo
+	// finetunes) or "h3" (20 res_multistep steps, the default).
+	Recipe string `json:"recipe,omitempty"`
 }
 
 // Get returns a copy of the current in-memory config.

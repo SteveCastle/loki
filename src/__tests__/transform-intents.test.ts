@@ -197,6 +197,16 @@ describe('the fast video model (FastH3 Omni)', () => {
     expect(FAST_STEPS).toBe(8);
   });
 
+  it("an extra model sends its file as dit, with its recipe's model and steps", () => {
+    const turbo = { ...settingsFor('direct'), prompt: 'x', reshootModel: 'fast' as const, reshootFile: 'turbo.safetensors' };
+    expect(buildJobs('direct', turbo, [IMG], fixed).jobs[0].fields).toMatchObject({ model: 'fast', dit: 'turbo.safetensors', steps: '8' });
+    const base = { ...settingsFor('direct'), prompt: 'x', quality: 'fine' as const, reshootFile: 'base.safetensors' };
+    const f = buildJobs('direct', base, [IMG], fixed).jobs[0].fields;
+    expect(f).toMatchObject({ dit: 'base.safetensors', steps: '32' });
+    expect(f.model).toBeUndefined();
+    expect(buildJobs('direct', { ...settingsFor('direct'), prompt: 'x' }, [IMG], fixed).jobs[0].fields.dit).toBeUndefined();
+  });
+
   it('the model never touches image runs', () => {
     expect(stepsForSettings('retouch', { quality: 'balanced', reshootModel: 'fast' })).toBe(25);
     const f = buildJobs('restore', { ...settingsFor('restore'), reshootModel: 'fast' }, [IMG], fixed).jobs[0].fields;

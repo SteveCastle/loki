@@ -5,10 +5,12 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 
+	"github.com/stevecastle/shrike/appconfig"
 	"github.com/stevecastle/shrike/deps/models"
 	"github.com/stevecastle/shrike/jobqueue"
 )
@@ -69,10 +71,10 @@ func TestBuildReshootArgsModel(t *testing.T) {
 }
 
 func TestReshootSpec(t *testing.T) {
-	if s := reshootSpec("h3"); len(s.Extra) != 0 || s.Model != "minimax-h3-ref2va" || s.Bin != "loki-reshoot" {
+	if s := reshootSpec("h3", ""); len(s.Extra) != 0 || s.Model != "minimax-h3-ref2va" || s.Bin != "loki-reshoot" {
 		t.Errorf("h3 spec = %+v", s)
 	}
-	s := reshootSpec("fast")
+	s := reshootSpec("fast", "")
 	if got := strings.Join(s.modelIDs(), ","); got != "minimax-h3-ref2va,fasth3-omni" || s.Bin != "loki-reshoot" {
 		t.Errorf("fast spec models = %s", got)
 	}
@@ -192,7 +194,7 @@ func TestResolveAIToolFastInstallsBothModels(t *testing.T) {
 	q, j := newItemOpsJob(t, db, "reshoot", nil, "")
 
 	// H3 first: the fast model is not installed.
-	run, err := resolveAITool(context.Background(), q, j.ID, "reshoot", reshootSpec("h3"))
+	run, err := resolveAITool(context.Background(), q, j.ID, "reshoot", reshootSpec("h3", ""))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -205,7 +207,7 @@ func TestResolveAIToolFastInstallsBothModels(t *testing.T) {
 
 	// Fast: only its own DiT is added, and LOKI_MODELS lists both folders.
 	calls = nil
-	run, err = resolveAITool(context.Background(), q, j.ID, "reshoot", reshootSpec("fast"))
+	run, err = resolveAITool(context.Background(), q, j.ID, "reshoot", reshootSpec("fast", ""))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,7 +223,7 @@ func TestResolveAIToolFastInstallsBothModels(t *testing.T) {
 	}
 
 	// locateAITool (prompt preview) hands the engine the same list.
-	if tool, ok := locateAITool(reshootSpec("fast")); !ok || !containsArg(tool.Env, want) {
+	if tool, ok := locateAITool(reshootSpec("fast", "")); !ok || !containsArg(tool.Env, want) {
 		t.Errorf("locate: ok=%v env=%v", ok, tool.Env)
 	}
 }
@@ -237,10 +239,69 @@ func TestResolveAIToolFastFromScratch(t *testing.T) {
 	fakeInstall(t, &calls)
 	db := setupItemOpsDB(t)
 	q, j := newItemOpsJob(t, db, "reshoot", nil, "")
-	if _, err := resolveAITool(context.Background(), q, j.ID, "reshoot", reshootSpec("fast")); err != nil {
+	if _, err := resolveAITool(context.Background(), q, j.ID, "reshoot", reshootSpec("fast", "")); err != nil {
 		t.Fatal(err)
 	}
 	if got := strings.Join(calls, ","); got != "loki-reshoot,minimax-h3-ref2va,fasth3-omni" {
 		t.Errorf("installs = %s", got)
+	}
+}
+
+// Extra models (Config.ReshootModels) are a per-job choice (`dit`): only
+// listed files, each with its own recipe, ride along as --dit; a swapped
+// fast model needs no FastH3 download.
+func TestReshootModelChoice(t *testing.T) {
+	c := appconfig.Config{ReshootModels: []appconfig.ReshootModel{
+		{File: " turbo.safetensors ", Recipe: "FAST"},
+		{File: "base.safetensors", Label: "Base tune"},
+		{File: "TURBO.safetensors"}, // duplicate
+		{File: "  "},
+	}}
+	got := ReshootModelChoices(c)
+	want := []ReshootModelChoice{{File: "turbo.safetensors", Label: "turbo", Recipe: "fast"}, {File: "base.safetensors", Label: "Base tune", Recipe: "h3"}}
+	if !slices.Equal(got, want) {
+		t.Fatalf("choices = %+v", got)
+	}
+	if ch := ReshootModelChoices(appconfig.Config{}); ch == nil || len(ch) != 0 {
+		t.Errorf("no models = %#v (want an empty list, not null)", ch)
+	}
+
+	parse := func(args ...string) reshootParams {
+		return reshootParamsFromOptions(ParseOptions(&jobqueue.Job{Arguments: args}, reshootOptions))
+	}
+	// A turbo file picked with the default H3 model takes its 8-step recipe.
+	p := parse("--dit", "Turbo.safetensors")
+	if err := applyReshootDit(c, &p); err != nil || p.Model != "fast" || p.Steps != 8 || p.Dit != "turbo.safetensors" {
+		t.Errorf("turbo: %v %+v", err, p)
+	}
+	// Explicit steps survive; an h3-recipe file switches a fast job back.
+	p = parse("--model", "fast", "--steps", "12", "--dit", "base.safetensors")
+	if err := applyReshootDit(c, &p); err != nil || p.Model != "h3" || p.Steps != 12 {
+		t.Errorf("base: %v %+v", err, p)
+	}
+	// Unlisted files (or paths) are refused.
+	for _, bad := range []string{"other.safetensors", "C:/models/turbo.safetensors"} {
+		p = parse("--dit", bad)
+		if err := applyReshootDit(c, &p); err == nil {
+			t.Errorf("%q accepted", bad)
+		}
+	}
+	// No choice: nothing changes.
+	p = parse("--model", "fast")
+	if err := applyReshootDit(c, &p); err != nil || p.Dit != "" || p.Model != "fast" {
+		t.Errorf("none: %v %+v", err, p)
+	}
+
+	p = reshootParams{Model: "fast", Dit: "turbo.safetensors", Duration: 5, Native: true, Megapixels: 0.4, Steps: 8, Seed: 3, RefSize: "match", Shake: "subtle", Prompt: "x"}
+	args := buildReshootArgs(p, []string{"a.png"}, nil, nil, "o.mp4", "")
+	if v, _ := argValue(args, "--dit"); v != "turbo.safetensors" || strings.Join(args[:2], " ") != "--model fast" {
+		t.Errorf("args = %q", args)
+	}
+	p.Dit = ""
+	if slices.Contains(buildReshootArgs(p, []string{"a.png"}, nil, nil, "o.mp4", ""), "--dit") {
+		t.Error("--dit without a choice")
+	}
+	if s := reshootSpec("fast", "turbo.safetensors"); len(s.Extra) != 0 {
+		t.Errorf("chosen fast model still installs %v", s.Extra)
 	}
 }

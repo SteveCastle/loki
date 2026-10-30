@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/stevecastle/shrike/appconfig"
 	"github.com/stevecastle/shrike/jobqueue"
 	"github.com/stevecastle/shrike/mediaext"
 )
@@ -37,6 +38,58 @@ func reshootDefaultSteps(model string) int {
 	return 20
 }
 
+// ReshootModelChoice is one extra diffusion model a reshoot job can pick
+// (`dit`), from Config.ReshootModels: a file and the recipe it samples with.
+type ReshootModelChoice struct {
+	File   string `json:"file"`
+	Label  string `json:"label"`
+	Recipe string `json:"recipe"` // reshootModelH3 | reshootModelFast
+}
+
+// ReshootModelChoices is Config.ReshootModels cleaned up: blank files
+// dropped, duplicates dropped, recipe h3 unless fast, label = the file name
+// without its extension unless given.
+func ReshootModelChoices(c appconfig.Config) []ReshootModelChoice {
+	out := []ReshootModelChoice{}
+	seen := map[string]bool{}
+	for _, m := range c.ReshootModels {
+		file := strings.TrimSpace(m.File)
+		if file == "" || seen[strings.ToLower(file)] {
+			continue
+		}
+		seen[strings.ToLower(file)] = true
+		ch := ReshootModelChoice{File: file, Label: strings.TrimSpace(m.Label), Recipe: reshootModelH3}
+		if strings.EqualFold(strings.TrimSpace(m.Recipe), reshootModelFast) {
+			ch.Recipe = reshootModelFast
+		}
+		if ch.Label == "" {
+			ch.Label = strings.TrimSuffix(filepath.Base(file), filepath.Ext(file))
+		}
+		out = append(out, ch)
+	}
+	return out
+}
+
+// applyReshootDit checks a job's `dit` against the configured models and
+// takes the model's recipe (and, when the steps were the old model's
+// default, the new one's). Only listed files can be chosen: a job must not
+// point the engine at an arbitrary path.
+func applyReshootDit(c appconfig.Config, p *reshootParams) error {
+	if p.Dit == "" {
+		return nil
+	}
+	for _, m := range ReshootModelChoices(c) {
+		if strings.EqualFold(m.File, p.Dit) {
+			if m.Recipe != p.Model && p.Steps == reshootDefaultSteps(p.Model) {
+				p.Steps = reshootDefaultSteps(m.Recipe)
+			}
+			p.Dit, p.Model = m.File, m.Recipe
+			return nil
+		}
+	}
+	return fmt.Errorf("%q is not one of the server's reshoot models (config.json reshootModels)", p.Dit)
+}
+
 // CLI limits on references per kind.
 const (
 	reshootMaxImages = 9
@@ -54,6 +107,7 @@ var reshootOptions = []TaskOption{
 	{Name: "native", Label: "Native Canvas", Type: "bool", Default: true, Description: "Snap to the model's native canvas for the first reference's aspect (ignored when Size is set)"},
 	{Name: "megapixels", Label: "Megapixels", Type: "number", Default: 0.4, Description: "Pixel budget when Native is off and no Size is given"},
 	{Name: "model", Label: "Model", Type: "enum", Choices: []string{reshootModelH3, reshootModelFast}, Default: reshootModelH3, Description: "h3 = MiniMax H3 (best quality, 20 steps); fast = FastH3 Omni, distilled for 8 steps: about 2.5x faster end to end (4-5x faster sampling), may be lower quality (needs the fasth3-omni dependency besides MiniMax H3's)"},
+	{Name: "dit", Label: "Diffusion Model", Type: "string", Default: "", Description: "One of the server's extra reshoot models (config.json reshootModels, by file name): runs that file with its own recipe instead of H3 / FastH3 Omni; empty = the model above"},
 	{Name: "steps", Label: "Steps", Type: "number", Default: 0.0, Description: "Sampling steps (4-60); 0 = the model's default (20 for h3, 8 for fast)"},
 	{Name: "seed", Label: "Seed", Type: "number", Default: -1.0, Description: "Noise seed; -1 = random (logged)"},
 	{Name: "refsize", Label: "Reference Image Size", Type: "enum", Choices: []string{"match", "max"}, Default: "match", Description: "match = scaled to the generation's area; max = up to 2048px (better identity, much slower)"},
@@ -65,7 +119,10 @@ var reshootOptions = []TaskOption{
 }
 
 type reshootParams struct {
-	Model        string // reshootModelH3 | reshootModelFast
+	Model string // reshootModelH3 | reshootModelFast
+	// Dit is a configured extra model's file (the `dit` option, checked by
+	// applyReshootDit), passed as --dit; empty = Model's own file.
+	Dit          string
 	Animate      bool
 	Describe     string
 	Shake        string
@@ -91,6 +148,7 @@ type reshootParams struct {
 func reshootParamsFromOptions(opts map[string]any) reshootParams {
 	p := reshootParams{
 		Model:        strings.ToLower(strings.TrimSpace(optString(opts, "model"))),
+		Dit:          strings.TrimSpace(optString(opts, "dit")),
 		Animate:      optBool(opts, "animate"),
 		Describe:     strings.TrimSpace(optString(opts, "describe")),
 		Shake:        strings.ToLower(strings.TrimSpace(optString(opts, "shake"))),
@@ -190,6 +248,9 @@ func buildReshootArgs(p reshootParams, images, videos, audios []string, output, 
 	if p.Model == reshootModelFast {
 		args = append(args, "--model", reshootModelFast)
 	}
+	if p.Dit != "" {
+		args = append(args, "--dit", p.Dit)
+	}
 	imgs := images
 	if p.Animate && len(imgs) > 0 {
 		args = append(args, "--animate", imgs[0])
@@ -285,8 +346,11 @@ func reshootTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 	}
 
 	p := reshootParamsFromOptions(ParseOptions(j, reshootOptions))
+	if err := applyReshootDit(appconfig.Get(), &p); err != nil {
+		return fail(err.Error(), err)
+	}
 
-	bin, err := resolveAITool(ctx, q, j.ID, tag, reshootSpec(p.Model))
+	bin, err := resolveAITool(ctx, q, j.ID, tag, reshootSpec(p.Model, p.Dit))
 	if err != nil {
 		return fail(err.Error(), err)
 	}
@@ -295,7 +359,12 @@ func reshootTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 		if !aiToolHelpHas(ctx, bin, "--model") {
 			return fail("this loki-reshoot is too old for the fast model (FastH3 Omni); update it (Dependencies page, or your own build on PATH) or use the H3 model", nil)
 		}
-		q.PushJobStdout(j.ID, fmt.Sprintf("%s: model FastH3 Omni, %d steps", tag, p.Steps))
+		if p.Dit == "" {
+			q.PushJobStdout(j.ID, fmt.Sprintf("%s: model FastH3 Omni, %d steps", tag, p.Steps))
+		}
+	}
+	if p.Dit != "" {
+		q.PushJobStdout(j.ID, fmt.Sprintf("%s: model %s (%s recipe), %d steps", tag, p.Dit, p.Model, p.Steps))
 	}
 
 	res, rerr := resolveJobItemsRaw(j, q)
