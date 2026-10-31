@@ -60,7 +60,9 @@ func moveTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 	q.PushJobStdout(j.ID, fmt.Sprintf("Starting move operation to target directory: %s", targetDir))
 	q.PushJobStdout(j.ID, fmt.Sprintf("Parsed %d paths from input", len(cleanedPaths)))
 
-	var validPaths []string
+	absTarget, _ := filepath.Abs(targetDir)
+	var validPaths, dirRoots []string
+	looseFiles := false
 	for _, p := range cleanedPaths {
 		abs, err := filepath.Abs(p)
 		if err != nil {
@@ -68,10 +70,26 @@ func moveTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 			continue
 		}
 		cp := filepath.FromSlash(abs)
-		if _, err := os.Stat(cp); os.IsNotExist(err) {
+		st, err := os.Stat(cp)
+		if os.IsNotExist(err) {
 			q.PushJobStdout(j.ID, fmt.Sprintf("Warning: file does not exist: %s", cp))
 			continue
 		}
+		if err == nil && st.IsDir() {
+			// A folder is moved item by item: renaming it whole would re-point
+			// nothing (a folder is not a library row) and strand every item
+			// under it on its old path.
+			files, skipped, werr := expandMoveDir(cp, absTarget)
+			if werr != nil {
+				q.PushJobStdout(j.ID, fmt.Sprintf("Warning: could not read folder %s: %v", cp, werr))
+				continue
+			}
+			q.PushJobStdout(j.ID, fmt.Sprintf("Folder %s: %d media files (%d other files left in place)", cp, len(files), skipped))
+			dirRoots = append(dirRoots, cp)
+			validPaths = append(validPaths, files...)
+			continue
+		}
+		looseFiles = true
 		validPaths = append(validPaths, cp)
 	}
 	if len(validPaths) == 0 {
@@ -94,6 +112,15 @@ func moveTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 			prefixToUse = filepath.Clean(specifiedPrefix)
 		}
 		q.PushJobStdout(j.ID, fmt.Sprintf("Using specified prefix: %s", prefixToUse))
+	} else if len(dirRoots) == 1 && !looseFiles {
+		// One folder: its contents land in the target, sub-folders kept.
+		prefixToUse = strings.TrimRight(dirRoots[0], `/\`) + string(filepath.Separator)
+		q.PushJobStdout(j.ID, fmt.Sprintf("Moving the contents of %s", dirRoots[0]))
+	} else if len(dirRoots) > 1 && !looseFiles {
+		// Several folders: keep each folder's name under the target so their
+		// contents can't collide (findCommonPrefix works on parents).
+		prefixToUse = findCommonPrefix(dirRoots)
+		q.PushJobStdout(j.ID, fmt.Sprintf("Using calculated common prefix: %s", prefixToUse))
 	} else {
 		prefixToUse = findCommonPrefix(validPaths)
 		if prefixToUse == "" {
@@ -163,6 +190,9 @@ func moveTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 	}
 
 	_ = q.SetJobProgress(j.ID, len(validPaths), len(validPaths))
+	for _, d := range dirRoots {
+		removeEmptyDirs(d)
+	}
 	if peopleChanged {
 		broadcastPeopleUpdated([]string{})
 	}
@@ -188,6 +218,49 @@ func moveTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 	}
 	q.CompleteJob(j.ID)
 	return nil
+}
+
+// expandMoveDir lists the media files under dir, recursively, for a folder
+// move. Non-media files are counted and left where they are (transcript
+// sidecars travel with their video instead). The target folder is skipped
+// when it sits inside dir, so a re-run never re-moves what it already moved.
+func expandMoveDir(dir, target string) (files []string, skipped int, err error) {
+	err = filepath.WalkDir(dir, func(p string, d os.DirEntry, werr error) error {
+		if werr != nil {
+			return werr
+		}
+		if d.IsDir() {
+			if target != "" && p != dir && strings.EqualFold(filepath.Clean(p), filepath.Clean(target)) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !d.Type().IsRegular() {
+			return nil
+		}
+		if isMediaFile(p) {
+			files = append(files, p)
+		} else {
+			skipped++
+		}
+		return nil
+	})
+	return files, skipped, err
+}
+
+// removeEmptyDirs deletes folders under (and including) root that a folder
+// move left empty, deepest first. Anything still holding a file stays.
+func removeEmptyDirs(root string) {
+	var dirs []string
+	_ = filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
+		if err == nil && d.IsDir() {
+			dirs = append(dirs, p)
+		}
+		return nil
+	})
+	for i := len(dirs) - 1; i >= 0; i-- {
+		_ = os.Remove(dirs[i]) // fails, harmlessly, on a non-empty folder
+	}
 }
 
 // errAlreadyInPlace marks an item whose computed destination is its current

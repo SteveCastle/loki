@@ -2,13 +2,16 @@ package tasks
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/stevecastle/shrike/embedindex"
+	"github.com/stevecastle/shrike/jobqueue"
 	"github.com/stevecastle/shrike/media"
 )
 
@@ -129,6 +132,71 @@ func TestMoveMediaItemLibraryConflictMovesFileBack(t *testing.T) {
 	}
 	if _, err := os.Stat(dst); !os.IsNotExist(err) {
 		t.Errorf("destination left behind (err=%v)", err)
+	}
+}
+
+// A folder input used to be renamed as one item: the folder moved on disk but
+// nothing under it was re-pointed (a folder is not a library row). It must be
+// moved item by item, keeping sub-folders, with the library following.
+func TestMoveTaskFolderInputMovesEachItem(t *testing.T) {
+	src := t.TempDir()
+	target := filepath.Join(t.TempDir(), "archive")
+	a := filepath.Join(src, "a.jpg")
+	b := filepath.Join(src, "sub", "b.mp4")
+	note := filepath.Join(src, "notes.txt")
+	writeMoveFixture(t, a, "a")
+	writeMoveFixture(t, b, "b")
+	writeMoveFixture(t, note, "not media")
+
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.SetMaxOpenConns(1)
+	t.Cleanup(func() { db.Close() })
+	q := jobqueue.NewQueueWithDB(db)
+	if err := media.InitializeSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{a, b} {
+		if _, err := db.Exec(`INSERT INTO media (path) VALUES (?)`, p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	id, err := q.AddJob("", "move", []string{"--target", target}, src, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	j, err := q.ClaimJob()
+	if err != nil || j == nil || j.ID != id {
+		t.Fatalf("claim job: %v (job=%v)", err, j)
+	}
+
+	var mu sync.Mutex
+	if err := moveTask(j, q, &mu); err != nil {
+		t.Fatalf("move: %v", err)
+	}
+	if got := q.Jobs[j.ID].State; got != jobqueue.StateCompleted {
+		t.Errorf("job state = %v, want completed", got)
+	}
+
+	wantA := filepath.Join(target, "a.jpg")
+	wantB := filepath.Join(target, "sub", "b.mp4")
+	for _, p := range []string{wantA, wantB} {
+		if _, err := os.Stat(p); err != nil {
+			t.Errorf("%s not moved: %v", p, err)
+		}
+		var n int
+		_ = db.QueryRow(`SELECT COUNT(*) FROM media WHERE path = ?`, p).Scan(&n)
+		if n != 1 {
+			t.Errorf("library row not re-pointed to %s", p)
+		}
+	}
+	if _, err := os.Stat(note); err != nil {
+		t.Errorf("non-media file should stay put: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(src, "sub")); !os.IsNotExist(err) {
+		t.Errorf("emptied sub-folder left behind (err=%v)", err)
 	}
 }
 
