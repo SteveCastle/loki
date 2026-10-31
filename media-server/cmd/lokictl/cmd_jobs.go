@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"flag"
 	"fmt"
 	"io"
@@ -126,7 +125,7 @@ func (f fieldFlags) Set(v string) error {
 func init() {
 	register(command{group: "job", name: "run",
 		args:    "<task> [task args...] [--field k=v]... [--wait] [--follow] [--timeout D]",
-		summary: "Create a job (POST /create); --wait polls until done, --follow streams stdout",
+		summary: "Create a job (POST /create); --wait polls until done, --follow also streams its stdout to stderr",
 		run:     cmdJobRun})
 	register(command{group: "job", name: "list", args: "[--state S]",
 		summary: "List jobs (GET /jobs/list)", run: cmdJobList})
@@ -135,16 +134,16 @@ func init() {
 	register(command{group: "job", name: "wait", args: "<id> [--timeout D]",
 		summary: "Block until a job reaches a terminal state", run: cmdJobWait})
 	register(command{group: "job", name: "logs", args: "<id>",
-		summary: "Stream a running job's stdout via SSE (live jobs only; output is not stored)",
+		summary: "Stream a running job's stdout via SSE until it finishes (live jobs only; output is not stored)",
 		run:     cmdJobLogs})
 	register(command{group: "job", name: "cancel", args: "<id>",
 		summary: "Cancel a job (POST /job/{id}/cancel)", run: jobAction("cancel")})
 	register(command{group: "job", name: "pause", args: "<id>",
 		summary: "Pause a job at the next item boundary; completed items are kept (POST /job/{id}/pause)", run: jobAction("pause")})
-	register(command{group: "job", name: "resume", args: "<id>",
-		summary: "Resume a paused job (POST /job/{id}/resume)", run: jobAction("resume")})
-	register(command{group: "job", name: "copy", args: "<id>",
-		summary: "Clone a job into a new pending job (POST /job/{id}/copy)", run: cmdJobCopy})
+	register(command{group: "job", name: "resume", args: "<id> [--wait] [--follow] [--timeout D]",
+		summary: "Resume a paused job (POST /job/{id}/resume); --wait/--follow as for job run", run: cmdJobResume})
+	register(command{group: "job", name: "copy", args: "<id> [--wait] [--follow] [--timeout D]",
+		summary: "Clone a job into a new pending job (POST /job/{id}/copy); --wait/--follow as for job run", run: cmdJobCopy})
 	register(command{group: "job", name: "remove", args: "<id>",
 		summary: "Remove a job from the queue (POST /job/{id}/remove)", run: jobAction("remove")})
 	register(command{group: "job", name: "clear", args: "--yes",
@@ -224,61 +223,43 @@ func cmdJobRun(a *App, args []string) int {
 	if len(fields) > 0 {
 		body["fields"] = fields
 	}
-	var created struct {
-		ID string `json:"id"`
+	create := func() (string, error) {
+		var created struct {
+			ID string `json:"id"`
+		}
+		if err := a.Client.DoJSON("POST", "/create", body, &created); err != nil {
+			return "", err
+		}
+		if created.ID == "" {
+			return "", fmt.Errorf("server did not return a job id")
+		}
+		return created.ID, nil
 	}
-	if err := a.Client.DoJSON("POST", "/create", body, &created); err != nil {
+	if wait || follow {
+		return runTrackedJob(a, follow, timeout, create)
+	}
+	id, err := create()
+	if err != nil {
 		return a.Fail(err)
 	}
-	if created.ID == "" {
-		return a.Fail(fmt.Errorf("server did not return a job id"))
+	if a.Quiet {
+		fmt.Fprintln(a.Out, id)
+		return 0
 	}
-	if !wait && !follow {
-		if a.Quiet {
-			fmt.Fprintln(a.Out, created.ID)
-			return 0
-		}
-		return a.PrintJSON(map[string]string{"id": created.ID, "state": "pending"})
-	}
-
-	var stopFollow context.CancelFunc
-	if follow {
-		ctx, cancel := context.WithCancel(context.Background())
-		stopFollow = cancel
-		go followJobStdout(ctx, a, created.ID)
-	}
-	job, code := waitForJob(a, created.ID, timeout)
-	if stopFollow != nil {
-		stopFollow()
-	}
-	if job != nil {
-		if pc := a.PrintJSON(job); code == 0 && pc != 0 {
-			return pc
-		}
-	}
-	return code
+	return a.PrintJSON(map[string]string{"id": id, "state": "pending"})
 }
 
-// followJobStdout attaches to /stream and relays stdout-<id> events to
-// stderr (stdout is reserved for the final JSON result).
-func followJobStdout(ctx context.Context, a *App, id string) {
-	resp, err := a.Client.DoStream("GET", "/stream")
+// jobIDWithControlFlags parses "<id> [--wait] [--follow] [--timeout D]" for
+// commands that act on an existing job; task tokens and --field are rejected.
+func jobIDWithControlFlags(args []string) (id string, wait, follow bool, timeout time.Duration, err error) {
+	tokens, fields, wait, follow, timeout, err := splitControlFlags(args)
 	if err != nil {
-		fmt.Fprintf(a.ErrOut, `{"warning":"could not attach to job output stream: %s"}`+"\n", err)
-		return
+		return "", false, false, 0, err
 	}
-	defer resp.Body.Close()
-	go func() {
-		<-ctx.Done()
-		resp.Body.Close()
-	}()
-	want := "stdout-" + id
-	_ = readSSE(ctx, resp.Body, func(ev sseEvent) bool {
-		if ev.Name == want && ev.Data != "" {
-			fmt.Fprintln(a.ErrOut, ev.Data)
-		}
-		return true
-	})
+	if len(tokens) != 1 || strings.HasPrefix(tokens[0], "-") || len(fields) > 0 {
+		return "", false, false, 0, fmt.Errorf("expected exactly one job id")
+	}
+	return tokens[0], wait, follow, timeout, nil
 }
 
 func cmdJobList(a *App, args []string) int {
@@ -347,22 +328,17 @@ func cmdJobLogs(a *App, args []string) int {
 	if job, err := fetchJob(a, id); err == nil && isTerminalState(job.State) {
 		return a.Fail(fmt.Errorf("job %s is %s — stdout is only streamed live and is not stored", id, job.State))
 	}
-	resp, err := a.Client.DoStream("GET", "/stream")
-	if err != nil {
-		return a.Fail(err)
+	// Lines go to stdout here (they are the output); the command exits with
+	// the job, using waitForJob's codes.
+	f := startJobFollower(a, a.Out)
+	f.SetID(id)
+	job, code := waitForJob(a, id, 0)
+	drain := followDrain
+	if job == nil {
+		drain = 0
 	}
-	defer resp.Body.Close()
-	want := "stdout-" + id
-	err = readSSE(context.Background(), resp.Body, func(ev sseEvent) bool {
-		if ev.Name == want && ev.Data != "" {
-			fmt.Fprintln(a.Out, ev.Data)
-		}
-		return true
-	})
-	if err != nil {
-		return a.Fail(err)
-	}
-	return 0
+	f.Finish(drain)
+	return code
 }
 
 func jobAction(action string) func(a *App, args []string) int {
@@ -378,14 +354,48 @@ func jobAction(action string) func(a *App, args []string) int {
 }
 
 func cmdJobCopy(a *App, args []string) int {
-	if len(args) != 1 {
-		return a.Usage(nil, "usage: lokictl job copy <id>")
+	id, wait, follow, timeout, err := jobIDWithControlFlags(args)
+	if err != nil {
+		return a.Usage(nil, "usage: lokictl job copy <id> [--wait] [--follow] [--timeout D]")
 	}
-	var out any
-	if err := a.Client.DoJSON("POST", "/job/"+args[0]+"/copy", nil, &out); err != nil {
+	var out struct {
+		ID      string `json:"id"`
+		Message string `json:"message,omitempty"`
+	}
+	copyJob := func() (string, error) {
+		if err := a.Client.DoJSON("POST", "/job/"+id+"/copy", nil, &out); err != nil {
+			return "", err
+		}
+		if out.ID == "" {
+			return "", fmt.Errorf("server did not return the new job id")
+		}
+		return out.ID, nil
+	}
+	if wait || follow {
+		return runTrackedJob(a, follow, timeout, copyJob)
+	}
+	if _, err := copyJob(); err != nil {
 		return a.Fail(err)
 	}
+	if a.Quiet {
+		fmt.Fprintln(a.Out, out.ID)
+		return 0
+	}
 	return a.PrintJSON(out)
+}
+
+// cmdJobResume re-queues a paused job; --wait/--follow track it from there.
+func cmdJobResume(a *App, args []string) int {
+	id, wait, follow, timeout, err := jobIDWithControlFlags(args)
+	if err != nil {
+		return a.Usage(nil, "usage: lokictl job resume <id> [--wait] [--follow] [--timeout D]")
+	}
+	if !wait && !follow {
+		return jobAction("resume")(a, []string{id})
+	}
+	return runTrackedJob(a, follow, timeout, func() (string, error) {
+		return id, a.Client.DoJSON("POST", "/job/"+id+"/resume", nil, nil)
+	})
 }
 
 func cmdJobClear(a *App, args []string) int {

@@ -68,7 +68,7 @@ Run `lokictl help` for the always-current list. Highlights:
 | Area | Commands |
 |---|---|
 | Discovery | `health`, `stats`, `task list`, `task show <id>`, `lokictl help` |
-| Jobs | `job run <task> [args...] [--field k=v] [--wait] [--follow] [--timeout D]`, `job list [--state S]`, `job get/wait/logs/cancel/copy/remove <id>`, `job clear --yes` |
+| Jobs | `job run <task> [args...] [--field k=v] [--wait] [--follow] [--timeout D]`, `job copy/resume <id> [--wait] [--follow] [--timeout D]`, `job list [--state S]`, `job get/wait/logs/cancel/remove <id>`, `job clear --yes` |
 | Workflows | `workflow list/get/create/update/delete/run`, `workflow run-adhoc --dag FILE\|-` |
 | Library queries | `media query [--tag ... --visual ... --similar ...]`, `media search/similar/visual/image-search/metadata/tags/delete` |
 | Media data | `media describe <path> (--text D\|--clear)`, `media transcript <path> [--text T\|--clear]`, `media rate <path> [--elo E --views N --wins N --losses N]`, `media thumbs <path> [--regenerate]`, `media generate <path> --type T [--wait]` |
@@ -104,7 +104,14 @@ lokictl job run metadata --type description --apply all "C:/pics/x.jpg" --wait -
 ```sh
 lokictl job run ffmpeg-scale --width 1280 "C:/vids/in.mp4" --follow
 # stdout lines stream to stderr; final job JSON lands on stdout
+
+lokictl job copy <id> --follow     # re-run a job and tail it until it finishes
+lokictl job resume <id> --follow   # same for a paused job
 ```
+
+`--follow` attaches to the stream before the job is created, so a fast job's
+first lines aren't lost, and exits when the job finishes (exit 3 if it errored
+or was cancelled). `--wait` waits without streaming.
 
 **Forget media that no longer exists** (two passes: scan, then re-verify; a
 volume with most of its items missing is held back, not purged):
@@ -239,7 +246,7 @@ lokictl deps download siglip2-base-patch16-224 --wait
 ## Notes & limits
 
 - `job logs` only works while a job is running — the server streams stdout
-  over SSE and does not persist it.
+  over SSE and does not persist it. It exits when the job finishes.
 - `db query` accepts a single `SELECT`/`WITH` statement; the server enforces
   read-only at the SQLite level (`query_only`). Rows are capped (default
   1000, max 10000) with `"truncated": true` when clipped.
