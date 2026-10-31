@@ -273,6 +273,17 @@ fn dit_path(cli: &Cli) -> Result<PathBuf> {
     })
 }
 
+/// The name to stamp as the record's `model` when `dit` is not one of Kromoss's own files (a same-architecture fine-tune
+/// swapped in with --dit or $LOKI_DREAM_DIT): the file's name without `.safetensors`. None for Kromoss itself.
+fn swapped_model_name(dit: &Path) -> Option<String> {
+    if models::is_spec_file(&models::DIT_INT8, dit) || models::is_spec_file(&models::DIT_BF16, dit) {
+        return None;
+    }
+    let name = dit.file_name()?.to_string_lossy();
+    let stem = name.strip_suffix(".safetensors").unwrap_or(&name);
+    Some(stem.to_string())
+}
+
 fn run(prog: &'static str, argv: Vec<String>) -> Result<()> {
     let cmd = Cli::command().name(prog).bin_name(prog).after_help(HELP.replace("PROG", prog));
     let Some(cli) = crate::worker::parse_args::<Cli>(cmd, argv)? else { return Ok(()) };
@@ -525,7 +536,9 @@ fn run(prog: &'static str, argv: Vec<String>) -> Result<()> {
         }
         crate::info!("  sampled in {:.1}s, decoded in {:.1}s", t_sample, t1.elapsed().as_secs_f64());
         // ---- generation record
-        let mut rec = genmeta::Record::new(prog, env!("CARGO_PKG_VERSION"), MODEL_NAME);
+        let swapped = swapped_model_name(&dit_path);
+        let mut rec = genmeta::Record::new(prog, env!("CARGO_PKG_VERSION"), swapped.as_deref().unwrap_or(MODEL_NAME));
+        rec.set("base_model", swapped.as_ref().map(|_| MODEL_NAME));
         let mut inputs_rec = Vec::new();
         if let (Some(p), Some(i)) = (&cli.init, &init_img) {
             inputs_rec.push(serde_json::json!({"tag": "init", "path": p.display().to_string(), "width": i.w, "height": i.h}));
@@ -589,4 +602,16 @@ fn run(prog: &'static str, argv: Vec<String>) -> Result<()> {
     dev.sync()?;
     crate::info!("done in {:.1}s", t_all.elapsed().as_secs_f64());
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn swapped_model_name_names_finetunes_only() {
+        assert_eq!(swapped_model_name(Path::new("C:/models/kromoss_int8_convrot.safetensors")), None);
+        assert_eq!(swapped_model_name(Path::new("/m/kromoss_bf16.safetensors")), None);
+        assert_eq!(swapped_model_name(Path::new("C:/models/my_moss_finetune_fp16.safetensors")).as_deref(), Some("my_moss_finetune_fp16"));
+    }
 }

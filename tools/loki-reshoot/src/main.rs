@@ -451,10 +451,9 @@ fn run(argv: Vec<String>) -> Result<()> {
     // fail on bad geometry before touching models
     let (fc, _, _) = pipeline::temporal_shape(req.frames);
     pipeline::check_limits(req.width, req.height, fc)?;
-    let mut record = generation_record(&cli, &req, fc, fit_resolved, &ff, _stdin_tmp.0.as_deref());
-    record.set("meta", meta);
-
     let paths = model_paths(&cli)?;
+    let mut record = generation_record(&cli, &req, &paths.dit, fc, fit_resolved, &ff, _stdin_tmp.0.as_deref());
+    record.set("meta", meta);
     record.set("dit", paths.dit.file_name().map(|f| f.to_string_lossy().into_owned()));
     // VSA needs the model's coarse gates: a fast finetune without them runs dense
     if record.get("attention").and_then(|a| a.as_str()) == Some("vsa") {
@@ -486,7 +485,7 @@ fn run(argv: Vec<String>) -> Result<()> {
 /// The generation record stamped into the output's `comment` tag (see `genmeta`): the final prompt, every setting that
 /// shaped the result, and the references by prompt tag. `stdin_tmp` is the temp file a `-` reference was spooled to; it is
 /// reported as `-` since the temp path means nothing later.
-fn generation_record(cli: &Cli, req: &Request, frame_count: usize, fit: Fit, ff: &Ffmpeg, stdin_tmp: Option<&Path>) -> genmeta::Record {
+fn generation_record(cli: &Cli, req: &Request, dit: &Path, frame_count: usize, fit: Fit, ff: &Ffmpeg, stdin_tmp: Option<&Path>) -> genmeta::Record {
     use serde_json::{json, Value};
     let show = |p: &Path| -> String {
         if stdin_tmp == Some(p) { "-".to_string() } else { p.display().to_string() }
@@ -520,8 +519,11 @@ fn generation_record(cli: &Cli, req: &Request, frame_count: usize, fit: Fit, ff:
         }
         inputs.push(v);
     }
-    let mut rec = genmeta::Record::new("loki-reshoot", env!("CARGO_PKG_VERSION"), cli.model.name());
+    let swapped = swapped_model_name(cli.model, dit);
+    let mut rec = genmeta::Record::new("loki-reshoot", env!("CARGO_PKG_VERSION"), swapped.as_deref().unwrap_or(cli.model.name()));
+    // model_id stays --model's id: it is the sampling recipe, which a re-run needs (the file is `dit`)
     rec.set("model_id", format!("{:?}", cli.model).to_lowercase())
+        .set("recipe", swapped.as_ref().map(|_| cli.model.name()))
         .set("attention", if cli.model == ModelArg::Fast { Some(if req.sparse { "vsa" } else { "dense" }) } else { None })
         .set("prompt", req.prompt.clone())
         .set("seed", req.seed)
@@ -541,6 +543,19 @@ fn generation_record(cli: &Cli, req: &Request, frame_count: usize, fit: Fit, ff:
         .set("shake", if cli.animate.is_some() { Some(format!("{:?}", cli.shake).to_lowercase()) } else { None })
         .set("inputs", inputs);
     rec
+}
+
+/// The name to stamp as the record's `model` when `dit` is not `model`'s own file (a finetune swapped in with --dit or
+/// $LOKI_RESHOOT_DIT / $LOKI_RESHOOT_FAST_DIT): the file's name without `.safetensors`, since `model` then only chose the
+/// sampling recipe. None when the run used the model's own file.
+fn swapped_model_name(model: ModelArg, dit: &Path) -> Option<String> {
+    let own = if model == ModelArg::Fast { &models::FAST_DIT } else { &models::DIT };
+    if models::is_spec_file(own, dit) {
+        return None;
+    }
+    let name = dit.file_name()?.to_string_lossy();
+    let stem = name.strip_suffix(".safetensors").unwrap_or(&name);
+    Some(stem.to_string())
 }
 
 /// `-` as a reference (or prompt file) means stdin; at most one such input per run. The bytes go to a temp file so ffmpeg and
@@ -600,4 +615,21 @@ fn image_dims(ff: &Ffmpeg, p: &Path) -> Result<(usize, usize)> {
     let i = ff.probe(p)?;
     ensure!(i.width > 0, "cannot read the size of {}", p.display());
     Ok((i.width, i.height))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn swapped_model_name_names_finetunes_only() {
+        let own_h3 = Path::new("C:/models/minimax_h3_ref2va_pruned_int8_convrot.safetensors");
+        let own_fast = Path::new("/m/fasth3_omniref_8step_pruned_int8_convrot.safetensors");
+        let finetune = Path::new("C:/models/10Eros_beta7_int8.safetensors");
+        assert_eq!(swapped_model_name(ModelArg::H3, own_h3), None);
+        assert_eq!(swapped_model_name(ModelArg::Fast, own_fast), None);
+        assert_eq!(swapped_model_name(ModelArg::Fast, finetune).as_deref(), Some("10Eros_beta7_int8"));
+        // the other recipe's own file is a swap too: name it, not the recipe
+        assert_eq!(swapped_model_name(ModelArg::H3, own_fast).as_deref(), Some("fasth3_omniref_8step_pruned_int8_convrot"));
+    }
 }

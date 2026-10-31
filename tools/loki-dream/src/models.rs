@@ -131,6 +131,12 @@ pub fn search_dirs() -> Vec<PathBuf> {
     dirs
 }
 
+/// Whether `path` is `spec`'s own file: a `.safetensors` whose (lowercase) name matches one of the spec's patterns.
+pub fn is_spec_file(spec: &Spec, path: &Path) -> bool {
+    let f = path.file_name().unwrap_or_default().to_string_lossy().to_lowercase();
+    f.ends_with(".safetensors") && spec.patterns.iter().any(|pat| pat.split('*').all(|part| f.contains(part)))
+}
+
 pub fn find_local(spec: &Spec) -> Option<PathBuf> {
     for d in search_dirs() {
         if let Ok(rd) = std::fs::read_dir(&d) {
