@@ -2418,6 +2418,14 @@ func streamHandler() http.HandlerFunc {
 
 func userManagementHandler(deps *Dependencies) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// Listing and deleting users always need a credential; only creating
+		// the first account is open (see POST).
+		if r.Method == http.MethodGet || r.Method == http.MethodDelete {
+			if !setupAuthed(deps, r) {
+				http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+				return
+			}
+		}
 		switch r.Method {
 		case http.MethodGet:
 			users, err := deps.Auth.ListUsers()

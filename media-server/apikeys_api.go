@@ -62,7 +62,9 @@ func requestUsername(deps *Dependencies, r *http.Request) string {
 
 // apiKeysHandler implements /auth/keys: GET lists keys, POST creates one
 // (plaintext returned exactly once), DELETE ?id= revokes. Registered behind
-// RoleAdmin, unlike /auth/users which must stay public for first-run setup.
+// RoleAdmin, unlike /auth/users whose route stays public so the first
+// account can be created before any credential exists (the handler itself
+// requires one for everything else).
 func apiKeysHandler(deps *Dependencies) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {

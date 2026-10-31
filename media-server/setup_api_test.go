@@ -454,3 +454,47 @@ func TestUserCreateLockdown(t *testing.T) {
 		t.Fatalf("authenticated second account = %d: %s", w.Code, w.Body.String())
 	}
 }
+
+// Listing and deleting users used to be open to anyone who could reach the
+// port: the route is public (first-account creation must work before any
+// credential exists) and only POST checked. Both now need a credential.
+func TestUserListAndDeleteRequireCredential(t *testing.T) {
+	d := newSetupTestDeps(t)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/auth/users", userManagementHandler(d))
+	for _, u := range []string{"steve", "friend"} {
+		if err := d.Auth.Register(u, "hunter22"); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if w := setupGet(t, mux, "/auth/users", ""); w.Code != http.StatusUnauthorized {
+		t.Fatalf("anonymous list = %d, want 401", w.Code)
+	}
+	del := func(cookie string) int {
+		req := httptest.NewRequest(http.MethodDelete, "/auth/users?username=friend", nil)
+		if cookie != "" {
+			req.AddCookie(&http.Cookie{Name: "auth_token", Value: cookie})
+		}
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, req)
+		return w.Code
+	}
+	if code := del(""); code != http.StatusUnauthorized {
+		t.Fatalf("anonymous delete = %d, want 401", code)
+	}
+	if users, _ := d.Auth.ListUsers(); len(users) != 2 {
+		t.Fatalf("anonymous delete removed a user: %v", users)
+	}
+
+	token, err := d.Auth.Login("steve", "hunter22")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w := setupGet(t, mux, "/auth/users", token); w.Code != http.StatusOK {
+		t.Fatalf("authenticated list = %d: %s", w.Code, w.Body.String())
+	}
+	if code := del(token); code != http.StatusOK {
+		t.Fatalf("authenticated delete = %d", code)
+	}
+}
