@@ -974,3 +974,25 @@ if (isPickerWindow) {
     flush: ignore,
   };
 }
+
+/**
+ * Open a media file in a new viewer window, leaving this one untouched: the
+ * new window boots on the file's folder with it selected, exactly as a
+ * double-click launch would. Electron asks main for a window (a secondary
+ * window with its own launch file); the web build opens a tab of the SPA
+ * with `?file=`, keeping the current library selection (`db`).
+ */
+export function openInNewWindow(filePath: string): void {
+  if (!filePath) return;
+  if (isElectron) {
+    send('open-media-window', [filePath]);
+    return;
+  }
+  const url = new URL(window.location.href);
+  url.search = '';
+  url.hash = '';
+  const db = new URLSearchParams(window.location.search).get('db');
+  if (db) url.searchParams.set('db', db);
+  url.searchParams.set('file', filePath);
+  window.open(url.toString(), '_blank', 'noopener');
+}

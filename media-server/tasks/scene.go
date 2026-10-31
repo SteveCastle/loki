@@ -2619,7 +2619,7 @@ func sceneRenderTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 	}
 	q.PushJobStdout(j.ID, tag+": completed -> "+output)
 	q.RegisterOutputFile(j.ID, output, s.Source)
-	broadcastMediaCreated([]string{output})
+	broadcastMediaCreated(j.ID, []string{output})
 	_ = q.SetJobProgress(j.ID, 1, 1)
 	q.CompleteJob(j.ID)
 	return nil

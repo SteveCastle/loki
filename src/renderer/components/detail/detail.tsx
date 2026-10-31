@@ -21,6 +21,7 @@ import { markStartup } from '../../startup-marks';
 import { beginPaletteOpen } from '../../palette-trace';
 import { attachTouchGestures } from './touch-gestures';
 import { useTransientControls } from './use-transient-controls';
+import { samePath } from '../../media-changes';
 
 function resizeToCover(
   parentWidth: number,
@@ -178,7 +179,7 @@ export function Detail({ offset = 0 }: { offset?: number }) {
   useEffect(() => {
     const handler = (e: Event) => {
       const paths: string[] = (e as CustomEvent).detail?.paths || [];
-      if (item && paths.includes(item.path)) {
+      if (item && paths.some((p) => samePath(p, item.path))) {
         setMediaVersion((v) => v + 1);
       }
     };

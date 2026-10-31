@@ -1,10 +1,17 @@
-import React, { useContext, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { useSelector } from '@xstate/react';
 import { useQueryClient } from '@tanstack/react-query';
 import { GlobalStateContext } from '../../state';
-import { send, mediaServerBase, isElectron, on } from '../../platform';
+import { send, mediaServerBase, isElectron, on, openInNewWindow } from '../../platform';
 import { subscribeStream } from '../../stream-bus';
-import { jobInputPaths, navigateToMedia } from '../../job-paths';
+import { baseName, jobInputPaths, navigateToMedia } from '../../job-paths';
+import filter from '../../filter';
+import {
+  MediaChange,
+  mergePaths,
+  parseMediaChange,
+  planMediaChange,
+} from '../../media-changes';
 import './toast-system.css';
 
 type JobState =
@@ -36,10 +43,14 @@ interface Toast {
   message?: string;
   timestamp: number;
   durationMs?: number;
+  files?: string[];
 }
 
 interface JobToastProps {
   job: JobRunnerJob;
+  // Files the job wrote, announced by media-created / media-updated
+  // (media-changes.ts). Each opens in a new window.
+  results?: string[];
   onClear: () => void;
   // Timed auto-dismiss: hides the toast but, unlike onClear, lets a later
   // update for the same job bring it back.
@@ -238,20 +249,56 @@ const getJobSubtitle = (job: JobRunnerJob): string | null => {
 // Finished jobs go quickly; running/queued ones stay until they've been quiet
 // for a while (any progress or state update restarts the clock).
 const JOB_TOAST_CLOSE_MS = 250;
-const jobToastLingerMs = (state: JobState): number => {
+// A toast offering result files stays long enough to reach for a link.
+const RESULT_TOAST_MS = 15000;
+const jobToastLingerMs = (state: JobState, hasResults: boolean): number => {
+  if (hasResults) return RESULT_TOAST_MS;
   if (state === 'completed') return 3000;
   if (state === 'error' || state === 'cancelled') return 6000;
   return 12000;
 };
 
+// How many result files a toast lists before collapsing the rest into "+N".
+const RESULTS_SHOWN = 4;
+
+// Result files as links that open each one in a new window, so the user's
+// current view is never moved (media-changes.ts has the full contract).
+const ResultFiles: React.FC<{ paths: string[] }> = ({ paths }) => {
+  const more = paths.length - RESULTS_SHOWN;
+  return (
+    <div className="toast-results">
+      {paths.slice(0, RESULTS_SHOWN).map((p) => (
+        <button
+          type="button"
+          key={p}
+          className="toast-result"
+          title={`Open in a new window: ${p}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            openInNewWindow(p);
+          }}
+        >
+          <span className="toast-result-name">{baseName(p)}</span>
+          <span className="toast-result-open" aria-hidden>
+            ↗
+          </span>
+        </button>
+      ))}
+      {more > 0 && <span className="toast-result-more">+{more} more</span>}
+    </div>
+  );
+};
+
 const JobToast: React.FC<JobToastProps> = ({
   job,
+  results,
   onClear,
   onExpire,
   onPauseResume,
 }) => {
   const [isClosing, setIsClosing] = useState(false);
   const [hovered, setHovered] = useState(false);
+  const hasResults = !!results && results.length > 0;
   const onExpireRef = useRef(onExpire);
   onExpireRef.current = onExpire;
 
@@ -267,12 +314,12 @@ const JobToast: React.FC<JobToastProps> = ({
         () => onExpireRef.current(),
         JOB_TOAST_CLOSE_MS
       );
-    }, jobToastLingerMs(job.state));
+    }, jobToastLingerMs(job.state, hasResults));
     return () => {
       window.clearTimeout(timer);
       if (removeTimer !== undefined) window.clearTimeout(removeTimer);
     };
-  }, [job.state, job.progress_done, job.progress_total, hovered]);
+  }, [job.state, job.progress_done, job.progress_total, hovered, results?.length]);
 
   const { libraryService } = useContext(GlobalStateContext);
   const status = job.state;
@@ -371,7 +418,8 @@ const JobToast: React.FC<JobToastProps> = ({
               </span>
             </div>
           )}
-          {filePath && (
+          {hasResults && <ResultFiles paths={results!} />}
+          {!hasResults && filePath && (
             <div className="toast-file-path-container">
               <span
                 className="toast-file-path"
@@ -424,6 +472,7 @@ interface ActionToastProps {
 
 const ActionToast: React.FC<ActionToastProps> = ({ toast, onClear }) => {
   const [isClosing, setIsClosing] = useState(false);
+  const [hovered, setHovered] = useState(false);
   const clearedRef = useRef(false);
 
   const handleClear = () => {
@@ -436,7 +485,10 @@ const ActionToast: React.FC<ActionToastProps> = ({ toast, onClear }) => {
   };
 
   useEffect(() => {
-    // Auto-dismiss action toasts after specified duration or default 4 seconds
+    // Auto-dismiss action toasts after specified duration or default 4
+    // seconds; hovering holds the toast (so its links can be reached) and
+    // leaving restarts the clock.
+    if (hovered) return undefined;
     const timer = setTimeout(
       () => {
         handleClear();
@@ -445,13 +497,15 @@ const ActionToast: React.FC<ActionToastProps> = ({ toast, onClear }) => {
     );
 
     return () => clearTimeout(timer);
-  }, [toast.durationMs]);
+  }, [toast.durationMs, hovered]);
 
   return (
     <div
       className={`toast action-toast ${toast.type} ${
         isClosing ? 'closing' : ''
       }`}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
     >
       <div className="toast-content">
         <div className={`toast-indicator ${toast.type}`}></div>
@@ -459,6 +513,9 @@ const ActionToast: React.FC<ActionToastProps> = ({ toast, onClear }) => {
           <span className="toast-title">{toast.title}</span>
           {toast.message && (
             <span className="toast-message">{toast.message}</span>
+          )}
+          {toast.files && toast.files.length > 0 && (
+            <ResultFiles paths={toast.files} />
           )}
         </div>
       </div>
@@ -468,6 +525,25 @@ const ActionToast: React.FC<ActionToastProps> = ({ toast, onClear }) => {
     </div>
   );
 };
+
+// The path of the item under the cursor (what the detail view shows), or
+// null before a library is loaded.
+function currentPath(context: any): string | null {
+  if (!context || !Array.isArray(context.library)) return null;
+  const view = filter(
+    context.libraryLoadId,
+    context.textFilter,
+    context.library,
+    context.settings?.filters,
+    context.settings?.sortBy
+  );
+  return view?.[context.cursor]?.path ?? null;
+}
+
+function resultToastTitle(kind: MediaChange['kind'], count: number): string {
+  if (kind === 'updated') return count === 1 ? 'File updated' : `${count} files updated`;
+  return count === 1 ? 'New file ready' : `${count} new files ready`;
+}
 
 export function ToastSystem() {
   const queryClient = useQueryClient();
@@ -484,34 +560,75 @@ export function ToastSystem() {
   // arrive (otherwise a progress/state update would resurrect it).
   const dismissedJobsRef = useRef<Set<string>>(new Set());
 
-  // When a media-created event fires, we store the target path and the
-  // current libraryLoadId. Once libraryLoadId changes (the refresh completed),
-  // we send RESET_CURSOR which searches the filtered/sorted view.
-  const pendingNavigateRef = useRef<{
-    paths: string[];
-    sinceLoadId: string;
-  } | null>(null);
+  // Result files announced per job (media-created / media-updated), shown on
+  // that job's toast. jobsRef mirrors `jobs` so stream handlers can tell
+  // whether a job's toast is still up without re-subscribing.
+  const [results, setResults] = useState<Map<string, string[]>>(new Map());
+  const jobsRef = useRef(jobs);
+  jobsRef.current = jobs;
 
-
-  const libraryLoadId = useSelector(
-    libraryService,
-    (state) => state.context.libraryLoadId
+  const forgetResults = useCallback(
+    (jobId: string) =>
+      setResults((prev) => {
+        if (!prev.has(jobId)) return prev;
+        const next = new Map(prev);
+        next.delete(jobId);
+        return next;
+      }),
+    []
   );
 
-  // Once the library has been refreshed (libraryLoadId changed), navigate
-  // to the pending target. RESET_CURSOR handles filter/sort internally.
-  useEffect(() => {
-    const pending = pendingNavigateRef.current;
-    if (!pending) return;
-    // Wait until the library has actually been reloaded.
-    if (libraryLoadId === pending.sinceLoadId) return;
-    pendingNavigateRef.current = null;
-    // The reload re-ran the user's active search/filter/query, which may not
-    // include the new file (or the DB may not know it yet). The state handler
-    // navigates to it if present, otherwise adds it provisionally so the
-    // filter context survives and the user can still act on the file.
-    libraryService.send('ADD_PROVISIONAL_ITEMS', { paths: pending.paths });
-  }, [libraryLoadId, libraryService]);
+  // The one place media written by a job or by Studio is handled; the
+  // decisions are media-changes.ts's planMediaChange. Overwrites drop cached
+  // previews and reload the file on screen; files worth showing go on the
+  // job's toast, or on a toast of their own when that job's toast is gone
+  // (dismissed, expired, started before the app opened, or a Studio save).
+  const applyMediaChange = useCallback(
+    (change: MediaChange) => {
+      const plan = planMediaChange(
+        change,
+        currentPath(libraryService.getSnapshot().context)
+      );
+      if (plan.refresh.length > 0) {
+        for (const p of plan.refresh) {
+          queryClient.invalidateQueries(['media', 'preview', p]);
+        }
+        queryClient.invalidateQueries(['media']);
+        // The detail view busts its media URL when the file on screen is
+        // among these (see detail.tsx): that is the in-place reload.
+        window.dispatchEvent(
+          new CustomEvent('loki-media-updated', {
+            detail: { paths: plan.refresh },
+          })
+        );
+      }
+      if (plan.announce.length === 0) return;
+      const { jobId } = change;
+      if (
+        jobId &&
+        jobsRef.current.has(jobId) &&
+        !dismissedJobsRef.current.has(jobId)
+      ) {
+        setResults((prev) =>
+          new Map(prev).set(
+            jobId,
+            mergePaths(prev.get(jobId) ?? [], plan.announce)
+          )
+        );
+        return;
+      }
+      libraryService.send({
+        type: 'ADD_TOAST',
+        data: {
+          type: 'success',
+          title: resultToastTitle(change.kind, plan.announce.length),
+          files: plan.announce,
+          durationMs: RESULT_TOAST_MS,
+        },
+      });
+    },
+    [queryClient, libraryService]
+  );
 
   const toasts = useSelector(
     libraryService,
@@ -634,6 +751,7 @@ export function ToastSystem() {
         newJobs.delete(jobId);
         return newJobs;
       });
+      forgetResults(jobId);
     };
 
     // Item-level progress events ({id, done, total}) — merge into the job's
@@ -663,60 +781,6 @@ export function ToastSystem() {
       }
     };
 
-    // When media files are overwritten (e.g. save task in "replace" mode),
-    // invalidate cached previews so the UI shows the updated file.
-    const onMediaUpdated = (event: MessageEvent) => {
-      try {
-        const payload = JSON.parse(event.data);
-        const inner = typeof payload.msg === 'string' ? JSON.parse(payload.msg) : payload;
-        const paths: string[] = inner.paths || [];
-        for (const p of paths) {
-          queryClient.invalidateQueries(['media', 'preview', p]);
-        }
-        // Also invalidate the general media list to refresh thumbnails
-        if (paths.length > 0) {
-          queryClient.invalidateQueries(['media']);
-        }
-        // Notify detail view (and any other listener) so it can bust the
-        // browser HTTP cache for direct media URLs.
-        if (paths.length > 0) {
-          window.dispatchEvent(
-            new CustomEvent('loki-media-updated', { detail: { paths } })
-          );
-        }
-      } catch {
-        // Best-effort parse; ignore malformed events
-      }
-    };
-
-    // When new files are created (e.g. save task in "alongside" or "folder" mode),
-    // refresh the library so they appear immediately and navigate to the first new file.
-    const onMediaCreated = (event: MessageEvent) => {
-      try {
-        const payload = JSON.parse(event.data);
-        const inner = typeof payload.msg === 'string' ? JSON.parse(payload.msg) : payload;
-        const paths: string[] = inner.paths || [];
-        if (paths.length > 0) {
-          // Capture the current libraryLoadId so the useEffect knows to
-          // wait for it to change before navigating.
-          const snapshot = libraryService.getSnapshot();
-          pendingNavigateRef.current = {
-            paths,
-            sinceLoadId: snapshot.context.libraryLoadId,
-          };
-
-          // Refresh the library by re-querying the current view.
-          if (snapshot.matches({ library: 'loadedFromDB' })) {
-            libraryService.send({ type: 'SORTED_WEIGHTS' });
-          } else if (snapshot.matches({ library: 'loadedFromFS' })) {
-            libraryService.send('REFRESH_LIBRARY');
-          }
-        }
-      } catch {
-        // Best-effort parse; ignore malformed events
-      }
-    };
-
     // One bus subscription covers all event types; reconnects and zombie
     // detection live in the bus itself.
     return subscribeStream((type, event) => {
@@ -734,57 +798,37 @@ export function ToastSystem() {
           onProgress(event);
           break;
         case 'media-updated':
-          onMediaUpdated(event);
+        case 'media-created': {
+          const change = parseMediaChange(
+            type === 'media-created' ? 'created' : 'updated',
+            event.data
+          );
+          if (change) applyMediaChange(change);
           break;
-        case 'media-created':
-          onMediaCreated(event);
-          break;
+        }
         default:
           break;
       }
     });
-  }, [queryClient]);
+  }, [queryClient, applyMediaChange, forgetResults]);
 
   // Studio edit-and-save (Electron): the main process reports files it just
-  // wrote to disk. Overwrites get the same handling as the server's
-  // media-updated SSE event — drop cached previews and tell the detail view
-  // to bust its media URLs so the reloaded file (not the browser cache) is
-  // what plays. Brand-new files (an image saved as a video alongside the
-  // original) follow the media-created flow instead: refresh the library and
-  // navigate to the new file once the reload lands.
+  // wrote to disk, as overwrites or brand-new files (an image saved as a
+  // video alongside the original). Same contract as a job's output.
   useEffect(() => {
     if (!isElectron) return undefined;
     return on('studio-media-saved', (...args: unknown[]) => {
-      const paths = (args[0] as string[]) || [];
-      const created = args[1] === true;
+      const paths = ((args[0] as string[]) || []).filter(Boolean);
       if (paths.length === 0) return;
-      if (created) {
-        const snapshot = libraryService.getSnapshot();
-        pendingNavigateRef.current = {
-          paths,
-          sinceLoadId: snapshot.context.libraryLoadId,
-        };
-        if (snapshot.matches({ library: 'loadedFromDB' })) {
-          libraryService.send({ type: 'SORTED_WEIGHTS' });
-        } else if (snapshot.matches({ library: 'loadedFromFS' })) {
-          libraryService.send('REFRESH_LIBRARY');
-        }
-        return;
-      }
-      for (const p of paths) {
-        queryClient.invalidateQueries(['media', 'preview', p]);
-      }
-      queryClient.invalidateQueries(['media']);
-      window.dispatchEvent(
-        new CustomEvent('loki-media-updated', { detail: { paths } })
-      );
+      applyMediaChange({ kind: args[1] === true ? 'created' : 'updated', paths });
     });
-  }, [queryClient, libraryService]);
+  }, [applyMediaChange]);
 
   // Clearing a toast is view-only: hide the notification, leave the job alone
   // (pause/resume has its own button; the job detail page can cancel). We also
   // record the id so a later SSE update for the same job doesn't resurrect it.
   const removeJobToast = (job: JobRunnerJob) => {
+    forgetResults(job.id);
     setJobs((prev) => {
       const newJobs = new Map(prev);
       newJobs.delete(job.id);
@@ -794,6 +838,7 @@ export function ToastSystem() {
 
   const handleClearJob = (job: JobRunnerJob) => {
     dismissedJobsRef.current.add(job.id);
+    forgetResults(job.id);
     setJobs((prev) => {
       const newJobs = new Map(prev);
       newJobs.delete(job.id);
@@ -847,6 +892,7 @@ export function ToastSystem() {
         <JobToast
           key={key}
           job={job}
+          results={results.get(key)}
           onClear={() => handleClearJob(job)}
           onExpire={() => removeJobToast(job)}
           onPauseResume={() => handlePauseResumeJob(job)}

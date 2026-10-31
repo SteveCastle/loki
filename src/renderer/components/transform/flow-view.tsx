@@ -1703,8 +1703,8 @@ function DoneView(props: FlowViewProps) {
       <h2>{n > 1 ? `${n} jobs queued` : 'Queued'}</h2>
       <p>
         {props.intent && !usesSelection(props.intent)
-          ? 'The new pictures are added to your library (in its Generated folder) when they finish, and the library jumps to the first one.'
-          : 'The results appear next to the originals when they finish, and the library jumps to the first new file.'}{' '}
+          ? 'The new pictures are added to your library (in its Generated folder) when they finish; the finished toast links to them.'
+          : 'The results are saved next to the originals; when they finish, the toast links to each one so you can open it in a new window.'}{' '}
         Follow progress in the job queue.
         This run is remembered as your <strong>last run</strong>: re-run it on other files from the palette’s “{props.intent ? intentById(props.intent).title : 'Last run'} again” chip.
       </p>

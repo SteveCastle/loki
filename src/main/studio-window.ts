@@ -330,7 +330,7 @@ async function handleSaveMedia(
 
     // Tell the viewer window(s) what happened on disk (handled in
     // toast-system.tsx): an overwrite busts caches and reloads the media
-    // element; a brand-new file refreshes the library and navigates to it.
+    // element; a brand-new file is offered on a toast (media-changes.ts).
     for (const w of BrowserWindow.getAllWindows()) {
       if (w !== studioWindow) {
         w.webContents.send('studio-media-saved', [target], !existed);

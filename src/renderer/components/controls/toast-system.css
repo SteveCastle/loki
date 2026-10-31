@@ -268,3 +268,54 @@
 .toast-indicator.info {
   background-color: #4589c0;
 }
+
+/* Result files (job output): each opens in a new window. */
+.toast-results {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  margin-top: 4px;
+  max-width: 250px;
+}
+
+.toast-result {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: 0.75rem;
+  opacity: 0.8;
+  cursor: pointer;
+  text-align: left;
+}
+
+.toast-result:hover,
+.toast-result:focus-visible {
+  opacity: 1;
+  color: #f8cdf9;
+}
+
+.toast-result-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-decoration: underline;
+  text-decoration-color: rgba(255, 255, 255, 0.25);
+  text-underline-offset: 2px;
+}
+
+.toast-result-open {
+  flex: none;
+  font-size: 0.7rem;
+}
+
+.toast-result-more {
+  font-size: 0.7rem;
+  opacity: 0.6;
+}

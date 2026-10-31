@@ -98,6 +98,7 @@ export type Channels =
   | 'list-monitors'
   | 'set-wallpaper'
   | 'studio-media-saved'
+  | 'open-media-window'
   | 'startup-first-media'
   | 'server-install-status'
   | 'server-install-dismiss-prompt'

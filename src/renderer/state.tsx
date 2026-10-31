@@ -187,6 +187,9 @@ type LibraryState = {
     title: string;
     message?: string;
     timestamp: number;
+    durationMs?: number;
+    /** Files to offer as "open in a new window" links (job results). */
+    files?: string[];
   }[];
   // Streaming state to stabilize ordering and selection during directory scans
   streaming: boolean;
@@ -1397,6 +1400,7 @@ export const libraryMachine = createMachine(
                   message: event.data.message,
                   timestamp: Date.now(),
                   durationMs: event.data.durationMs,
+                  files: event.data.files,
                 };
                 return [...context.toasts, newToast];
               },
@@ -1697,60 +1701,6 @@ export const libraryMachine = createMachine(
           // which is intended. Items already in the library are just
           // navigated to. A media-type filter that would hide it outright is
           // cleared (revealPastTypeFilter), or the jump couldn't land.
-          ADD_PROVISIONAL_ITEMS: {
-            actions: [
-              assign<LibraryState, AnyEventObject>((context, event) =>
-                revealPastTypeFilter(
-                  context,
-                  (event.paths || []).filter(Boolean)[0]
-                )
-              ),
-              assign<LibraryState, AnyEventObject>((context, event) => {
-                const paths: string[] = (event.paths || []).filter(Boolean);
-                if (paths.length === 0) return {};
-                const norm = (p: string) => path.normalize(p).toLowerCase();
-                const known = new Set(
-                  context.library.map((item) => item?.path && norm(item.path))
-                );
-                const added: Item[] = [];
-                for (const p of paths) {
-                  if (known.has(norm(p))) continue;
-                  known.add(norm(p));
-                  added.push({ path: p, mtimeMs: Date.now() });
-                }
-                const library = added.length
-                  ? [...added, ...context.library]
-                  : context.library;
-                const loadId = added.length ? newLoadId() : context.libraryLoadId;
-                const view = filter(
-                  loadId,
-                  context.textFilter,
-                  library,
-                  context.settings.filters,
-                  context.settings.sortBy
-                );
-                const target = norm(paths[0]);
-                const idx = view.findIndex(
-                  (item: Item) => item?.path && norm(item.path) === target
-                );
-                if (idx < 0 && !added.length) return {};
-                const cursor = idx > -1 ? idx : context.cursor;
-                updatePersistedCursor(context, cursor);
-                return {
-                  library,
-                  libraryLoadId: loadId,
-                  // In-place edit of the current view, not a navigation: keep
-                  // the list's scroll position (same contract as DELETE_FILE).
-                  preserveScrollFromLoadId: added.length
-                    ? context.libraryLoadId
-                    : context.preserveScrollFromLoadId,
-                  cursor,
-                  scrollToCursorEventId: uniqueId(),
-                  videoPlayer: { ...context.videoPlayer, loopCount: 0 },
-                };
-              }),
-            ],
-          },
           INCREMENT_CURSOR: {
             actions: assign<LibraryState, AnyEventObject>((context, event) => {
               const view = filter(

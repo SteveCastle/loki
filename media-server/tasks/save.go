@@ -135,9 +135,9 @@ func saveTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 
 	// Notify clients about saved files.
 	if mode == "replace" {
-		broadcastMediaUpdated(savedPaths)
+		broadcastMediaUpdated(j.ID, savedPaths)
 	} else {
-		broadcastMediaCreated(savedPaths)
+		broadcastMediaCreated(j.ID, savedPaths)
 	}
 
 	q.PushJobStdout(j.ID, fmt.Sprintf("save: done — %d saved, %d skipped", saved, skipped))
@@ -145,24 +145,27 @@ func saveTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 	return nil
 }
 
-// broadcastMediaUpdated sends an SSE event so clients can bust their
-// cache for the given file paths (e.g. after overwriting originals).
-func broadcastMediaUpdated(paths []string) {
-	if len(paths) == 0 {
-		return
-	}
-	payload, _ := json.Marshal(map[string]any{"paths": paths})
-	stream.Broadcast(stream.Message{Type: "media-updated", Msg: string(payload)})
+// broadcastMediaUpdated tells clients a job overwrote these files in place
+// (e.g. save in replace mode), so they drop cached previews and reload the
+// file if it is the one on screen. jobId lets the client attach the change
+// to that job's toast.
+func broadcastMediaUpdated(jobID string, paths []string) {
+	broadcastMediaChange("media-updated", jobID, paths)
 }
 
-// broadcastMediaCreated sends an SSE event so clients can add newly
-// created files to the library (e.g. after saving alongside/folder).
-func broadcastMediaCreated(paths []string) {
+// broadcastMediaCreated tells clients a job wrote these new files (save
+// alongside/folder, a terminal AI step). Clients announce them on the job's
+// completion toast; they do not change the user's current view.
+func broadcastMediaCreated(jobID string, paths []string) {
+	broadcastMediaChange("media-created", jobID, paths)
+}
+
+func broadcastMediaChange(event, jobID string, paths []string) {
 	if len(paths) == 0 {
 		return
 	}
-	payload, _ := json.Marshal(map[string]any{"paths": paths})
-	stream.Broadcast(stream.Message{Type: "media-created", Msg: string(payload)})
+	payload, _ := json.Marshal(map[string]any{"jobId": jobID, "paths": paths})
+	stream.Broadcast(stream.Message{Type: event, Msg: string(payload)})
 }
 
 // stripLokiTemp removes the .loki-temp/<jobID>/ segment from a path,

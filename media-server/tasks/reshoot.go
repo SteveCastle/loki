@@ -430,7 +430,7 @@ func reshootTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 	var created []string
 	defer func() {
 		if terminal && !p.NoLibrary {
-			broadcastMediaCreated(created)
+			broadcastMediaCreated(j.ID, created)
 		}
 	}()
 

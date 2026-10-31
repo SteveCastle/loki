@@ -548,15 +548,15 @@ func runRetouchJob(j *jobqueue.Job, q *jobqueue.Queue, tag string, p retouchPara
 	// Every job is a workflow, so "in a workflow" can't mean "a save step
 	// follows". When nothing downstream consumes this job's output (a plain
 	// context-menu run, or the last step of a chain), write the finished file
-	// beside the original and, like the save step, announce it so the library
-	// reloads and the cursor jumps to the first new file. The announcement
-	// fires once at the end (also on a partial run) so a batch doesn't hop the
-	// cursor per image. With a later step, output stays in .loki-temp for it.
+	// beside the original and, like the save step, announce it so clients can
+	// offer the new files on the job's completion toast. The announcement
+	// fires once at the end (also on a partial run) so a batch is one notice,
+	// not one per image. With a later step, output stays in .loki-temp for it.
 	terminal := !q.HasDependents(j.ID)
 	var created []string
 	defer func() {
 		if terminal && !p.NoLibrary {
-			broadcastMediaCreated(created)
+			broadcastMediaCreated(j.ID, created)
 		}
 	}()
 

@@ -225,6 +225,17 @@ ipcMain.on('get-boot-args', (event) => {
   };
 });
 
+// A job result's "open" link (renderer platform.openInNewWindow): show that
+// file in a NEW window, leaving the requesting window's view alone. Same
+// secondary-window path as a forwarded second launch.
+ipcMain.on('open-media-window', (_event, args) => {
+  const raw = Array.isArray(args) ? args[0] : undefined;
+  if (typeof raw !== 'string' || !raw) return;
+  const launchFile = path.normalize(raw);
+  if (!isValidFilePath(launchFile)) return;
+  createWindow({ launchFile });
+});
+
 // The renderer reports when the user can actually see their media (or that it
 // gave up waiting), which is the only true end of the launch. `args` is the
 // array the preload's sendMessage wraps around its payload.
