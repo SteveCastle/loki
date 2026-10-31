@@ -296,7 +296,8 @@ jobs:
             server_cgo: '0'
             ldflags: '-s -w'
             fetch_cmd: 'media-server/scripts/fetch-bundled-deps.sh linux-amd64 verify'
-          - os: macos-14 # Apple Silicon
+          # macos-14 is retired 2026-11-02 (brownouts fail jobs before that).
+          - os: macos-15 # Apple Silicon
             target: darwin-arm64
             goos: darwin
             goarch: arm64
