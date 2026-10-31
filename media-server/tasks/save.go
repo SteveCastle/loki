@@ -193,33 +193,68 @@ func resolveConflict(path string) string {
 	return path
 }
 
-// moveFile tries os.Rename first (fast, same-drive). Falls back to copy+delete.
+// moveFile moves src to dst. os.Rename is tried first (atomic, same volume);
+// it cannot cross volumes — on Windows every drive letter is one ("The system
+// cannot move the file to a different disk drive"), on Unix it's EXDEV — so on
+// failure the file is copied to a temp name beside dst, flushed, renamed into
+// place, and only then is src removed. dst never appears half-written, and if
+// src can't be removed afterwards (held open by a player, say) the copy is
+// undone so the file exists in exactly one place and the caller can report
+// the failure without the library and the disk disagreeing.
 func moveFile(src, dst string) error {
-	if err := os.Rename(src, dst); err == nil {
+	renameErr := os.Rename(src, dst)
+	if renameErr == nil {
 		return nil
 	}
+	st, err := os.Stat(src)
+	if err != nil || st.IsDir() {
+		return renameErr
+	}
+
+	tmp := dst + ".loki-moving"
+	if err := copyFileTo(src, tmp, st); err != nil {
+		os.Remove(tmp)
+		return fmt.Errorf("copy fallback after rename failed (%v): %w", renameErr, err)
+	}
+	if err := os.Rename(tmp, dst); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	if err := os.Remove(src); err != nil {
+		os.Remove(dst)
+		return fmt.Errorf("copied, but could not remove the source (copy undone): %w", err)
+	}
+	return nil
+}
+
+// copyFileTo copies src (whose FileInfo is st) to a new file at dst, synced to
+// disk, keeping src's permissions and modification time — the library sorts by
+// mtime, so a move must not make old media look new.
+func copyFileTo(src, dst string, st os.FileInfo) error {
 	in, err := os.Open(src)
 	if err != nil {
 		return err
 	}
 	defer in.Close()
 
-	out, err := os.Create(dst)
+	// A leftover temp from an interrupted move is never anyone's data.
+	os.Remove(dst)
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, st.Mode().Perm())
 	if err != nil {
 		return err
 	}
-	defer out.Close()
-
 	if _, err := io.Copy(out, in); err != nil {
-		os.Remove(dst)
+		out.Close()
+		return err
+	}
+	if err := out.Sync(); err != nil {
+		out.Close()
 		return err
 	}
 	if err := out.Close(); err != nil {
-		os.Remove(dst)
 		return err
 	}
-	in.Close()
-	return os.Remove(src)
+	return os.Chtimes(dst, st.ModTime(), st.ModTime())
 }
 
 // cleanupWorkflowTempDirs removes .loki-temp directories for all jobs

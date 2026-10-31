@@ -1,7 +1,9 @@
 package tasks
 
 import (
+	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -102,8 +104,13 @@ func moveTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 	}
 
 	_ = q.SetJobProgress(j.ID, 0, len(validPaths))
-	moveCount := 0
-	updateCount := 0
+	moveCount, updateCount, inPlace := 0, 0, 0
+	var failures []string
+	fail := func(msg string) {
+		failures = append(failures, msg)
+		q.PushJobStdout(j.ID, "FAILED: "+msg)
+	}
+	peopleChanged := false
 	for i, srcPath := range validPaths {
 		select {
 		case <-ctx.Done():
@@ -130,27 +137,25 @@ func moveTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 		}
 		destPath := filepath.Join(targetDir, relativePath)
 
-		if _, err := os.Stat(destPath); err == nil {
-			q.PushJobStdout(j.ID, fmt.Sprintf("Warning: destination already exists, skipping: %s", destPath))
-			continue
-		}
-		destDir := filepath.Dir(destPath)
-		if err := os.MkdirAll(destDir, 0755); err != nil {
-			q.PushJobStdout(j.ID, fmt.Sprintf("Warning: failed to create destination directory %s: %v", destDir, err))
-			continue
-		}
-		if err := os.Rename(srcPath, destPath); err != nil {
-			q.PushJobStdout(j.ID, fmt.Sprintf("Warning: failed to move %s to %s: %v", srcPath, destPath, err))
-			continue
-		}
-		moveCount++
-		q.PushJobStdout(j.ID, fmt.Sprintf("Moved: %s -> %s", srcPath, destPath))
-		q.RegisterOutputFile(j.ID, destPath)
-
-		if err := updateMediaPathInDatabase(q.Db, srcPath, destPath); err != nil {
-			q.PushJobStdout(j.ID, fmt.Sprintf("Warning: failed to update database for %s: %v", srcPath, err))
-		} else {
-			updateCount++
+		res, err := moveMediaItem(ctx, q.Db, srcPath, destPath)
+		switch {
+		case errors.Is(err, errAlreadyInPlace):
+			// Re-running a move over a query that still matches what an
+			// earlier run moved: nothing to do, and nothing went wrong.
+			inPlace++
+			q.RegisterOutputFile(j.ID, destPath)
+		case err != nil:
+			fail(fmt.Sprintf("%s -> %s: %v", srcPath, destPath, err))
+		default:
+			moveCount++
+			if res != nil && res.Items > 0 {
+				updateCount++
+				if res.Rows["face.media_path"] > 0 {
+					peopleChanged = true
+				}
+			}
+			q.PushJobStdout(j.ID, fmt.Sprintf("Moved: %s -> %s", srcPath, destPath))
+			q.RegisterOutputFile(j.ID, destPath)
 		}
 		if (i+1)%10 == 0 || i == len(validPaths)-1 {
 			q.PushJobStdout(j.ID, fmt.Sprintf("Progress: %d/%d files processed", i+1, len(validPaths)))
@@ -158,7 +163,11 @@ func moveTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 	}
 
 	_ = q.SetJobProgress(j.ID, len(validPaths), len(validPaths))
-	q.PushJobStdout(j.ID, fmt.Sprintf("Move operation completed: %d files moved, %d database entries updated", moveCount, updateCount))
+	if peopleChanged {
+		broadcastPeopleUpdated([]string{})
+	}
+	q.PushJobStdout(j.ID, fmt.Sprintf("Move operation completed: %d files moved, %d library items re-pointed, %d already in place, %d failed",
+		moveCount, updateCount, inPlace, len(failures)))
 	select {
 	case <-ctx.Done():
 		q.PushJobStdout(j.ID, "Task was canceled")
@@ -166,8 +175,74 @@ func moveTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 		return ctx.Err()
 	default:
 	}
+	if len(failures) > 0 {
+		// A partial move must not read as "completed" in the queue: the
+		// failed items are still where they were, and re-running the job
+		// picks them up (moved ones count as already in place).
+		q.PushJobStdout(j.ID, fmt.Sprintf("%d of %d items were NOT moved:", len(failures), len(validPaths)))
+		for _, f := range failures {
+			q.PushJobStdout(j.ID, "  "+f)
+		}
+		q.ErrorJob(j.ID)
+		return fmt.Errorf("%d of %d items failed to move", len(failures), len(validPaths))
+	}
 	q.CompleteJob(j.ID)
 	return nil
+}
+
+// errAlreadyInPlace marks an item whose computed destination is its current
+// path — not a failure.
+var errAlreadyInPlace = errors.New("already at destination")
+
+// moveMediaItem moves one file on disk and then re-points every reference to
+// it: all the media-path columns media.MovePath knows (tags, embeddings,
+// faces, scan markers, battles, duplicates), the live vector and face indexes,
+// and a .vtt transcript sidecar. If the library refuses the new path (another
+// item already owns it) the file is moved back, so disk and library never
+// disagree. The returned result is nil when the file wasn't in the library.
+func moveMediaItem(ctx context.Context, db *sql.DB, src, dst string) (*media.MoveResult, error) {
+	if filepath.Clean(src) == filepath.Clean(dst) {
+		return nil, errAlreadyInPlace
+	}
+	if _, err := os.Stat(dst); err == nil {
+		return nil, fmt.Errorf("destination already exists on disk")
+	}
+	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+		return nil, fmt.Errorf("creating destination directory: %w", err)
+	}
+	if err := moveFile(src, dst); err != nil {
+		return nil, err
+	}
+
+	var res *media.MoveResult
+	if db != nil {
+		var err error
+		res, err = media.MovePath(ctx, db, src, dst, media.MoveOptions{})
+		if err != nil {
+			if undoErr := moveFile(dst, src); undoErr != nil {
+				return nil, fmt.Errorf("library update failed (%v) and the file could not be moved back from %s: %w", err, dst, undoErr)
+			}
+			return nil, fmt.Errorf("library update failed, file left in place: %w", err)
+		}
+		if res.Items > 0 {
+			IndexRenamePath(db, src, dst)
+			FaceIndexRenamePath(src, dst)
+		}
+	}
+
+	// The transcript travels with its video. Best effort: the media itself
+	// has moved and is consistent; a stranded .vtt only loses captions.
+	srcVtts, dstVtts := media.VttSidecarCandidates(src), media.VttSidecarCandidates(dst)
+	for k, sv := range srcVtts {
+		if st, err := os.Stat(sv); err != nil || st.IsDir() || k >= len(dstVtts) {
+			continue
+		}
+		if _, err := os.Stat(dstVtts[k]); err == nil {
+			continue
+		}
+		_ = moveFile(sv, dstVtts[k])
+	}
+	return res, nil
 }
 
 // findCommonPrefix finds the common directory prefix among a list of file paths
@@ -217,27 +292,4 @@ func findCommonPrefix(paths []string) string {
 		}
 	}
 	return prefix
-}
-
-// updateMediaPathInDatabase updates the path references in both media and media_tag_by_category tables
-func updateMediaPathInDatabase(db *sql.DB, oldPath, newPath string) error {
-	tx, err := db.Begin()
-	if err != nil {
-		return fmt.Errorf("failed to start transaction: %w", err)
-	}
-	defer tx.Rollback()
-	if _, err = tx.Exec(`UPDATE media SET path = ? WHERE path = ?`, newPath, oldPath); err != nil {
-		return fmt.Errorf("failed to update media table: %w", err)
-	}
-	if _, err = tx.Exec(`UPDATE media_tag_by_category SET media_path = ? WHERE media_path = ?`, newPath, oldPath); err != nil {
-		return fmt.Errorf("failed to update media_tag_by_category table: %w", err)
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("failed to commit transaction: %w", err)
-	}
-	// The swipe sampler caches paths from media_tag_by_category by value.
-	// After a rename, the cached old path lookups in `media` return zero rows
-	// and items silently disappear from the swipe view until invalidation.
-	media.InvalidateRandomSampleCache()
-	return nil
 }

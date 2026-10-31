@@ -248,6 +248,12 @@ func vttCandidates(mediaPath string) []string {
 	return []string{strings.TrimSuffix(mediaPath, ext) + ".vtt", mediaPath + ".vtt"}
 }
 
+// VttSidecarCandidates is vttCandidates for callers outside the package that
+// carry a media file's transcript along with it (the move task). The two
+// conventions are index-aligned, so candidate i of the old path maps to
+// candidate i of the new one.
+func VttSidecarCandidates(mediaPath string) []string { return vttCandidates(mediaPath) }
+
 func findVttSidecar(mediaPath string) string {
 	if strings.HasPrefix(mediaPath, "s3://") {
 		return ""
