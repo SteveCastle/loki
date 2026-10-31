@@ -260,9 +260,9 @@
         </p>
         <table>
           <tr><th></th><th>Local root</th><th>S3-compatible root</th></tr>
-          <tr><td>Path stored in the library</td><td>Absolute filesystem path</td><td><code>s3://bucket/key</code></td></tr>
+          <tr><td>Path stored in the library</td><td>Absolute filesystem path</td><td><code><span class="tok">s3://bucket/key</span></code></td></tr>
           <tr><td>Browsing &amp; scanning</td><td>Reads the filesystem directly</td><td>Lists objects via the S3 API</td></tr>
-          <tr><td>Serving media</td><td>Streamed by the server (<code>/media/file</code>)</td><td>Presigned URL; the browser fetches straight from the object store (1-hour expiry)</td></tr>
+          <tr><td>Serving media</td><td>Streamed by the server (<code><span class="tok">/media/file</span></code>)</td><td>Presigned URL; the browser fetches straight from the object store (1-hour expiry)</td></tr>
           <tr><td>Processing tasks (hash, embed, describe, faces, &hellip;)</td><td>Read the file in place</td><td>The object is downloaded to a temporary local copy for the task, then cleaned up</td></tr>
           <tr><td>New files (uploads, URL ingests)</td><td>Written directly into the folder</td><td>Staged locally, then uploaded to the bucket</td></tr>
           <tr><td>Thumbnails</td><td>Generated into a local cache directory</td><td>Stored in the bucket under <code>thumbnailPrefix</code> (default <code>_thumbnails</code>, hidden from browsing)</td></tr>
@@ -288,27 +288,27 @@
           An S3 root is described by these fields, whether it's defined in the wizard,
           <code>config.json</code>, or <code>LOWKEY_ROOTS</code>:
         </p>
-        <table>
+        <table class="ref-table">
           <tr><th>Field</th><th>Required</th><th>Description</th></tr>
-          <tr><td><code>type</code></td><td>Yes</td><td>Must be <code>"s3"</code></td></tr>
-          <tr><td><code>label</code></td><td>Yes</td><td>Display name in the UI</td></tr>
-          <tr><td><code>endpoint</code></td><td>Yes</td><td>S3 API endpoint URL</td></tr>
-          <tr><td><code>region</code></td><td>Yes</td><td>AWS region or equivalent</td></tr>
-          <tr><td><code>bucket</code></td><td>Yes</td><td>Bucket name</td></tr>
-          <tr><td><code>accessKey</code></td><td>Yes</td><td>Access key ID</td></tr>
-          <tr><td><code>secretKey</code></td><td>Yes</td><td>Secret access key</td></tr>
-          <tr><td><code>prefix</code></td><td>No</td><td>Key prefix to scope browsing (e.g. <code>"photos/"</code>)</td></tr>
-          <tr><td><code>thumbnailPrefix</code></td><td>No</td><td>Separate prefix or bucket path for generated thumbnails</td></tr>
-          <tr><td><code>default</code></td><td>No</td><td>Set to <code>true</code> to make this root the upload/download destination</td></tr>
+          <tr><td class="ref-key"><code>type</code></td><td class="ref-meta" data-label="Required">Yes</td><td class="ref-desc">Must be <code>"s3"</code></td></tr>
+          <tr><td class="ref-key"><code>label</code></td><td class="ref-meta" data-label="Required">Yes</td><td class="ref-desc">Display name in the UI</td></tr>
+          <tr><td class="ref-key"><code>endpoint</code></td><td class="ref-meta" data-label="Required">Yes</td><td class="ref-desc">S3 API endpoint URL</td></tr>
+          <tr><td class="ref-key"><code>region</code></td><td class="ref-meta" data-label="Required">Yes</td><td class="ref-desc">AWS region or equivalent</td></tr>
+          <tr><td class="ref-key"><code>bucket</code></td><td class="ref-meta" data-label="Required">Yes</td><td class="ref-desc">Bucket name</td></tr>
+          <tr><td class="ref-key"><code>accessKey</code></td><td class="ref-meta" data-label="Required">Yes</td><td class="ref-desc">Access key ID</td></tr>
+          <tr><td class="ref-key"><code>secretKey</code></td><td class="ref-meta" data-label="Required">Yes</td><td class="ref-desc">Secret access key</td></tr>
+          <tr><td class="ref-key"><code>prefix</code></td><td class="ref-meta" data-label="Required">No</td><td class="ref-desc">Key prefix to scope browsing (e.g. <code><span class="tok">"photos/"</span></code>)</td></tr>
+          <tr><td class="ref-key"><code>thumbnailPrefix</code></td><td class="ref-meta" data-label="Required">No</td><td class="ref-desc">Separate prefix or bucket path for generated thumbnails</td></tr>
+          <tr><td class="ref-key"><code>default</code></td><td class="ref-meta" data-label="Required">No</td><td class="ref-desc">Set to <code>true</code> to make this root the upload/download destination</td></tr>
         </table>
         <h4>Tested S3-compatible services</h4>
         <table>
           <tr><th>Service</th><th>Endpoint Format</th></tr>
-          <tr><td>AWS S3</td><td><code>https://s3.&lt;region&gt;.amazonaws.com</code></td></tr>
-          <tr><td>MinIO</td><td><code>http://&lt;host&gt;:9000</code></td></tr>
-          <tr><td>Backblaze B2</td><td><code>https://s3.&lt;region&gt;.backblazeb2.com</code></td></tr>
-          <tr><td>Cloudflare R2</td><td><code>https://&lt;account-id&gt;.r2.cloudflarestorage.com</code></td></tr>
-          <tr><td>DigitalOcean Spaces</td><td><code>https://&lt;region&gt;.digitaloceanspaces.com</code></td></tr>
+          <tr><td>AWS S3</td><td><code><span class="tok">https://s3.&lt;region&gt;.amazonaws.com</span></code></td></tr>
+          <tr><td>MinIO</td><td><code><span class="tok">http://&lt;host&gt;:9000</span></code></td></tr>
+          <tr><td>Backblaze B2</td><td><code><span class="tok">https://s3.&lt;region&gt;.backblazeb2.com</span></code></td></tr>
+          <tr><td>Cloudflare R2</td><td><code><span class="tok">https://&lt;account-id&gt;.r2.cloudflarestorage.com</span></code></td></tr>
+          <tr><td>DigitalOcean Spaces</td><td><code><span class="tok">https://&lt;region&gt;.digitaloceanspaces.com</span></code></td></tr>
         </table>
 
         <h3 id="concept-jobs">Jobs, Tasks &amp; Workflows</h3>
@@ -619,22 +619,22 @@
           Environment variables always win over <code>config.json</code>, which wins over built-in
           defaults. Storage roots supplied via env are never written back into the config file.
         </p>
-        <table>
+        <table class="ref-table">
           <tr><th>Variable</th><th>Default</th><th>Description</th></tr>
-          <tr><td><code>LOWKEY_PORT</code></td><td><code>10111</code></td><td>HTTP listen port</td></tr>
-          <tr><td><code>LOWKEY_DB_PATH</code></td><td>data dir + <code>media.db</code></td><td>SQLite database path</td></tr>
-          <tr><td><code>LOWKEY_CONFIG_PATH</code></td><td>data dir + <code>config.json</code></td><td>Config file location override</td></tr>
-          <tr><td><code>LOWKEY_DOWNLOAD_PATH</code></td><td><code>~/media</code></td><td>Fallback download directory when no storage root is configured</td></tr>
-          <tr><td><code>LOWKEY_ADMIN_USER</code> / <code>LOWKEY_ADMIN_PASSWORD</code></td><td></td><td>Provision the admin account on first boot (headless setup)</td></tr>
-          <tr><td><code>LOWKEY_ALLOW_PUBLIC_ACCESS</code></td><td><code>false</code></td><td>View-only anonymous access to the gallery, search, and Swipe app</td></tr>
-          <tr><td><code>LOWKEY_JWT_SECRET</code></td><td>(auto-generated)</td><td>JWT signing secret for authentication</td></tr>
-          <tr><td><code>LOWKEY_OLLAMA_BASE_URL</code></td><td><code>http://localhost:11434</code></td><td>Ollama API endpoint for LLM features</td></tr>
-          <tr><td><code>LOWKEY_OLLAMA_MODEL</code></td><td><code>llama3.2-vision</code></td><td>Vision model for image descriptions</td></tr>
-          <tr><td><code>LOWKEY_DISCORD_TOKEN</code></td><td></td><td>Discord token for media export</td></tr>
-          <tr><td><code>LOWKEY_FASTER_WHISPER_PATH</code></td><td></td><td>Path to an existing faster-whisper install</td></tr>
-          <tr><td><code>LOWKEY_ROOT_1</code>, <code>_2</code>, ...</td><td></td><td>Local storage roots (<code>path</code> or <code>path:label</code>)</td></tr>
-          <tr><td><code>LOWKEY_DEFAULT_ROOT</code></td><td>first root</td><td>Which <code>LOWKEY_ROOT_&lt;N&gt;</code> receives uploads/downloads (1-based index or label)</td></tr>
-          <tr><td><code>LOWKEY_ROOTS</code></td><td></td><td>JSON array of storage roots, local and S3 (set <code>"default":true</code> on one); wins over <code>LOWKEY_ROOT_&lt;N&gt;</code></td></tr>
+          <tr><td class="ref-key"><code>LOWKEY_PORT</code></td><td class="ref-meta" data-label="Default"><code>10111</code></td><td class="ref-desc">HTTP listen port</td></tr>
+          <tr><td class="ref-key"><code>LOWKEY_DB_PATH</code></td><td class="ref-meta" data-label="Default">data dir + <code>media.db</code></td><td class="ref-desc">SQLite database path</td></tr>
+          <tr><td class="ref-key"><code>LOWKEY_CONFIG_PATH</code></td><td class="ref-meta" data-label="Default">data dir + <code>config.json</code></td><td class="ref-desc">Config file location override</td></tr>
+          <tr><td class="ref-key"><code>LOWKEY_DOWNLOAD_PATH</code></td><td class="ref-meta" data-label="Default"><code><span class="tok">~/media</span></code></td><td class="ref-desc">Fallback download directory when no storage root is configured</td></tr>
+          <tr><td class="ref-key"><code>LOWKEY_ADMIN_USER</code> / <code>LOWKEY_ADMIN_PASSWORD</code></td><td class="ref-desc">Provision the admin account on first boot (headless setup)</td></tr>
+          <tr><td class="ref-key"><code>LOWKEY_ALLOW_PUBLIC_ACCESS</code></td><td class="ref-meta" data-label="Default"><code>false</code></td><td class="ref-desc">View-only anonymous access to the gallery, search, and Swipe app</td></tr>
+          <tr><td class="ref-key"><code>LOWKEY_JWT_SECRET</code></td><td class="ref-meta" data-label="Default">(auto-generated)</td><td class="ref-desc">JWT signing secret for authentication</td></tr>
+          <tr><td class="ref-key"><code>LOWKEY_OLLAMA_BASE_URL</code></td><td class="ref-meta" data-label="Default"><code><span class="tok">http://localhost:11434</span></code></td><td class="ref-desc">Ollama API endpoint for LLM features</td></tr>
+          <tr><td class="ref-key"><code>LOWKEY_OLLAMA_MODEL</code></td><td class="ref-meta" data-label="Default"><code><span class="tok">llama3.2-vision</span></code></td><td class="ref-desc">Vision model for image descriptions</td></tr>
+          <tr><td class="ref-key"><code>LOWKEY_DISCORD_TOKEN</code></td><td class="ref-desc">Discord token for media export</td></tr>
+          <tr><td class="ref-key"><code>LOWKEY_FASTER_WHISPER_PATH</code></td><td class="ref-desc">Path to an existing faster-whisper install</td></tr>
+          <tr><td class="ref-key"><code>LOWKEY_ROOT_1</code>, <code>_2</code>, ...</td><td class="ref-desc">Local storage roots (<code>path</code> or <code>path:label</code>)</td></tr>
+          <tr><td class="ref-key"><code>LOWKEY_DEFAULT_ROOT</code></td><td class="ref-meta" data-label="Default">first root</td><td class="ref-desc">Which <code>LOWKEY_ROOT_&lt;N&gt;</code> receives uploads/downloads (1-based index or label)</td></tr>
+          <tr><td class="ref-key"><code>LOWKEY_ROOTS</code></td><td class="ref-desc">JSON array of storage roots, local and S3 (set <code>"default":true</code> on one); wins over <code>LOWKEY_ROOT_&lt;N&gt;</code></td></tr>
         </table>
         <p>
           Every other config key has an env twin as well: inference providers
@@ -799,29 +799,29 @@
         </ul>
 
         <h3 id="tasks">Available Tasks</h3>
-        <table class="task-table">
+        <table class="ref-table">
           <tr><th>Task ID</th><th>Name</th><th>Description</th></tr>
-          <tr><td><code>ingest</code></td><td>Ingest Media Files</td><td>Scan a local directory or storage root, or download from YouTube / Discord / gallery URLs (yt-dlp, DiscordChatExporter, gallery-dl), with optional follow-up processing</td></tr>
-          <tr><td><code>process</code></td><td>Process Media (Combined Ops)</td><td>Run any combination of the per-item ops below in a single pass over a query or path</td></tr>
-          <tr><td><code>describe</code></td><td>Generate Descriptions</td><td>LLM vision descriptions via the configured inference provider</td></tr>
-          <tr><td><code>transcribe</code></td><td>Generate Transcripts</td><td>Video transcription (Faster Whisper)</td></tr>
-          <tr><td><code>hash</code></td><td>Generate Hashes</td><td>Content hash + file size</td></tr>
-          <tr><td><code>dimensions</code></td><td>Generate Dimensions</td><td>Image/video width and height</td></tr>
-          <tr><td><code>autotag</code></td><td>Auto Tag (ONNX)</td><td>ML-based automatic image tagging</td></tr>
-          <tr><td><code>embed</code></td><td>Visual Embedding (ONNX)</td><td>Compute embeddings for similarity search</td></tr>
-          <tr><td><code>faces</code></td><td>Detect Faces (ONNX)</td><td>Detect and embed faces, clustering incrementally</td></tr>
-          <tr><td><code>faces-cluster</code></td><td>Cluster Faces into People</td><td>Group stored faces into people</td></tr>
-          <tr><td><code>dedupe</code></td><td>Deduplicate Exact Copies (Merge + Delete)</td><td>Find byte-identical files, merge their metadata onto one copy, and delete the rest</td></tr>
-          <tr><td><code>find-duplicates</code></td><td>Find Duplicate Candidates (Review Only)</td><td>Group visually identical items (by embedding similarity, default 100%) into review groups for the Duplicates panel; never merges or deletes</td></tr>
-          <tr><td><code>merge-duplicates</code></td><td>Merge All Duplicate Groups (Accept Review)</td><td>Merge every pending duplicate group into its anchor and delete the other copies (<code>--min-similarity</code> to accept only the tight groups, <code>--dry-run</code> to count)</td></tr>
-          <tr><td><code>metadata</code></td><td>Generate Metadata (Legacy)</td><td>Legacy alias that maps <code>--type</code> onto the ops above</td></tr>
-          <tr><td><code>hls</code></td><td>HLS Transcode</td><td>Adaptive streaming renditions for large videos</td></tr>
-          <tr><td><code>move</code></td><td>Move Media Files</td><td>Move files and update database references</td></tr>
-          <tr><td><code>remove</code></td><td>Remove Media</td><td>Remove entries from the database</td></tr>
-          <tr><td><code>cleanup</code></td><td>CleanUp</td><td>Remove orphaned database entries</td></tr>
-          <tr><td><code>lora-dataset</code></td><td>Create LoRA Dataset</td><td>Generate datasets for ML training</td></tr>
-          <tr><td><code>ffmpeg</code>, <code>ffmpeg-*</code></td><td>FFmpeg Operations</td><td>Custom ffmpeg runs plus scale, convert, extract-audio, screenshot, thumbnail, reverse, speed, grayscale, blur, resize, crop, rotate, caption, and thumbnail-sheet variants</td></tr>
-          <tr><td><code>save</code></td><td>Save File</td><td>Save a file into the library</td></tr>
+          <tr><td class="ref-key"><code>ingest</code></td><td class="ref-meta" data-label="Name">Ingest Media Files</td><td class="ref-desc">Scan a local directory or storage root, or download from YouTube / Discord / gallery URLs (yt-dlp, DiscordChatExporter, gallery-dl), with optional follow-up processing</td></tr>
+          <tr><td class="ref-key"><code>process</code></td><td class="ref-meta" data-label="Name">Process Media (Combined Ops)</td><td class="ref-desc">Run any combination of the per-item ops below in a single pass over a query or path</td></tr>
+          <tr><td class="ref-key"><code>describe</code></td><td class="ref-meta" data-label="Name">Generate Descriptions</td><td class="ref-desc">LLM vision descriptions via the configured inference provider</td></tr>
+          <tr><td class="ref-key"><code>transcribe</code></td><td class="ref-meta" data-label="Name">Generate Transcripts</td><td class="ref-desc">Video transcription (Faster Whisper)</td></tr>
+          <tr><td class="ref-key"><code>hash</code></td><td class="ref-meta" data-label="Name">Generate Hashes</td><td class="ref-desc">Content hash + file size</td></tr>
+          <tr><td class="ref-key"><code>dimensions</code></td><td class="ref-meta" data-label="Name">Generate Dimensions</td><td class="ref-desc">Image/video width and height</td></tr>
+          <tr><td class="ref-key"><code>autotag</code></td><td class="ref-meta" data-label="Name">Auto Tag (ONNX)</td><td class="ref-desc">ML-based automatic image tagging</td></tr>
+          <tr><td class="ref-key"><code>embed</code></td><td class="ref-meta" data-label="Name">Visual Embedding (ONNX)</td><td class="ref-desc">Compute embeddings for similarity search</td></tr>
+          <tr><td class="ref-key"><code>faces</code></td><td class="ref-meta" data-label="Name">Detect Faces (ONNX)</td><td class="ref-desc">Detect and embed faces, clustering incrementally</td></tr>
+          <tr><td class="ref-key"><code><span class="tok">faces-cluster</span></code></td><td class="ref-meta" data-label="Name">Cluster Faces into People</td><td class="ref-desc">Group stored faces into people</td></tr>
+          <tr><td class="ref-key"><code>dedupe</code></td><td class="ref-meta" data-label="Name">Deduplicate Exact Copies (Merge + Delete)</td><td class="ref-desc">Find byte-identical files, merge their metadata onto one copy, and delete the rest</td></tr>
+          <tr><td class="ref-key"><code><span class="tok">find-duplicates</span></code></td><td class="ref-meta" data-label="Name">Find Duplicate Candidates (Review Only)</td><td class="ref-desc">Group visually identical items (by embedding similarity, default 100%) into review groups for the Duplicates panel; never merges or deletes</td></tr>
+          <tr><td class="ref-key"><code><span class="tok">merge-duplicates</span></code></td><td class="ref-meta" data-label="Name">Merge All Duplicate Groups (Accept Review)</td><td class="ref-desc">Merge every pending duplicate group into its anchor and delete the other copies (<code><span class="tok">--min-similarity</span></code> to accept only the tight groups, <code><span class="tok">--dry-run</span></code> to count)</td></tr>
+          <tr><td class="ref-key"><code>metadata</code></td><td class="ref-meta" data-label="Name">Generate Metadata (Legacy)</td><td class="ref-desc">Legacy alias that maps <code><span class="tok">--type</span></code> onto the ops above</td></tr>
+          <tr><td class="ref-key"><code>hls</code></td><td class="ref-meta" data-label="Name">HLS Transcode</td><td class="ref-desc">Adaptive streaming renditions for large videos</td></tr>
+          <tr><td class="ref-key"><code>move</code></td><td class="ref-meta" data-label="Name">Move Media Files</td><td class="ref-desc">Move files and update database references</td></tr>
+          <tr><td class="ref-key"><code>remove</code></td><td class="ref-meta" data-label="Name">Remove Media</td><td class="ref-desc">Remove entries from the database</td></tr>
+          <tr><td class="ref-key"><code>cleanup</code></td><td class="ref-meta" data-label="Name">CleanUp</td><td class="ref-desc">Remove orphaned database entries</td></tr>
+          <tr><td class="ref-key"><code><span class="tok">lora-dataset</span></code></td><td class="ref-meta" data-label="Name">Create LoRA Dataset</td><td class="ref-desc">Generate datasets for ML training</td></tr>
+          <tr><td class="ref-key"><code>ffmpeg</code>, <code><span class="tok">ffmpeg-*</span></code></td><td class="ref-meta" data-label="Name">FFmpeg Operations</td><td class="ref-desc">Custom ffmpeg runs plus scale, convert, extract-audio, screenshot, thumbnail, reverse, speed, grayscale, blur, resize, crop, rotate, caption, and thumbnail-sheet variants</td></tr>
+          <tr><td class="ref-key"><code>save</code></td><td class="ref-meta" data-label="Name">Save File</td><td class="ref-desc">Save a file into the library</td></tr>
         </table>
       </section>
 
@@ -1156,21 +1156,23 @@
           <code>lokictl db query "SELECT COUNT(*) FROM media"</code>
         </div>
         <p>Command groups:</p>
-        <table>
+        <table class="ref-table">
           <tr><th>Group</th><th>Covers</th></tr>
-          <tr><td><code>login</code>, <code>whoami</code>, <code>key</code></td><td>Browser or password login; API key creation, listing, and revocation</td></tr>
-          <tr><td><code>job</code>, <code>task</code>, <code>workflow</code></td><td>Run, wait on, follow, pause, cancel, and clear jobs; inspect task option schemas; save and run DAG workflows</td></tr>
-          <tr><td><code>media</code></td><td>Predicate queries, visual and text search, reverse image search, metadata reads and writes, ratings, thumbnails, move and forget, missing-file and thumbnail-cache cleanup</td></tr>
-          <tr><td><code>index</code></td><td>Embedding index status, missing items, prune, rebuild</td></tr>
-          <tr><td><code>db</code></td><td>Read-only SQL with bind arguments, table and schema listing</td></tr>
-          <tr><td><code>taxonomy</code>, <code>tag</code>, <code>category</code></td><td>Create, rename, move, weight, assign, and bulk-assign tags and categories</td></tr>
-          <tr><td><code>deps</code>, <code>config</code>, <code>fs</code>, <code>upload</code></td><td>Model downloads, configuration, storage-root browsing, file upload</td></tr>
-          <tr><td><code>api</code></td><td>Call any endpoint with the stored credential attached</td></tr>
+          <tr><td class="ref-key"><code>login</code>, <code>whoami</code>, <code>key</code></td><td class="ref-desc">Browser or password login; API key creation, listing, and revocation</td></tr>
+          <tr><td class="ref-key"><code>job</code>, <code>task</code>, <code>workflow</code></td><td class="ref-desc">Run, re-run, wait on, follow, pause, resume, cancel, and clear jobs; inspect task option schemas; save and run DAG workflows</td></tr>
+          <tr><td class="ref-key"><code>media</code></td><td class="ref-desc">Predicate queries, visual and text search, reverse image search, metadata reads and writes, ratings, thumbnails, move and forget, missing-file and thumbnail-cache cleanup</td></tr>
+          <tr><td class="ref-key"><code>index</code></td><td class="ref-desc">Embedding index status, missing items, prune, rebuild</td></tr>
+          <tr><td class="ref-key"><code>db</code></td><td class="ref-desc">Read-only SQL with bind arguments, table and schema listing</td></tr>
+          <tr><td class="ref-key"><code>taxonomy</code>, <code>tag</code>, <code>category</code></td><td class="ref-desc">Create, rename, move, weight, assign, and bulk-assign tags and categories</td></tr>
+          <tr><td class="ref-key"><code>group</code></td><td class="ref-desc">Tag groups inside a category: create, fill, order, hide, display mode</td></tr>
+          <tr><td class="ref-key"><code>pool</code></td><td class="ref-desc">GPU worker pools: placement strategy, per-engine routes, worker nodes, RunPod provisioning</td></tr>
+          <tr><td class="ref-key"><code>deps</code>, <code>config</code>, <code>fs</code>, <code>upload</code></td><td class="ref-desc">Model downloads, configuration, storage-root browsing, file upload</td></tr>
+          <tr><td class="ref-key"><code>api</code></td><td class="ref-desc">Call any endpoint with the stored credential attached</td></tr>
         </table>
         <p>
-          The <a href="./cli.html">lokictl reference</a> documents installation,
-          authentication, the output contract, every command and flag, the job
-          input and DAG formats, and a set of recipes.
+          The <a href="./cli.html">lokictl reference</a> starts with a quick
+          start and authentication, then documents the output contract, every
+          command and flag, the job input and DAG formats, and a set of recipes.
         </p>
       </section>
 
@@ -1187,17 +1189,17 @@
         </p>
         <table>
           <tr><th>Area</th><th>Representative endpoints</th></tr>
-          <tr><td>Authentication</td><td><code>POST /auth/login</code>, <code>GET /auth/status</code>, <code>/auth/users</code>, <code>/auth/keys</code></td></tr>
-          <tr><td>Jobs and tasks</td><td><code>POST /create</code>, <code>GET /jobs/list</code>, <code>/job/{id}/cancel|pause|resume|copy|remove</code>, <code>GET /tasks</code></td></tr>
-          <tr><td>Workflows</td><td><code>/workflows</code>, <code>/workflows/{id}</code>, <code>/workflows/{id}/run</code>, <code>POST /workflow</code></td></tr>
-          <tr><td>Real-time events</td><td><code>GET /stream</code> (Server-Sent Events for job state, output, and progress)</td></tr>
-          <tr><td>Media library</td><td><code>POST /api/media/query</code>, <code>/api/media/similar</code>, <code>/api/media/search/visual|image|face</code>, <code>/api/media/metadata|tags|description|transcript|rating|move|forget</code></td></tr>
-          <tr><td>Taxonomy</td><td><code>/api/taxonomy</code>, <code>/api/tags</code>, <code>/api/categories</code>, <code>/api/assignments</code></td></tr>
-          <tr><td>Embeddings</td><td><code>/api/index/status|models|missing|rebuild</code>, <code>/api/embeddings</code></td></tr>
-          <tr><td>People and faces</td><td><code>/api/people</code>, <code>/api/faces</code>, <code>/api/faces/{id}/assign|reject</code>, <code>/api/faces/tuning</code></td></tr>
-          <tr><td>Storage and transfer</td><td><code>/api/fs/list</code>, <code>/api/fs/scan</code>, <code>/api/upload</code>, <code>/api/export</code>, <code>/api/import</code></td></tr>
-          <tr><td>Files</td><td><code>/media/file</code>, <code>/media/thumbnail</code>, <code>/media/hls</code></td></tr>
-          <tr><td>System</td><td><code>GET /health</code>, <code>/api/stats</code>, <code>/api/config</code>, <code>POST /api/db/query</code>, <code>/api/deps/*</code>, <code>/api/scheduler</code></td></tr>
+          <tr><td>Authentication</td><td><code>POST <span class="tok">/auth/login</span></code>, <code>GET <span class="tok">/auth/status</span></code>, <code><span class="tok">/auth/users</span></code>, <code><span class="tok">/auth/keys</span></code></td></tr>
+          <tr><td>Jobs and tasks</td><td><code>POST <span class="tok">/create</span></code>, <code>GET <span class="tok">/jobs/list</span></code>, <code><span class="tok">/job/{id}/cancel|</span><wbr><span class="tok">pause|</span><wbr><span class="tok">resume|</span><wbr><span class="tok">copy|</span><wbr>remove</code>, <code>GET <span class="tok">/tasks</span></code></td></tr>
+          <tr><td>Workflows</td><td><code><span class="tok">/workflows</span></code>, <code><span class="tok">/workflows/{id}</span></code>, <code><span class="tok">/workflows/{id}/run</span></code>, <code>POST <span class="tok">/workflow</span></code></td></tr>
+          <tr><td>Real-time events</td><td><code>GET <span class="tok">/stream</span></code> (Server-Sent Events for job state, output, and progress)</td></tr>
+          <tr><td>Media library</td><td><code>POST <span class="tok">/api/media/query</span></code>, <code><span class="tok">/api/media/similar</span></code>, <code><span class="tok">/api/media/search/visual|</span><wbr><span class="tok">image|</span><wbr>face</code>, <code><span class="tok">/api/media/metadata|</span><wbr><span class="tok">tags|</span><wbr><span class="tok">description|</span><wbr><span class="tok">transcript|</span><wbr><span class="tok">rating|</span><wbr><span class="tok">move|</span><wbr>forget</code></td></tr>
+          <tr><td>Taxonomy</td><td><code><span class="tok">/api/taxonomy</span></code>, <code><span class="tok">/api/tags</span></code>, <code><span class="tok">/api/categories</span></code>, <code><span class="tok">/api/assignments</span></code></td></tr>
+          <tr><td>Embeddings</td><td><code><span class="tok">/api/index/status|</span><wbr><span class="tok">models|</span><wbr><span class="tok">missing|</span><wbr>rebuild</code>, <code><span class="tok">/api/embeddings</span></code></td></tr>
+          <tr><td>People and faces</td><td><code><span class="tok">/api/people</span></code>, <code><span class="tok">/api/faces</span></code>, <code><span class="tok">/api/faces/{id}/assign|</span><wbr>reject</code>, <code><span class="tok">/api/faces/tuning</span></code></td></tr>
+          <tr><td>Storage and transfer</td><td><code><span class="tok">/api/fs/list</span></code>, <code><span class="tok">/api/fs/scan</span></code>, <code><span class="tok">/api/upload</span></code>, <code><span class="tok">/api/export</span></code>, <code><span class="tok">/api/import</span></code></td></tr>
+          <tr><td>Files</td><td><code><span class="tok">/media/file</span></code>, <code><span class="tok">/media/thumbnail</span></code>, <code><span class="tok">/media/hls</span></code></td></tr>
+          <tr><td>System</td><td><code>GET <span class="tok">/health</span></code>, <code><span class="tok">/api/stats</span></code>, <code><span class="tok">/api/config</span></code>, <code>POST <span class="tok">/api/db/query</span></code>, <code><span class="tok">/api/deps/*</span></code>, <code><span class="tok">/api/scheduler</span></code></td></tr>
         </table>
         <p>
           The <a href="./api.html">HTTP API reference</a> lists every endpoint
@@ -1274,7 +1276,7 @@
       // Doing it here rather than in the markup keeps the labels correct as
       // rows are edited, and leaves pages without this script untouched.
       (function () {
-        document.querySelectorAll('main table').forEach((table) => {
+        document.querySelectorAll('main table:not(.ref-table)').forEach((table) => {
           const headerRow = table.querySelector('tr');
           if (!headerRow) return;
           const labels = Array.from(headerRow.children).map((cell) =>
@@ -1424,5 +1426,6 @@
         update();
       })();
     </script>
+    <script src="../static/code-colors.js" defer></script>
   </body>
 </html>

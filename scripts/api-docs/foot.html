@@ -1,0 +1,107 @@
+    </div>
+
+    <script>
+      (function () {
+        document.querySelectorAll('main table:not(.ref-table)').forEach((table) => {
+          const headerRow = table.querySelector('tr');
+          if (!headerRow) return;
+          const labels = Array.from(headerRow.children).map((cell) =>
+            cell.textContent.trim()
+          );
+          table.querySelectorAll('tr').forEach((row) => {
+            Array.from(row.children).forEach((cell, i) => {
+              if (cell.tagName === 'TD' && labels[i]) {
+                cell.setAttribute('data-label', labels[i]);
+              }
+            });
+          });
+          if (!table.parentElement.classList.contains('table-scroll')) {
+            const wrap = document.createElement('div');
+            wrap.className = 'table-scroll';
+            table.parentNode.insertBefore(wrap, table);
+            wrap.appendChild(table);
+          }
+        });
+      })();
+
+      document.querySelectorAll('.toc a').forEach(link => {
+        link.addEventListener('click', (e) => {
+          const href = link.getAttribute('href');
+          if (href.startsWith('#')) {
+            e.preventDefault();
+            const target = document.getElementById(href.slice(1));
+            if (target) {
+              history.pushState(null, '', href);
+              target.scrollIntoView({ behavior: 'smooth' });
+            }
+          }
+        });
+      });
+
+      (() => {
+        const toc = document.querySelector('.toc');
+        if (!toc) return;
+        const links = Array.from(toc.querySelectorAll('a[href^="#"]'));
+        const targets = links
+          .map((link) => {
+            const el = document.getElementById(link.getAttribute('href').slice(1));
+            return el ? { link, el } : null;
+          })
+          .filter(Boolean);
+        if (!targets.length) return;
+        let current = null;
+        let suppress = false;
+        let suppressTimer = null;
+        function setActive(link) {
+          if (link === current) return;
+          current = link;
+          toc.querySelectorAll('.active, .active-parent').forEach((el) => {
+            el.classList.remove('active', 'active-parent');
+          });
+          if (!link) return;
+          link.classList.add('active');
+          const sublist = link.closest('.toc ul ul');
+          if (sublist) {
+            const parentLink = sublist.closest('.toc > ul > li').querySelector(':scope > a');
+            if (parentLink) parentLink.classList.add('active-parent');
+          }
+          const linkRect = link.getBoundingClientRect();
+          const tocRect = toc.getBoundingClientRect();
+          if (linkRect.top < tocRect.top + 48) {
+            toc.scrollTop += linkRect.top - (tocRect.top + 48);
+          } else if (linkRect.bottom > tocRect.bottom - 24) {
+            toc.scrollTop += linkRect.bottom - (tocRect.bottom - 24);
+          }
+        }
+        function update() {
+          const atBottom = window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 2;
+          if (atBottom) { setActive(targets[targets.length - 1].link); return; }
+          let best = null;
+          for (const t of targets) {
+            if (t.el.getBoundingClientRect().top <= 110) best = t;
+          }
+          setActive(best ? best.link : targets[0].link);
+        }
+        function holdForClick() {
+          suppress = true;
+          clearTimeout(suppressTimer);
+          suppressTimer = setTimeout(() => { suppress = false; }, 150);
+        }
+        links.forEach((link) => {
+          link.addEventListener('click', () => { holdForClick(); setActive(link); });
+        });
+        let ticking = false;
+        window.addEventListener('scroll', () => {
+          if (suppress) { holdForClick(); return; }
+          if (!ticking) {
+            ticking = true;
+            requestAnimationFrame(() => { ticking = false; update(); });
+          }
+        }, { passive: true });
+        window.addEventListener('resize', () => { if (!suppress) update(); }, { passive: true });
+        update();
+      })();
+    </script>
+    <script src="../static/code-colors.js" defer></script>
+  </body>
+</html>

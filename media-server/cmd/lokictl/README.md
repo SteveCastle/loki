@@ -44,8 +44,8 @@ The browser flow is the RFC 8252 loopback pattern used by modern CLIs: the
 CLI listens on an ephemeral `127.0.0.1` port, the browser authorizes it on an
 approve page (logging you in first if needed), and the CLI receives a
 one-time code it exchanges (PKCE) for a freshly minted `lk_` API key — a
-long-lived, revocable credential, unlike the 24-hour JWT the password flow
-returns. It requires the browser to run on the same machine as the CLI; over
+long-lived, revocable credential, unlike the JWT the password flow returns
+(valid for a year and not individually revocable). It requires the browser to run on the same machine as the CLI; over
 SSH, use `--password`.
 
 API keys remain fully supported everywhere a token is accepted (`--token`,
@@ -63,7 +63,10 @@ revoked — create a new one).
 
 ## Command reference
 
-Run `lokictl help` for the always-current list. Highlights:
+Run `lokictl help` for the always-current list. The full reference, with every
+flag, is published at <https://lowkeyviewer.com/server/cli.html>
+(`docs/server/cli.html`; `TestDocsCoverEveryCommand` fails when a command or
+flag is missing from it). Highlights:
 
 | Area | Commands |
 |---|---|
@@ -254,8 +257,6 @@ lokictl deps download siglip2-base-patch16-224 --wait
   comparisons against numeric columns.
 - Job-input tokens containing double quotes are rejected (the server's
   splitter has no escape syntax) — pass such values with `--field name=value`.
-- `stats` is Windows-server-only; `workflow` saved-routes need a server built
-  from this branch or later on macOS/Linux.
 - `config set` merges over `config get` and never echoes redacted secrets or
   storage roots back; edit credentials in the web Config UI.
 

@@ -1,0 +1,112 @@
+      <section id="conventions">
+        <h2>Conventions</h2>
+        <p>
+          This reference is generated from the server's OpenAPI 3.1 description,
+          <a href="./openapi.yaml">openapi.yaml</a>, which you can load into any
+          OpenAPI tool or client generator. Paths are relative to wherever the
+          server is reachable: its host and port, or a reverse proxy in front of
+          it. The port is 10111 unless changed with <code>LOWKEY_PORT</code> or the
+          <code>port</code> config key.
+        </p>
+        <p>
+          Each endpoint lists its access level, parameters, request body and
+          responses with every field's type. A type name such as
+          <a href="#schema-job">Job</a> links to its definition under
+          <a href="#schemas">Schemas</a>. Bodies are JSON unless a content type
+          says otherwise. Booleans in query strings are the literal strings
+          <code>true</code> and <code>false</code>. A path parameter written
+          <code>{id}</code> is one path segment.
+        </p>
+        <p>
+          Many older handlers do not check the HTTP method and accept any method
+          with the documented body; the method shown is the one the clients send.
+          Where it matters, the endpoint says so.
+        </p>
+        <p class="color-key">
+          Code is coloured by role:
+          <code data-colored="1"><span class="c-cmd">literal</span></code>
+          <code data-colored="1"><span class="c-flag">--flag</span></code>
+          <code data-colored="1"><span class="c-ph">{param}</span></code>
+          <code data-colored="1"><span class="c-path">/path</span></code>
+          <code data-colored="1"><span class="c-env">ENV_VAR</span></code>
+          <code data-colored="1"><span class="c-val">"value"</span></code>
+          <code data-colored="1"><span class="c-punct">{ }</span></code>
+        </p>
+
+        <h3 id="access-levels">Access Levels</h3>
+        <p>Every endpoint is marked with one of three access levels.</p>
+        <table class="ref-table">
+          <tr><th>Level</th><th>Requirement</th></tr>
+          <tr><td class="ref-key"><code>Public</code></td><td class="ref-desc">No credential.</td></tr>
+          <tr><td class="ref-key"><code>Read</code></td><td class="ref-desc">A credential, unless the <code>allowPublicAccess</code> setting is on, in which case anonymous requests are accepted. Write methods on a Read path still require a credential while public access is on; the endpoint notes this.</td></tr>
+          <tr><td class="ref-key"><code>Admin</code></td><td class="ref-desc">A credential. Every authenticated user is an admin.</td></tr>
+        </table>
+        <p>
+          A credential is one of: an <code>Authorization: Bearer &lt;token&gt;</code>
+          header carrying a JWT or an <code>lk_</code> API key; an
+          <code>X-API-Key: &lt;key&gt;</code> header; or the
+          <code>auth_token</code> cookie set by <code>POST /auth/login</code>.
+          Headers are checked before the cookie. JWTs and the cookie are valid
+          for one year; API keys until revoked.
+        </p>
+        <p>
+          A request that fails authentication receives <code>401</code> when it
+          carries a <code>Bearer</code> or <code>X-API-Key</code> header, sends
+          exactly <code>Accept: application/json</code>, or targets a path under
+          <code>/api/</code>. Any other request is redirected with
+          <code>302</code>: to <code>/setup</code> until first-run setup is
+          complete, then to <code>/login</code>.
+        </p>
+        <p>
+          While the temporary default <code>admin</code> account is the only
+          user, requests authenticated as it receive <code>403</code> with
+          <code>{"error": "setup_required", "message": "Please create a new user account"}</code>;
+          page requests are redirected to <code>/login?setup=true</code>.
+        </p>
+
+        <h3 id="errors">Errors</h3>
+        <p>
+          There is no single error envelope. Most handlers write
+          <code>{"error": "&lt;message&gt;"}</code> (the <a href="#schema-error">Error</a>
+          schema), often labelled <code>Content-Type: text/plain</code> because
+          they go through Go's <code>http.Error</code>; parse the body as JSON
+          regardless of the header. Older handlers write a bare plain-text
+          message. Each endpoint lists the statuses it returns and which form
+          the body takes. The status codes follow HTTP semantics:
+        </p>
+        <table class="ref-table">
+          <tr><th>Status</th><th>Meaning</th></tr>
+          <tr><td class="ref-key"><code>400</code></td><td class="ref-desc">Malformed JSON, a missing required field, an invalid parameter, or a failed validation.</td></tr>
+          <tr><td class="ref-key"><code>401</code></td><td class="ref-desc">Missing or invalid credential (see above).</td></tr>
+          <tr><td class="ref-key"><code>403</code></td><td class="ref-desc">Path outside every configured storage root, setup required, or a cross-origin form post.</td></tr>
+          <tr><td class="ref-key"><code>404</code></td><td class="ref-desc">Unknown job, workflow, model, file, person, or scene.</td></tr>
+          <tr><td class="ref-key"><code>405</code></td><td class="ref-desc">Method not supported, on handlers that check the method.</td></tr>
+          <tr><td class="ref-key"><code>409</code></td><td class="ref-desc">Conflict: a move destination already in the library, a tag in another category.</td></tr>
+          <tr><td class="ref-key"><code>413</code></td><td class="ref-desc">Request body over its cap.</td></tr>
+          <tr><td class="ref-key"><code>422</code></td><td class="ref-desc">The input was valid but unusable, for example an image with no face to search by.</td></tr>
+          <tr><td class="ref-key"><code>500</code></td><td class="ref-desc">Database or filesystem failure.</td></tr>
+          <tr><td class="ref-key"><code>503</code></td><td class="ref-desc">A subsystem is unavailable: the auto scheduler is not running, or the event stream is at its connection limit.</td></tr>
+        </table>
+
+        <h3 id="paths">Media Paths</h3>
+        <p>
+          A media item is identified by its <code>path</code>: the absolute
+          filesystem path for local roots, or <code>s3://bucket/key</code> for
+          object storage roots. Paths are compared as stored. Endpoints that
+          serve or process a file refuse paths outside every configured storage
+          root with <code>403</code>. Paths in query strings must be URL-encoded.
+        </p>
+
+        <h3 id="platforms">Platform Differences</h3>
+        <p>
+          The Windows, macOS and Linux servers register the same routes with the
+          same access levels, with these exceptions:
+        </p>
+        <ul>
+          <li><code>POST /api/embedding/directml/install</code> and the <code>/events</code> page exist only on Windows.</li>
+          <li>The <code>/stats</code> page exists only on macOS and Linux.</li>
+          <li><code>GET /tasks</code> includes each task's <code>options</code> only on Windows.</li>
+          <li><code>POST /api/upload</code> honours the <code>destination</code> field only on Windows; macOS and Linux always write to <code>uploads/</code> in the default root.</li>
+          <li><code>/api/scene-dream</code> endpoints exist only in builds made with the Dream feature (<code>LOKI_DREAM=1</code>).</li>
+        </ul>
+      </section>

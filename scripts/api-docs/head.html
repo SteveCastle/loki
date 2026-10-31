@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <!-- Google tag (gtag.js) -->
+    <script
+      async
+      src="https://www.googletagmanager.com/gtag/js?id=G-VNSBCHX519"
+    ></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag() {
+        dataLayer.push(arguments);
+      }
+      gtag("js", new Date());
+      gtag("config", "G-VNSBCHX519");
+    </script>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="Description"
+      content="HTTP API reference for Lowkey Media Server: authentication, jobs, workflows, media queries, taxonomy, embeddings, people and faces, storage, and real-time events."
+    />
+    <meta property="og:url" content="https://lowkeyviewer.com/server/api.html" />
+    <meta property="og:type" content="article" />
+    <meta property="og:title" content="HTTP API Reference - LowKey Media Server" />
+    <meta
+      property="og:description"
+      content="Complete endpoint reference for the Lowkey Media Server HTTP API."
+    />
+    <meta
+      property="og:image"
+      content="https://lowkeyviewer.com/screenshot.jpg"
+    />
+    <link rel="shortcut icon" href="../favicon.ico" type="image/x-icon" />
+    <link rel="icon" href="../favicon.ico" type="image/x-icon" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="../index.css" />
+    <title>HTTP API Reference - LowKey Media Server</title>
+  </head>
+  <body>
+    <header>
+      <nav class="tab-nav">
+        <a href="../" class="tab-link">
+          <img src="../logo.png" alt="Media Viewer" class="tab-icon" />
+          <span>Media Viewer</span>
+        </a>
+        <a href="./" class="tab-link active">
+          <img src="../server-icon.png" alt="Media Server" class="tab-icon" />
+          <span>Media Server</span>
+        </a>
+        <a href="../studio/" class="tab-link">
+          <img src="../studio-icon.png" alt="Studio" class="tab-icon" />
+          <span>Studio</span>
+        </a>
+      </nav>
+    </header>
+
+    <section class="subpage-hero">
+      <nav aria-label="Breadcrumb">
+        <ol class="breadcrumbs">
+          <li><a href="./"><img src="../server-icon.png" alt="" />Media Server</a></li>
+          <li><span aria-current="page">HTTP API Reference</span></li>
+        </ol>
+      </nav>
+      <h1>HTTP API Reference</h1>
+      <p class="subTitle">
+        Every endpoint served by Lowkey Media Server. All paths are relative
+        to your server's address.
+      </p>
+      <div class="subpage-meta">
+        <p class="version">Version 2.37.1</p>
+        <a href="./openapi.yaml">OpenAPI 3.1 spec</a>
+        <a href="./cli.html">lokictl reference &rarr;</a>
+      </div>
+    </section>
+

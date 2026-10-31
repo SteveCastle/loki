@@ -39,7 +39,8 @@
     "build:web": "npm run build:renderer && node -e \"const fs=require('fs');const path=require('path');function cpR(s,d){fs.mkdirSync(d,{recursive:true});for(const f of fs.readdirSync(s)){const sp=path.join(s,f),dp=path.join(d,f);fs.statSync(sp).isDirectory()?cpR(sp,dp):fs.copyFileSync(sp,dp)}}cpR('release/app/dist/renderer','media-server/loki-static')\"",
     "build:server": "node scripts/build-server.js",
     "build:cli": "node -e \"const{execSync}=require('child_process');const ext=process.platform==='win32'?'.exe':'';execSync('go build -o lokictl'+ext+' ./cmd/lokictl',{stdio:'inherit',cwd:'media-server'})\"",
-    "test:server": "cd media-server && go test ./..."
+    "test:server": "cd media-server && go test ./...",
+    "docs:api": "node scripts/build-api-docs.js"
   },
   "lint-staged": {
     "*.{js,jsx,ts,tsx}": [
@@ -204,6 +205,7 @@
     "identity-obj-proxy": "^3.0.0",
     "jest": "^29.5.0",
     "jest-environment-jsdom": "^29.5.0",
+    "js-yaml": "^4.1.1",
     "lint-staged": "^16.2.7",
     "mini-css-extract-plugin": "^2.9.4",
     "prettier": "2.8.7",

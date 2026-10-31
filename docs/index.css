@@ -167,6 +167,94 @@ header {
   padding: 4rem 1.5rem 3rem;
 }
 
+/* Subpage header: reference pages under a product (server/cli.html,
+   server/api.html). Left-aligned on the content column with a breadcrumb
+   back to the product page, instead of the product's centered hero. */
+.subpage-hero {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 2.5rem 1.5rem 2rem;
+  box-sizing: border-box;
+}
+
+.breadcrumbs {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0 0 1.25rem;
+  padding: 0;
+  list-style: none;
+  font-size: 0.85rem;
+}
+
+.breadcrumbs li {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  border-radius: 0;
+}
+
+.breadcrumbs li + li::before {
+  content: '\203A';
+  color: #475569;
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.breadcrumbs a {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  color: #94a3b8;
+  font-weight: 500;
+}
+
+.breadcrumbs a:hover {
+  color: #f472b6;
+}
+
+.breadcrumbs img {
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+}
+
+.breadcrumbs [aria-current='page'] {
+  color: #f1f5f9;
+  font-weight: 600;
+}
+
+.subpage-hero h1 {
+  font-size: 2.25rem;
+}
+
+.subpage-hero .subTitle {
+  margin: 0.6rem 0 1.25rem;
+  max-width: 640px;
+}
+
+.subpage-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.25rem;
+  font-size: 0.85rem;
+  color: #64748b;
+}
+
+.subpage-meta .version {
+  margin: 0;
+  padding: 0.15rem 0.6rem;
+  border: 1px solid rgba(148, 163, 184, 0.15);
+  border-radius: 999px;
+  color: #94a3b8;
+}
+
+.subpage-meta a {
+  font-weight: 500;
+}
+
 .logo {
   width: 88px;
   border-radius: 20px;
@@ -527,28 +615,6 @@ tr:hover td {
   color: #64748b;
 }
 
-.task-table td:first-child,
-.api-table td code {
-  white-space: nowrap;
-}
-
-.task-table td:first-child code,
-.api-table td code {
-  background-color: rgba(244, 114, 182, 0.1);
-  color: #f472b6;
-  padding: 0.25rem 0.5rem;
-  border-radius: 4px;
-  font-size: 0.8rem;
-}
-
-.api-table td:first-child {
-  width: 70px;
-  font-weight: 600;
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 0.8rem;
-  color: #4ade80;
-}
-
 /* Responsive tables.
    The server docs carry wide reference tables (env vars, API endpoints, the
    storage-root comparison) that overflowed a phone viewport and dragged the
@@ -580,15 +646,150 @@ tr:hover td {
 code {
   font-family: 'JetBrains Mono', Consolas, monospace;
   font-size: 0.85em;
-  background-color: rgba(244, 114, 182, 0.08);
-  color: #f472b6;
+  background-color: rgba(148, 163, 184, 0.1);
+  color: #e2e8f0;
   padding: 0.2rem 0.5rem;
   border-radius: 4px;
   /* Env vars and URLs quoted in running text have no break opportunities, so
      a long one (LOWKEY_OLLAMA_BASE_URL=http://host.docker.internal:11434)
-     pushed the page sideways on a phone. Only bites when a line would
-     otherwise overflow. Code blocks opt back out — they scroll instead. */
-  overflow-wrap: anywhere;
+     pushed the page sideways on a phone. break-word (not anywhere) only
+     splits a token that can't fit on a line of its own, and doesn't lower
+     the element's min-content width — with anywhere, table layout squeezed
+     code columns to a few characters and split every flag mid-word. Code
+     blocks opt back out — they scroll instead. */
+  overflow-wrap: break-word;
+}
+
+/* Space-separated tokens inside table code that contain a break character
+   ('-', '/', '|') are wrapped in .tok, so a line can break between
+   tokens but never inside --a-flag or /api/a-path. */
+code .tok {
+  /* An atomic inline box: the token moves to the next line whole and only
+     breaks inside if it alone is wider than the line, so nothing scrolls. */
+  display: inline-block;
+  max-width: 100%;
+  text-indent: 0;
+}
+
+/* Reference entries.
+   Tables keyed by code (commands, flags, endpoints, fields, env vars) are
+   marked .ref-table and rendered as a stacked list instead of a grid: the
+   signature gets the full width on its own line, the secondary columns
+   (Endpoint, Default, Access, ...) become a labelled line under it, and the
+   description sits below. Nothing competes for width, so a command never
+   breaks inside a token; a long signature wraps only at spaces, with a
+   hanging indent marking the continuation. Markup per row:
+     <td class="ref-key">  <td class="ref-meta" data-label="...">*  <td class="ref-desc">
+   The header row stays in the markup (column names) but is not shown. */
+table.ref-table {
+  display: block;
+  border: none;
+  border-radius: 0;
+  overflow: visible;
+  margin: 1.25rem 0 1.75rem;
+  font-size: 0.9rem;
+}
+
+.ref-table tbody {
+  display: block;
+}
+
+.ref-table tr:first-child {
+  display: none;
+}
+
+.ref-table tr {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.35rem 1.25rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid rgba(148, 163, 184, 0.08);
+  border-top-width: 0;
+  background-color: rgba(22, 26, 32, 0.5);
+}
+
+.ref-table tr:nth-child(2) {
+  border-top-width: 1px;
+  border-radius: 8px 8px 0 0;
+}
+
+.ref-table tr:last-child {
+  border-radius: 0 0 8px 8px;
+}
+
+.ref-table tr:nth-child(2):last-child {
+  border-radius: 8px;
+}
+
+/* table.ref-table td matches the global "tr:hover td" in specificity and
+   comes later, so it also cancels that rule: reference entries have no
+   hover effect, and the hanging-indent padding on .ref-key survives. */
+table.ref-table td {
+  display: block;
+  padding: 0;
+  border: none;
+  background: none;
+}
+
+.ref-table .ref-key {
+  flex: 1 0 100%;
+  min-width: 0;
+  padding-left: 2ch;
+  text-indent: -2ch;
+  font-family: 'JetBrains Mono', Consolas, monospace;
+  font-size: 0.85rem;
+  line-height: 1.6;
+  color: #e2e8f0;
+}
+
+/* The signature is one unit: no chip padding to break the hanging indent,
+   wraps between tokens only. */
+.ref-table .ref-key code {
+  padding: 0;
+  background: none;
+  font-size: inherit;
+  white-space: normal;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+.ref-table .ref-method {
+  display: inline-block;
+  min-width: 3.6em;
+  text-indent: 0;
+  font-weight: 600;
+}
+
+.ref-table .ref-meta {
+  flex: 0 1 auto;
+  font-size: 0.8rem;
+  color: #cbd5e1;
+}
+
+.ref-table .ref-meta::before {
+  content: attr(data-label);
+  margin-right: 0.45rem;
+  color: #64748b;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.ref-table .ref-meta code {
+  white-space: normal;
+  overflow-wrap: break-word;
+}
+
+.ref-table .ref-desc {
+  flex: 1 0 100%;
+  color: #94a3b8;
+  line-height: 1.65;
+}
+
+.ref-table .ref-desc code {
+  white-space: normal;
 }
 
 .code-block {
@@ -603,13 +804,44 @@ code {
 .code-block code {
   background: none;
   padding: 0;
-  color: #94a3b8;
+  color: #cbd5e1;
   font-size: 0.85rem;
   line-height: 1.7;
   /* Shell commands stay on one line and scroll with their block — wrapping
      them mid-flag would be worse than a swipe. */
   overflow-wrap: normal;
 }
+
+/* Syntax roles.
+   One colour per structural role, identical on every docs page; classes are
+   applied by static/code-colors.js (and by the API page generator). All
+   colours sit in one lightness band (Tailwind 300) so they read as a family;
+   pink is reserved for links and navigation.
+     c-cmd   literal words you type      white
+     c-flag  options                     violet
+     c-ph    things you substitute       amber
+     c-path  locations                   sky
+     c-env   environment variables       teal
+     c-val   values                      green
+     c-punct structure, c-cmt comments   slate */
+.c-cmd   { color: #f1f5f9; }
+.c-flag  { color: #c4b5fd; }
+.c-ph    { color: #fcd34d; }
+.c-path  { color: #7dd3fc; }
+.c-env   { color: #5eead4; }
+.c-val   { color: #86efac; }
+.c-punct { color: #64748b; }
+.c-cmt   { color: #64748b; font-style: italic; }
+
+/* HTTP methods reuse the palette: reads are green like values, creates
+   sky, replacements amber, deletes red. */
+.m-get    { color: #86efac; }
+.m-post   { color: #7dd3fc; }
+.m-put,
+.m-patch  { color: #fcd34d; }
+.m-delete { color: #fca5a5; }
+.m-head,
+.m-options { color: #94a3b8; }
 
 /* Status badges */
 .status {
@@ -780,6 +1012,14 @@ h3 .requires-server {
 
   .hero {
     padding: 2.5rem 1rem 2rem;
+  }
+
+  .subpage-hero {
+    padding: 1.75rem 1rem 1.5rem;
+  }
+
+  .subpage-hero h1 {
+    font-size: 1.75rem;
   }
 
   .subTitle {
@@ -1093,4 +1333,245 @@ img.hero-shot {
   font-weight: 400;
   font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.9rem;
+}
+
+.ref-key .c-cmd {
+  font-weight: 600;
+}
+
+/* Generated API reference (server/api.html, scripts/build-api-docs.js).
+   Each endpoint is an .op card in the same stacked pattern as .ref-table:
+   signature line (method, path, access), summary, then labelled blocks for
+   parameters, request body, responses and errors. Request/response shapes
+   are .field rows, indented by --depth with a guide line per level. */
+.op {
+  margin: 1rem 0 1.5rem;
+  padding: 1rem 1.15rem 1.1rem;
+  border: 1px solid rgba(148, 163, 184, 0.08);
+  border-radius: 10px;
+  background-color: rgba(22, 26, 32, 0.5);
+}
+
+.op-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.25rem 0.75rem;
+}
+
+.op-method {
+  min-width: 3.6em;
+  font-family: 'JetBrains Mono', Consolas, monospace;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.op-head .op-path {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0;
+  background: none;
+  font-size: 0.9rem;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.op-access {
+  color: #64748b;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.op-anchor {
+  color: #475569;
+  font-size: 0.85rem;
+  opacity: 0;
+}
+
+.op:hover .op-anchor,
+.op-anchor:focus {
+  opacity: 1;
+}
+
+.op-summary {
+  margin: 0.5rem 0 0;
+  color: #e2e8f0;
+}
+
+.op-desc,
+.tag-desc {
+  margin-top: 0.5rem;
+}
+
+.op-desc p,
+.op-block p {
+  margin-bottom: 0.6rem;
+  font-size: 0.92rem;
+}
+
+.op-desc ul,
+.tag-desc ul {
+  margin-bottom: 0.75rem;
+}
+
+.op-block {
+  margin-top: 0.9rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid rgba(148, 163, 184, 0.07);
+}
+
+.op-label {
+  margin: 0 0 0.5rem;
+  color: #94a3b8;
+}
+
+.ctype {
+  margin: 0.25rem 0 0.4rem;
+}
+
+.ctype code {
+  padding: 0.1rem 0.4rem;
+  color: #94a3b8;
+  font-size: 0.75rem;
+}
+
+.op-block .shape-type,
+.shape-type {
+  margin: 0 0 0.35rem;
+  font-family: 'JetBrains Mono', Consolas, monospace;
+  font-size: 0.8rem;
+  color: #94a3b8;
+}
+
+.fields {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.field {
+  margin-left: calc(var(--depth, 0) * 1.25rem);
+  padding: 0.35rem 0 0.35rem 0.75rem;
+  border-left: 1px solid rgba(148, 163, 184, 0.12);
+}
+
+.f-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.2rem 0.6rem;
+}
+
+.f-name {
+  padding: 0;
+  background: none;
+  color: #f1f5f9;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.f-type {
+  font-family: 'JetBrains Mono', Consolas, monospace;
+  font-size: 0.75rem;
+  color: #64748b;
+}
+
+.f-type a.t-ref {
+  color: #94a3b8;
+  text-decoration: underline;
+  text-decoration-color: rgba(148, 163, 184, 0.35);
+  text-underline-offset: 2px;
+}
+
+.f-type a.t-ref:hover {
+  color: #f472b6;
+}
+
+.f-req,
+.f-dep,
+.f-opt {
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.f-req { color: #e2e8f0; }
+.f-dep,
+.f-opt { color: #64748b; }
+
+.f-desc p {
+  margin: 0.15rem 0 0;
+  font-size: 0.85rem;
+  line-height: 1.6;
+}
+
+.f-meta {
+  color: #64748b;
+  font-size: 0.8rem;
+}
+
+.status {
+  display: inline-block;
+  min-width: 2.6em;
+  font-family: 'JetBrains Mono', Consolas, monospace;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+/* Status classes follow the same palette meaning as HTTP methods. */
+.status.s-ok       { color: #86efac; }
+.status.s-redirect { color: #fcd34d; }
+.status.s-err      { color: #fca5a5; }
+
+.op-errors {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.op-errors li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.1rem 0.6rem;
+  padding: 0.2rem 0;
+  font-size: 0.88rem;
+}
+
+.err-desc {
+  flex: 1 1 18rem;
+}
+
+.err-body {
+  font-family: 'JetBrains Mono', Consolas, monospace;
+  font-size: 0.75rem;
+  color: #64748b;
+}
+
+.op-example {
+  margin-top: 0.4rem;
+}
+
+.op-example summary {
+  cursor: pointer;
+  color: #64748b;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.op-example .code-block {
+  margin: 0.5rem 0 0;
+  padding: 0.9rem 1rem;
+}
+
+.op-example .code-block code {
+  white-space: pre;
+}
+
+.schema .op-head .op-path .c-cmd {
+  font-weight: 700;
 }
