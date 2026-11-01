@@ -422,7 +422,7 @@ pub fn attn_init(dev: &Device) -> Result<()> {
 }
 
 pub fn flash_attn(dev: &Device, a: &AttnArgs) -> Result<()> {
-    ensure!(a.d == 128 || a.d == 72, "flash_attn: head dim {} unsupported", a.d);
+    ensure!(a.d == 128 || (a.d <= 80 && a.d % 8 == 0), "flash_attn: head dim {} unsupported", a.d);
     ensure!(a.hq % a.hk == 0);
     let (kname, smem) = if a.d == 128 { ("k_flash_attn_d128", 128 * 256 + 4 * 64 * 256) } else { ("k_flash_attn_d80", 128 * 176 + 4 * 64 * 176) };
     let nq = a.q.len;
@@ -665,4 +665,118 @@ pub fn groupnorm(dev: &Device, x: &Tensor, npix: usize, c: usize, gamma: &Tensor
     dev.launch("k_groupnorm_stats", (blocks as u32, 1, 1), (256, 1, 1), 0, &[Arg::Ptr(x.ptr), Arg::I64(npix as i64), Arg::I32(c as i32), Arg::I32(G as i32), Arg::Ptr(partial.ptr)])?;
     dev.launch("k_groupnorm_reduce", (1, 1, 1), (64, 1, 1), 0, &[Arg::Ptr(partial.ptr), Arg::I32(blocks as i32), Arg::I32(G as i32), Arg::Ptr(sums.ptr)])?;
     dev.launch_n("k_groupnorm_apply", npix * c, &[Arg::Ptr(x.ptr), Arg::Ptr(out.ptr), Arg::I64(npix as i64), Arg::I32(c as i32), Arg::I32(G as i32), Arg::Ptr(sums.ptr), Arg::Ptr(gamma.ptr), Arg::Ptr(beta.ptr), Arg::F32(eps), Arg::I32(silu as i32)])
+}
+
+// ---- Krea 2 / FLUX.2 klein / Anima (kernels/arch.cu)
+
+/// RMSNorm variants: `RmsMode::Hf` bf16(bf16(x r) w), `OnePlus` bf16(x r (1 + w)), `Plain` bf16(x r).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RmsMode {
+    Hf = 0,
+    OnePlus = 1,
+    Plain = 2,
+}
+pub fn rmsnorm_x(dev: &Device, x: &Tensor, w: Option<&Tensor>, mode: RmsMode, eps: f32, out: &Tensor) -> Result<()> {
+    let (m, k) = n_last(x);
+    ensure!(x.dtype == DType::BF16 && out.dtype == DType::BF16 && out.numel() == x.numel());
+    ensure!(w.is_some() || mode == RmsMode::Plain, "rmsnorm_x: weight required");
+    dev.launch("k_rmsnorm_x_bf16", (m as u32, 1, 1), (256, 1, 1), 0, &[Arg::Ptr(x.ptr), Arg::Ptr(out.ptr), Arg::I32(m as i32), Arg::I32(k as i32), Arg::F32(eps), Arg::Ptr(w.map(|t| t.ptr).unwrap_or(0)), Arg::I32(mode as i32)])
+}
+
+/// Which norm a modulated norm uses.
+#[derive(Clone, Copy, Debug)]
+pub enum ModNorm<'a> {
+    /// LayerNorm without affine
+    Layer,
+    /// RMSNorm with (1 + w)
+    RmsOnePlus(&'a Tensor),
+}
+/// y = (1 + scale) * norm(x) + shift with bf16 rounding per op; rows < split take mods.0, the rest mods.1.
+#[allow(clippy::too_many_arguments)]
+pub fn norm_mod(dev: &Device, x: &Tensor, norm: ModNorm, eps: f32, split: usize, m0: (&Tensor, &Tensor), m1: (&Tensor, &Tensor), out: &Tensor) -> Result<()> {
+    let (m, k) = n_last(x);
+    ensure!(x.dtype == DType::BF16 && out.dtype == DType::BF16 && out.numel() == x.numel());
+    let (code, w) = match norm {
+        ModNorm::Layer => (0, 0u64),
+        ModNorm::RmsOnePlus(w) => (1, w.ptr),
+    };
+    dev.launch(
+        "k_norm_mod_bf16",
+        (m as u32, 1, 1),
+        (256, 1, 1),
+        0,
+        &[Arg::Ptr(x.ptr), Arg::Ptr(out.ptr), Arg::I32(m as i32), Arg::I32(k as i32), Arg::F32(eps), Arg::I32(code), Arg::Ptr(w), Arg::I32(split as i32), Arg::Ptr(m0.0.ptr), Arg::Ptr(m0.1.ptr), Arg::Ptr(m1.0.ptr), Arg::Ptr(m1.1.ptr)],
+    )
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum QkNorm {
+    Hf = 0,
+    OnePlus = 1,
+    None = 3,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Rope {
+    None = 0,
+    /// split halves, bf16 tensor-op rounding (HF Qwen3)
+    HalfBf16 = 1,
+    /// split halves in fp32 (Cosmos)
+    Half32 = 2,
+    /// interleaved pairs in fp32 (FLUX / Krea 2)
+    Pairs32 = 3,
+}
+/// q/k per-head (128) norm + rope in place on fused rows of stride `ts`; q heads at column `q_off`, k heads at `k_off`.
+#[allow(clippy::too_many_arguments)]
+pub fn qk_norm_rope(dev: &Device, x: u64, ts: usize, q_off: usize, k_off: usize, m: usize, hq: usize, hk: usize, wq: Option<&Tensor>, wk: Option<&Tensor>, eps: f32, norm: QkNorm, rope: Rope, tab: Option<&Tensor>) -> Result<()> {
+    qk_norm_rope_d(dev, x, ts, q_off, k_off, m, hq, hk, 128, wq, wk, eps, norm, rope, tab)
+}
+/// `qk_norm_rope` for head dim `d` (64 or 128); the rope table is [m, d/2, 2].
+#[allow(clippy::too_many_arguments)]
+pub fn qk_norm_rope_d(dev: &Device, x: u64, ts: usize, q_off: usize, k_off: usize, m: usize, hq: usize, hk: usize, d: usize, wq: Option<&Tensor>, wk: Option<&Tensor>, eps: f32, norm: QkNorm, rope: Rope, tab: Option<&Tensor>) -> Result<()> {
+    ensure!(d == 64 || d == 128, "qk_norm_rope: head dim {d}");
+    ensure!(norm == QkNorm::None || (wq.is_some() && wk.is_some()), "qk_norm_rope: norm weights required");
+    ensure!(rope == Rope::None || tab.is_some(), "qk_norm_rope: rope table required");
+    dev.launch_n(
+        "k_qk_norm_rope",
+        m * (hq + hk) * 32,
+        &[Arg::Ptr(x), Arg::I64(ts as i64), Arg::I32(q_off as i32), Arg::I32(k_off as i32), Arg::I32(m as i32), Arg::I32(hq as i32), Arg::I32(hk as i32), Arg::I32(d as i32), Arg::Ptr(wq.map(|t| t.ptr).unwrap_or(0)), Arg::Ptr(wk.map(|t| t.ptr).unwrap_or(0)), Arg::F32(eps), Arg::I32(norm as i32), Arg::I32(rope as i32), Arg::Ptr(tab.map(|t| t.ptr).unwrap_or(0))],
+    )
+}
+/// a[M, C] *= sigmoid(g) (g rows of stride gts)
+pub fn sigmoid_gate(dev: &Device, a: &Tensor, g: u64, gts: usize) -> Result<()> {
+    let (m, c) = n_last(a);
+    dev.launch_n("k_sigmoid_gate", m * c, &[Arg::Ptr(a.ptr), Arg::Ptr(g), Arg::I64(gts as i64), Arg::I64(m as i64), Arg::I32(c as i32)])
+}
+/// out[m, f] (row stride ots) = silu(x[m, off + f]) * x[m, off + F + f] (x row stride xts)
+#[allow(clippy::too_many_arguments)]
+pub fn swiglu_strided(dev: &Device, x: u64, xts: usize, off: usize, out: u64, ots: usize, m: usize, f: usize) -> Result<()> {
+    dev.launch_n("k_swiglu_strided", m * f, &[Arg::Ptr(x), Arg::I64(xts as i64), Arg::I32(off as i32), Arg::Ptr(out), Arg::I64(ots as i64), Arg::I64(m as i64), Arg::I32(f as i32)])
+}
+/// x[M, N] += bf16(y * gate) with y rows of stride yts
+pub fn gated_add_strided(dev: &Device, x: &Tensor, y: u64, yts: usize, g: &Tensor) -> Result<()> {
+    let (m, n) = n_last(x);
+    dev.launch_n("k_gated_add_strided", m * n, &[Arg::Ptr(x.ptr), Arg::Ptr(y), Arg::I64(yts as i64), Arg::Ptr(g.ptr), Arg::I64(m as i64), Arg::I32(n as i32)])
+}
+pub fn row_scale(dev: &Device, x: &Tensor, s: &Tensor) -> Result<()> {
+    let (m, c) = n_last(x);
+    dev.launch_n("k_row_scale", m * c, &[Arg::Ptr(x.ptr), Arg::Ptr(s.ptr), Arg::I64(m as i64), Arg::I32(c as i32)])
+}
+/// out[t, d] = sum_l w[l] x[t, l, d]
+pub fn layer_mix(dev: &Device, x: &Tensor, w: &Tensor, l: usize, out: &Tensor) -> Result<()> {
+    let (t, d) = n_last(out);
+    ensure!(x.numel() == t * l * d);
+    dev.launch_n("k_layer_mix", t * d, &[Arg::Ptr(x.ptr), Arg::Ptr(w.ptr), Arg::I32(l as i32), Arg::Ptr(out.ptr), Arg::I64(t as i64), Arg::I32(d as i32)])
+}
+/// Attention within consecutive groups of `g` tokens (head dim 128) over fused rows.
+#[allow(clippy::too_many_arguments)]
+pub fn attn_groups(dev: &Device, x: &Tensor, q_off: usize, k_off: usize, v_off: usize, h: usize, g: usize, out: &Tensor) -> Result<()> {
+    let (n, ts) = n_last(x);
+    ensure!(g <= 32 && n % g == 0);
+    dev.launch("k_attn_groups", (n as u32, h as u32, 1), (128, 1, 1), 0, &[Arg::Ptr(x.ptr), Arg::I64(ts as i64), Arg::I32(q_off as i32), Arg::I32(k_off as i32), Arg::I32(v_off as i32), Arg::Ptr(out.ptr), Arg::I32(n as i32), Arg::I32(h as i32), Arg::I32(g as i32), Arg::F32(1.0 / (128f32).sqrt())])
+}
+
+/// Plain attention over views (bf16 flash attention; non-causal unless `causal`; `kv_limit` per query optional).
+#[allow(clippy::too_many_arguments)]
+pub fn attention(dev: &Device, q: AttnView, k: AttnView, v: AttnView, out: AttnView, hq: usize, hk: usize, d: usize, causal: bool, kv_limit: Option<&Tensor>) -> Result<()> {
+    flash_attn(dev, &AttnArgs { q, k1: k, v1: v, k2: AttnView::empty(), v2: AttnView::empty(), out, hq, hk, d, kv_limit, causal, causal_off: 0 })
 }

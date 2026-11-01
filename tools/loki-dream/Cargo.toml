@@ -23,6 +23,7 @@ rand_distr = "0.4"
 indicatif = "0.17"
 ureq = "2"
 unicode-normalization = "0.1"
+spm_precompiled = "0.1.4"
 
 [build-dependencies]
 anyhow = "1"

@@ -1,10 +1,12 @@
-//! Qwen3.5 byte-level BPE tokenizer (248k vocabulary), the text side of MOSS-Image / Kromoss.
+//! Qwen byte-level BPE tokenizers: Qwen3.5 (248k vocabulary, the text side of MOSS-Image / Kromoss) and Qwen3 (151k,
+//! the text side of Krea 2, FLUX.2 klein and Anima). Both use the same normalizer, split pattern and byte-level BPE.
 //!
 //! HF `tokenizer.json`: NFC normalizer, then the Qwen2 split pattern
 //!   (?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+
 //! (implemented by hand in `pretokenize`), byte-level mapping and BPE merges. Every added token (`<|im_start|>`, `<think>`,
 //! ...) is matched literally before the split, as the HF tokenizer does. Vocabulary, merges and added tokens are embedded
-//! (assets/, extracted from lodestones/Kromoss `tokenizer/tokenizer.json`).
+//! (assets/, extracted from lodestones/Kromoss `tokenizer/tokenizer.json`; assets/qwen3/ from the Qwen3 `tokenizer.json`
+//! that Anima, FLUX.2 klein and Krea 2 ship, identical in all three).
 use anyhow::{anyhow, Result};
 use std::collections::HashMap;
 use unicode_normalization::UnicodeNormalization;
@@ -12,6 +14,16 @@ use unicode_normalization::UnicodeNormalization;
 const VOCAB_JSON: &str = include_str!("../assets/vocab.json");
 const MERGES_TXT: &str = include_str!("../assets/merges.txt");
 const ADDED_JSON: &str = include_str!("../assets/added_tokens.json");
+const Q3_VOCAB_JSON: &str = include_str!("../assets/qwen3/vocab.json");
+const Q3_MERGES_TXT: &str = include_str!("../assets/qwen3/merges.txt");
+const Q3_ADDED_JSON: &str = include_str!("../assets/qwen3/added_tokens.json");
+
+/// Qwen3 special tokens.
+pub mod qwen3 {
+    pub const ENDOFTEXT: u32 = 151643;
+    pub const IM_START: u32 = 151644;
+    pub const IM_END: u32 = 151645;
+}
 
 pub const ENDOFTEXT: u32 = 248044;
 pub const IM_START: u32 = 248045;
@@ -51,15 +63,25 @@ struct Added {
 }
 
 impl Tokenizer {
+    /// The Qwen3.5 tokenizer (MOSS-Image).
     pub fn new() -> Result<Tokenizer> {
-        let encoder: HashMap<String, u32> = serde_json::from_str(VOCAB_JSON)?;
-        let mut decoder = vec![String::new(); encoder.values().copied().max().unwrap_or(0) as usize + 1];
+        Self::from_parts(VOCAB_JSON, MERGES_TXT, ADDED_JSON)
+    }
+    /// The Qwen3 tokenizer (Krea 2, FLUX.2 klein, Anima).
+    pub fn qwen3() -> Result<Tokenizer> {
+        Self::from_parts(Q3_VOCAB_JSON, Q3_MERGES_TXT, Q3_ADDED_JSON)
+    }
+
+    fn from_parts(vocab_json: &str, merges_txt: &str, added_json: &str) -> Result<Tokenizer> {
+        let encoder: HashMap<String, u32> = serde_json::from_str(vocab_json)?;
+        let added_max = serde_json::from_str::<Vec<Added>>(added_json)?.iter().map(|a| a.id).max().unwrap_or(0);
+        let mut decoder = vec![String::new(); encoder.values().copied().max().unwrap_or(0).max(added_max) as usize + 1];
         for (k, v) in &encoder {
             decoder[*v as usize] = k.clone();
         }
         let mut ranks = HashMap::new();
         let mut rank = 0u32;
-        for (i, line) in MERGES_TXT.lines().enumerate() {
+        for (i, line) in merges_txt.lines().enumerate() {
             if line.starts_with("#version") || line.is_empty() {
                 continue;
             }
@@ -70,7 +92,7 @@ impl Tokenizer {
             ranks.insert((ia, ib), (rank, m));
             rank += 1;
         }
-        let added: Vec<Added> = serde_json::from_str(ADDED_JSON)?;
+        let added: Vec<Added> = serde_json::from_str(added_json)?;
         let mut special: Vec<(String, u32)> = added.into_iter().map(|a| (a.content, a.id)).collect();
         // longest first so that a token that is a prefix of another never wins
         special.sort_by(|a, b| b.0.len().cmp(&a.0.len()));

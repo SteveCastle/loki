@@ -19,3 +19,13 @@ fn template_matches_the_official_chat_template() {
         "<|im_start|>user\na cat<|im_end|>\n<|im_start|>assistant\n<think>\n"
     );
 }
+
+/// Fixtures from the Hugging Face Qwen3 tokenizer (Anima / FLUX.2 klein / Krea 2 ship the same vocabulary), raw text.
+#[test]
+fn qwen3_tokenizer_matches_huggingface() {
+    let cases: Vec<(String, Vec<u32>)> = serde_json::from_str(include_str!("qwen3_cases.json")).unwrap();
+    let tok = Tokenizer::qwen3().unwrap();
+    for (text, want) in cases {
+        assert_eq!(tok.encode(&text), want, "tokenization mismatch for {text:?}");
+    }
+}

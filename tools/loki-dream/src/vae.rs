@@ -38,8 +38,8 @@ impl Plane {
 pub struct Conv {
     w: Tensor,
     b: Tensor,
-    co: usize,
-    ci: usize,
+    pub co: usize,
+    pub ci: usize,
     kh: usize,
     kw: usize,
     kpad: usize,
@@ -47,18 +47,30 @@ pub struct Conv {
 
 impl Conv {
     /// `prefix.weight` [Co, Ci, kh, kw] (or a Linear [Co, Ci] as a 1x1 conv); `ci_pad` / `co_pad` zero-pad channels.
-    fn load(l: &mut Loader, prefix: &str, ci_pad: Option<usize>, co_pad: Option<usize>) -> Result<Conv> {
+    /// A causal 3D conv [Co, Ci, kt, kh, kw] applied to a single frame keeps its last temporal slice (the earlier taps
+    /// only ever see the zero padding in front of the first frame).
+    pub(crate) fn load(l: &mut Loader, prefix: &str, ci_pad: Option<usize>, co_pad: Option<usize>) -> Result<Conv> {
         let wname = format!("{prefix}.weight");
         let info = l.st.info(&wname)?.clone();
-        let w = l.st.f32s(&wname)?;
+        let mut w = l.st.f32s(&wname)?;
         let (co, ci, kh, kw) = match info.shape.len() {
+            5 => {
+                let (co, ci, kt, kh, kw) = (info.shape[0], info.shape[1], info.shape[2], info.shape[3], info.shape[4]);
+                let mut last = Vec::with_capacity(co * ci * kh * kw);
+                for oc in 0..co * ci {
+                    let base = (oc * kt + kt - 1) * kh * kw;
+                    last.extend_from_slice(&w[base..base + kh * kw]);
+                }
+                w = last;
+                (co, ci, kh, kw)
+            }
             4 => (info.shape[0], info.shape[1], info.shape[2], info.shape[3]),
             2 => (info.shape[0], info.shape[1], 1, 1),
             _ => anyhow::bail!("{prefix}: unexpected conv weight rank"),
         };
         Self::from_parts(l, prefix, &w, (co, ci, kh, kw), ci_pad, co_pad)
     }
-    fn from_parts(l: &mut Loader, prefix: &str, w: &[f32], (co, ci, kh, kw): (usize, usize, usize, usize), ci_pad: Option<usize>, co_pad: Option<usize>) -> Result<Conv> {
+    pub(crate) fn from_parts(l: &mut Loader, prefix: &str, w: &[f32], (co, ci, kh, kw): (usize, usize, usize, usize), ci_pad: Option<usize>, co_pad: Option<usize>) -> Result<Conv> {
         let ci_p = ci_pad.unwrap_or(ci).max(ci);
         let co_p = co_pad.unwrap_or(co).max(co);
         ensure!(ci_p % 8 == 0 && co_p % 8 == 0, "{prefix}: padded channels must be multiples of 8");
@@ -81,6 +93,69 @@ impl Conv {
         l.uploaded += packed.len() * 2;
         Ok(Conv { w: Tensor::from_bf16(&l.dev, &packed, &[co_p, kpad])?, b: Tensor::from_f32(&l.dev, &bias, &[co_p])?, co: co_p, ci: ci_p, kh, kw, kpad })
     }
+}
+
+/// Implicit-GEMM 2D convolution on channels-last planes (`up2`: read the input as its 2x nearest upsample; `res`: add a
+/// residual of the output's shape).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn conv(dev: &Device, inp: &Plane, c: &Conv, stride: usize, pad: usize, up2: bool, res: Option<&Plane>, out: &Plane) -> Result<()> {
+    ensure!(inp.c == c.ci, "conv: input channels {} != {}", inp.c, c.ci);
+    ensure!(out.c == c.co, "conv: output channels {} != {}", out.c, c.co);
+    let p = ConvParamsRaw {
+        inp: inp.t.ptr, ih: inp.h as i32, iw: inp.w as i32, ci: inp.c as i32, _p0: 0,
+        w: c.w.ptr, bias: c.b.ptr, co: c.co as i32, kpad: c.kpad as i32,
+        out: out.t.ptr, oh: out.h as i32, ow: out.w as i32,
+        kh: c.kh as i32, kw: c.kw as i32, stride: stride as i32, pad_t: pad as i32, pad_l: pad as i32, up2: up2 as i32,
+        mode: res.is_some() as i32, _p1: 0, res: res.map(|r| r.t.ptr).unwrap_or(0),
+    };
+    let m = out.npix();
+    let grid = (((c.co + 127) / 128) * ((m + 127) / 128)) as u32;
+    let f = dev.func("k_conv2d_nhwc")?;
+    let cfg = cudarc::driver::LaunchConfig { grid_dim: (grid, 1, 1), block_dim: (256, 1, 1), shared_mem_bytes: CONV_SMEM };
+    let mut b = dev.stream.launch_builder(&f);
+    b.arg(&p);
+    unsafe { b.launch(cfg) }?;
+    Ok(())
+}
+
+/// Single-head softmax(q k^T / sqrt(C)) v over all pixels of a fused [q | k | v] plane (3C channels) -> [h, w, C].
+pub(crate) fn pixel_attention(dev: &Device, qkv: &Plane, c: usize) -> Result<Plane> {
+    let n = qkv.npix();
+    let n_pad = (n + 7) / 8 * 8;
+    let q = Tensor::new(dev, DType::BF16, &[n, c])?;
+    let k = Tensor::zeros(dev, DType::BF16, &[n_pad, c])?;
+    let v = Tensor::zeros(dev, DType::BF16, &[n_pad, c])?;
+    for (i, t) in [&q, &k, &v].iter().enumerate() {
+        dev.launch_n("k_slice_channels", n * c, &[Arg::Ptr(qkv.t.ptr), Arg::Ptr(t.ptr), Arg::I64(n as i64), Arg::I32((3 * c) as i32), Arg::I32((i * c) as i32), Arg::I32(c as i32)])?;
+    }
+    let vt = Tensor::new(dev, DType::BF16, &[c, n_pad])?;
+    {
+        let f = dev.func("k_transpose_bf16")?;
+        let cfg = cudarc::driver::LaunchConfig { grid_dim: (((c + 31) / 32) as u32, ((n_pad + 31) / 32) as u32, 1), block_dim: (32, 8, 1), shared_mem_bytes: 0 };
+        let (r, cc) = (n_pad as i32, c as i32);
+        let mut b = dev.stream.launch_builder(&f);
+        b.arg(&v.ptr).arg(&vt.ptr).arg(&r).arg(&cc);
+        unsafe { b.launch(cfg) }?;
+    }
+    drop(v);
+    let o = Plane::new(dev, qkv.h, qkv.w, c)?;
+    let qb = 2048usize.min(n);
+    let s = Tensor::new(dev, DType::F32, &[qb, n_pad])?;
+    let p = Tensor::new(dev, DType::BF16, &[qb, n_pad])?;
+    let scale = 1.0 / (c as f32).sqrt();
+    let mut q0 = 0;
+    while q0 < n {
+        let rows = qb.min(n - q0);
+        let sv = s.rows(0, rows);
+        let pv = p.rows(0, rows);
+        ops::gemm_bf16(dev, &q.rows(q0, rows), &k, None, Act::None, Epi::Store, &sv)?;
+        dev.launch("k_softmax_rows", (rows as u32, 1, 1), (256, 1, 1), 0, &[Arg::Ptr(sv.ptr), Arg::Ptr(pv.ptr), Arg::I32(n as i32), Arg::I32(n_pad as i32), Arg::F32(scale)])?;
+        ops::gemm_bf16(dev, &pv, &vt, None, Act::None, Epi::Store, &o.t.rows(q0, rows))?;
+        q0 += rows;
+    }
+    drop(s);
+    drop(p);
+    Ok(o)
 }
 
 #[repr(C)]
@@ -200,23 +275,7 @@ impl Vae {
     // ------------------------------------------------------------------ primitives
     #[allow(clippy::too_many_arguments)]
     fn conv(&self, inp: &Plane, c: &Conv, stride: usize, pad: usize, up2: bool, res: Option<&Plane>, out: &Plane) -> Result<()> {
-        ensure!(inp.c == c.ci, "conv: input channels {} != {}", inp.c, c.ci);
-        ensure!(out.c == c.co, "conv: output channels {} != {}", out.c, c.co);
-        let p = ConvParamsRaw {
-            inp: inp.t.ptr, ih: inp.h as i32, iw: inp.w as i32, ci: inp.c as i32, _p0: 0,
-            w: c.w.ptr, bias: c.b.ptr, co: c.co as i32, kpad: c.kpad as i32,
-            out: out.t.ptr, oh: out.h as i32, ow: out.w as i32,
-            kh: c.kh as i32, kw: c.kw as i32, stride: stride as i32, pad_t: pad as i32, pad_l: pad as i32, up2: up2 as i32,
-            mode: res.is_some() as i32, _p1: 0, res: res.map(|r| r.t.ptr).unwrap_or(0),
-        };
-        let m = out.npix();
-        let grid = (((c.co + 127) / 128) * ((m + 127) / 128)) as u32;
-        let f = self.dev.func("k_conv2d_nhwc")?;
-        let cfg = cudarc::driver::LaunchConfig { grid_dim: (grid, 1, 1), block_dim: (256, 1, 1), shared_mem_bytes: CONV_SMEM };
-        let mut b = self.dev.stream.launch_builder(&f);
-        b.arg(&p);
-        unsafe { b.launch(cfg) }?;
-        Ok(())
+        conv(&self.dev, inp, c, stride, pad, up2, res, out)
     }
     fn gn(&self, x: &Plane, n: &Norm, silu: bool) -> Result<Plane> {
         let out = Plane::new(&self.dev, x.h, x.w, x.c)?;
@@ -249,46 +308,13 @@ impl Vae {
     /// Single-head attention over all pixels (scale 1/sqrt(C)), residual added by the output projection.
     fn attnblock(&self, x: &Plane, ab: &AttnBlock) -> Result<Plane> {
         let dev = &self.dev;
-        let (n, c) = (x.npix(), x.c);
+        let c = x.c;
         let normed = self.gn(x, &ab.norm, false)?;
         let qkv = Plane::new(dev, x.h, x.w, 3 * c)?;
         self.conv(&normed, &ab.qkv, 1, 0, false, None, &qkv)?;
         drop(normed);
-        let n_pad = (n + 7) / 8 * 8;
-        let q = Tensor::new(dev, DType::BF16, &[n, c])?;
-        let k = Tensor::zeros(dev, DType::BF16, &[n_pad, c])?;
-        let v = Tensor::zeros(dev, DType::BF16, &[n_pad, c])?;
-        for (i, t) in [&q, &k, &v].iter().enumerate() {
-            dev.launch_n("k_slice_channels", n * c, &[Arg::Ptr(qkv.t.ptr), Arg::Ptr(t.ptr), Arg::I64(n as i64), Arg::I32((3 * c) as i32), Arg::I32((i * c) as i32), Arg::I32(c as i32)])?;
-        }
+        let o = pixel_attention(dev, &qkv, c)?;
         drop(qkv);
-        let vt = Tensor::new(dev, DType::BF16, &[c, n_pad])?;
-        {
-            let f = dev.func("k_transpose_bf16")?;
-            let cfg = cudarc::driver::LaunchConfig { grid_dim: (((c + 31) / 32) as u32, ((n_pad + 31) / 32) as u32, 1), block_dim: (32, 8, 1), shared_mem_bytes: 0 };
-            let (r, cc) = (n_pad as i32, c as i32);
-            let mut b = dev.stream.launch_builder(&f);
-            b.arg(&v.ptr).arg(&vt.ptr).arg(&r).arg(&cc);
-            unsafe { b.launch(cfg) }?;
-        }
-        drop(v);
-        let o = Plane::new(dev, x.h, x.w, c)?;
-        let qb = 2048usize.min(n);
-        let s = Tensor::new(dev, DType::F32, &[qb, n_pad])?;
-        let p = Tensor::new(dev, DType::BF16, &[qb, n_pad])?;
-        let scale = 1.0 / (c as f32).sqrt();
-        let mut q0 = 0;
-        while q0 < n {
-            let rows = qb.min(n - q0);
-            let sv = s.rows(0, rows);
-            let pv = p.rows(0, rows);
-            ops::gemm_bf16(dev, &q.rows(q0, rows), &k, None, Act::None, Epi::Store, &sv)?;
-            dev.launch("k_softmax_rows", (rows as u32, 1, 1), (256, 1, 1), 0, &[Arg::Ptr(sv.ptr), Arg::Ptr(pv.ptr), Arg::I32(n as i32), Arg::I32(n_pad as i32), Arg::F32(scale)])?;
-            ops::gemm_bf16(dev, &pv, &vt, None, Act::None, Epi::Store, &o.t.rows(q0, rows))?;
-            q0 += rows;
-        }
-        drop(s);
-        drop(p);
         let out = Plane::new(dev, x.h, x.w, c)?;
         self.conv(&o, &ab.out, 1, 0, false, Some(x), &out)?;
         Ok(out)

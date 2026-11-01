@@ -1,0 +1,106 @@
+[
+{
+"id": 151643,
+"content": "<|endoftext|>"
+},
+{
+"id": 151644,
+"content": "<|im_start|>"
+},
+{
+"id": 151645,
+"content": "<|im_end|>"
+},
+{
+"id": 151646,
+"content": "<|object_ref_start|>"
+},
+{
+"id": 151647,
+"content": "<|object_ref_end|>"
+},
+{
+"id": 151648,
+"content": "<|box_start|>"
+},
+{
+"id": 151649,
+"content": "<|box_end|>"
+},
+{
+"id": 151650,
+"content": "<|quad_start|>"
+},
+{
+"id": 151651,
+"content": "<|quad_end|>"
+},
+{
+"id": 151652,
+"content": "<|vision_start|>"
+},
+{
+"id": 151653,
+"content": "<|vision_end|>"
+},
+{
+"id": 151654,
+"content": "<|vision_pad|>"
+},
+{
+"id": 151655,
+"content": "<|image_pad|>"
+},
+{
+"id": 151656,
+"content": "<|video_pad|>"
+},
+{
+"id": 151657,
+"content": "<tool_call>"
+},
+{
+"id": 151658,
+"content": "</tool_call>"
+},
+{
+"id": 151659,
+"content": "<|fim_prefix|>"
+},
+{
+"id": 151660,
+"content": "<|fim_middle|>"
+},
+{
+"id": 151661,
+"content": "<|fim_suffix|>"
+},
+{
+"id": 151662,
+"content": "<|fim_pad|>"
+},
+{
+"id": 151663,
+"content": "<|repo_name|>"
+},
+{
+"id": 151664,
+"content": "<|file_sep|>"
+},
+{
+"id": 151665,
+"content": "<tool_response>"
+},
+{
+"id": 151666,
+"content": "</tool_response>"
+},
+{
+"id": 151667,
+"content": "<think>"
+},
+{
+"id": 151668,
+"content": "</think>"
+}
+]

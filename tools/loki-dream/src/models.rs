@@ -1,29 +1,50 @@
 //! Model file discovery (next to the binary / its models/ folder / $LOKI_MODELS / ./ / ./models) and resumable download
-//! from Hugging Face (lodestones/Kromoss, Apache-2.0, ungated). File names are kept as published, so one shared
-//! `models/` folder serves every loki- tool and the media server.
+//! from Hugging Face (ungated repos: lodestones/Kromoss for MOSS-Image, Comfy-Org's Krea 2 and FLUX.2 klein repos,
+//! circlestone-labs/Anima). File names are kept as published, so one shared `models/` folder serves every loki- tool and
+//! the media server (and a ComfyUI models tree can be listed in $LOKI_MODELS).
 use anyhow::{bail, Context, Result};
 use std::path::{Path, PathBuf};
 
-const HF_BASE: &str = "https://huggingface.co/lodestones/Kromoss/resolve/main/";
 
 pub struct Spec {
     pub what: &'static str,
+    /// Hugging Face repo the file is downloaded from
+    pub repo: &'static str,
     pub patterns: &'static [&'static str],
     pub hf_path: &'static str,
     pub size_gb: f32,
 }
 
-pub const DIT_INT8: Spec = Spec { what: "Kromoss diffusion model (int8)", patterns: &["kromoss*int8", "kromoss*convrot"], hf_path: "diffusion_models/kromoss_int8_convrot.safetensors", size_gb: 5.4 };
-pub const DIT_BF16: Spec = Spec { what: "Kromoss diffusion model (bf16)", patterns: &["kromoss_bf16", "kromoss*bf16"], hf_path: "diffusion_models/kromoss_bf16.safetensors", size_gb: 10.2 };
-pub const TEXT_ENCODER: Spec = Spec { what: "Qwen3.5-9B text encoder", patterns: &["qwen3.5_9b", "qwen3.5*9b", "qwen3_5*9b"], hf_path: "text_encoders/qwen3.5_9b_bf16.safetensors", size_gb: 19.3 };
-pub const VAE: Spec = Spec { what: "FLUX.2 small VAE", patterns: &["flux2-vae_small", "flux2*vae*small"], hf_path: "vae/flux2-vae_small.safetensors", size_gb: 0.25 };
-pub const TURBO_LORA: Spec = Spec { what: "8-step DMD2 turbo LoRA", patterns: &["8-steps-dmd2-lora"], hf_path: "8-steps-dmd2-lora.safetensors", size_gb: 1.2 };
-pub const TURBO_LORA_DMD: Spec = Spec { what: "8-step DMD turbo LoRA", patterns: &["8-steps-dmd-lora"], hf_path: "8-steps-dmd-lora.safetensors", size_gb: 1.2 };
+const KROMOSS: &str = "lodestones/Kromoss";
 
-/// Download `HF_BASE + hf_path` to `dest`, resuming a partial `.part` file if one exists.
-fn download(hf_path: &str, dest: &Path) -> Result<()> {
+pub const DIT_INT8: Spec = Spec { repo: KROMOSS, what: "Kromoss diffusion model (int8)", patterns: &["kromoss*int8", "kromoss*convrot"], hf_path: "diffusion_models/kromoss_int8_convrot.safetensors", size_gb: 5.4 };
+pub const DIT_BF16: Spec = Spec { repo: KROMOSS, what: "Kromoss diffusion model (bf16)", patterns: &["kromoss_bf16", "kromoss*bf16"], hf_path: "diffusion_models/kromoss_bf16.safetensors", size_gb: 10.2 };
+pub const TEXT_ENCODER: Spec = Spec { repo: KROMOSS, what: "Qwen3.5-9B text encoder", patterns: &["qwen3.5_9b", "qwen3.5*9b", "qwen3_5*9b"], hf_path: "text_encoders/qwen3.5_9b_bf16.safetensors", size_gb: 19.3 };
+pub const VAE: Spec = Spec { repo: KROMOSS, what: "FLUX.2 small VAE", patterns: &["flux2-vae_small", "flux2*vae*small"], hf_path: "vae/flux2-vae_small.safetensors", size_gb: 0.25 };
+pub const TURBO_LORA: Spec = Spec { repo: KROMOSS, what: "8-step DMD2 turbo LoRA", patterns: &["8-steps-dmd2-lora"], hf_path: "8-steps-dmd2-lora.safetensors", size_gb: 1.2 };
+pub const TURBO_LORA_DMD: Spec = Spec { repo: KROMOSS, what: "8-step DMD turbo LoRA", patterns: &["8-steps-dmd-lora"], hf_path: "8-steps-dmd-lora.safetensors", size_gb: 1.2 };
+
+// ---- Krea 2 (Comfy-Org/Krea-2: the official ComfyUI files; the krea/ repos are gated)
+pub const KREA2_DIT: Spec = Spec { repo: "Comfy-Org/Krea-2", what: "Krea 2 Turbo diffusion model (int8)", patterns: &["krea2_turbo_int8", "krea2*turbo*int8", "krea2_turbo"], hf_path: "diffusion_models/krea2_turbo_int8_convrot.safetensors", size_gb: 13.5 };
+pub const KREA2_TE: Spec = Spec { repo: "Comfy-Org/Krea-2", what: "Qwen3-VL-4B text encoder", patterns: &["qwen3vl_4b_bf16", "qwen3vl_4b", "qwen3-vl-4b", "qwen3_vl_4b", "qwen3vl4b"], hf_path: "text_encoders/qwen3vl_4b_bf16.safetensors", size_gb: 8.9 };
+pub const QWEN_IMAGE_VAE: Spec = Spec { repo: "Comfy-Org/Krea-2", what: "Qwen-Image VAE", patterns: &["qwen_image_vae"], hf_path: "vae/qwen_image_vae.safetensors", size_gb: 0.25 };
+
+// ---- FLUX.2 klein (Comfy-Org/Flux-2-Klein-4B / -9B)
+pub const KLEIN_DIT: Spec = Spec { repo: "Comfy-Org/Flux-2-Klein-4B", what: "FLUX.2 klein 4B diffusion model", patterns: &["flux-2-klein-4b.", "flux-2-klein-4b"], hf_path: "split_files/diffusion_models/flux-2-klein-4b.safetensors", size_gb: 7.8 };
+pub const KLEIN4B_TE: Spec = Spec { repo: "Comfy-Org/Flux-2-Klein-4B", what: "Qwen3-4B text encoder", patterns: &["qwen_3_4b.", "qwen_3_4b", "qwen3-4b", "qwen3_4b"], hf_path: "split_files/text_encoders/qwen_3_4b.safetensors", size_gb: 8.0 };
+pub const KLEIN9B_TE: Spec = Spec { repo: "Comfy-Org/Flux-2-Klein-9B", what: "Qwen3-8B text encoder", patterns: &["qwen_3_8b.", "qwen_3_8b", "qwen3-8b", "qwen3_8b"], hf_path: "split_files/text_encoders/qwen_3_8b.safetensors", size_gb: 16.4 };
+pub const FLUX2_VAE: Spec = Spec { repo: "Comfy-Org/Flux-2-Klein-4B", what: "FLUX.2 VAE", patterns: &["flux2-vae.safetensors", "flux2_vae.safetensors"], hf_path: "split_files/vae/flux2-vae.safetensors", size_gb: 0.34 };
+
+// ---- Anima (circlestone-labs/Anima)
+pub const ANIMA_DIT: Spec = Spec { repo: "circlestone-labs/Anima", what: "Anima diffusion model", patterns: &["anima-base", "anima_base"], hf_path: "split_files/diffusion_models/anima-base-v1.0.safetensors", size_gb: 4.2 };
+/// the distilled 10-step Anima, downloaded only when named (`--model anima-turbo-v1.1`)
+pub const ANIMA_TURBO_DIT: Spec = Spec { repo: "circlestone-labs/Anima", what: "Anima Turbo diffusion model", patterns: &["anima-turbo", "anima_turbo"], hf_path: "split_files/diffusion_models/anima-turbo-v1.1.safetensors", size_gb: 4.2 };
+pub const ANIMA_TE: Spec = Spec { repo: "circlestone-labs/Anima", what: "Qwen3-0.6B text encoder", patterns: &["qwen_3_06b", "qwen3-0.6b", "qwen3_0.6b", "qwen3_06b"], hf_path: "split_files/text_encoders/qwen_3_06b_base.safetensors", size_gb: 1.2 };
+
+/// Download `https://huggingface.co/<repo>/resolve/main/<hf_path>` to `dest`, resuming a partial `.part` file if one exists.
+fn download(repo: &str, hf_path: &str, dest: &Path) -> Result<()> {
     use std::io::{Read, Write};
-    let url = format!("{HF_BASE}{hf_path}");
+    let url = format!("https://huggingface.co/{repo}/resolve/main/{hf_path}");
     if let Some(dir) = dest.parent() {
         std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
     }
@@ -174,6 +195,17 @@ fn find_named(p: &Path) -> Option<PathBuf> {
     search_dirs().into_iter().flat_map(|d| names.iter().map(move |n| d.join(n)).collect::<Vec<_>>()).find(|c| c.is_file())
 }
 
+/// A diffusion model given on the command line: a path, or a bare file name looked up in the model folders.
+pub fn resolve_model(p: &Path) -> Result<PathBuf> {
+    if p.is_file() {
+        return Ok(p.to_path_buf());
+    }
+    if let Some(found) = find_named(p) {
+        return Ok(found);
+    }
+    bail!("diffusion model {} does not exist (a bare file name is looked up in: {})", p.display(), search_dirs().iter().map(|d| d.display().to_string()).collect::<Vec<_>>().join(", "))
+}
+
 /// Resolve a model file: explicit path (or bare file name in the model folders), else search, else download from
 /// Hugging Face into models/ next to the binary.
 pub fn resolve(explicit: Option<PathBuf>, spec: &Spec) -> Result<PathBuf> {
@@ -191,7 +223,7 @@ pub fn resolve(explicit: Option<PathBuf>, spec: &Spec) -> Result<PathBuf> {
     }
     let dest = download_dir().join(spec.hf_path.rsplit('/').next().unwrap());
     // announced even with -q: a multi-GB download should never be a surprise
-    eprintln!("{} not found locally; downloading {} ({:.1} GB) from Hugging Face (lodestones/Kromoss) to {}", spec.what, spec.hf_path, spec.size_gb, dest.display());
-    download(spec.hf_path, &dest)?;
+    eprintln!("{} not found locally; downloading {} ({:.1} GB) from Hugging Face ({}) to {}", spec.what, spec.hf_path, spec.size_gb, spec.repo, dest.display());
+    download(spec.repo, spec.hf_path, &dest)?;
     Ok(dest)
 }

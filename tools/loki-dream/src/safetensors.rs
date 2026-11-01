@@ -17,6 +17,8 @@ pub struct SafeTensors {
     mmap: Mmap,
     base: usize,
     pub tensors: HashMap<String, TensorInfo>,
+    /// the header's `__metadata__` (string values)
+    pub metadata: HashMap<String, String>,
     pub path: String,
 }
 
@@ -30,14 +32,18 @@ impl SafeTensors {
         let n = u64::from_le_bytes(mmap[0..8].try_into().unwrap()) as usize;
         let header: HashMap<String, serde_json::Value> = serde_json::from_slice(&mmap[8..8 + n]).context("parsing safetensors header")?;
         let mut tensors = HashMap::new();
+        let mut metadata = HashMap::new();
         for (k, v) in header {
             if k == "__metadata__" {
+                if let serde_json::Value::Object(m) = v {
+                    metadata = m.into_iter().filter_map(|(k, v)| v.as_str().map(|s| (k, s.to_string()))).collect();
+                }
                 continue;
             }
             let info: TensorInfo = serde_json::from_value(v).with_context(|| format!("tensor header {k}"))?;
             tensors.insert(k, info);
         }
-        Ok(SafeTensors { mmap, base: 8 + n, tensors, path: path.display().to_string() })
+        Ok(SafeTensors { mmap, base: 8 + n, tensors, metadata, path: path.display().to_string() })
     }
     pub fn info(&self, name: &str) -> Result<&TensorInfo> {
         self.tensors.get(name).ok_or_else(|| anyhow!("tensor {name} not found in {}", self.path))
