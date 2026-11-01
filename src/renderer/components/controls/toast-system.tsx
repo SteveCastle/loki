@@ -585,10 +585,13 @@ export function ToastSystem() {
   // (dismissed, expired, started before the app opened, or a Studio save).
   const applyMediaChange = useCallback(
     (change: MediaChange) => {
-      const plan = planMediaChange(
-        change,
-        currentPath(libraryService.getSnapshot().context)
-      );
+      const { context } = libraryService.getSnapshot();
+      const plan = planMediaChange(change, currentPath(context), {
+        jumpToNew: !!context.settings?.showNewJobOutput,
+      });
+      if (plan.reveal.length > 0) {
+        libraryService.send({ type: 'REVEAL_NEW_MEDIA', paths: plan.reveal });
+      }
       if (plan.refresh.length > 0) {
         for (const p of plan.refresh) {
           queryClient.invalidateQueries(['media', 'preview', p]);

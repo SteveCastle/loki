@@ -117,6 +117,22 @@ describe('job results', () => {
     expect(sent).not.toContain('RESET_CURSOR');
     expect(sent).not.toContain('SET_FILE');
     expect(sent).not.toContain('ADD_TOAST');
+    expect(sent).not.toContain('REVEAL_NEW_MEDIA');
+  });
+
+  it('with Jump To New Job Output on, also reveals the new files in the current view', () => {
+    mockContext.settings = { ...mockContext.settings, showNewJobOutput: true };
+    try {
+      const { container } = renderToasts();
+      emitJob('create', job);
+      emitMedia('media-created', { jobId: 'job-1', paths: ['C:\\media\\current_retouch.png'] });
+      expect(mockSend).toHaveBeenCalledWith({ type: 'REVEAL_NEW_MEDIA', paths: ['C:\\media\\current_retouch.png'] });
+      // still listed on the toast
+      emitJob('update', { ...job, state: 'completed' });
+      expect(container.querySelector('.job-toast .toast-result')).not.toBeNull();
+    } finally {
+      mockContext.settings = { filters: 'all', sortBy: 'name' };
+    }
   });
 
   it('falls back to a toast of its own when the job toast is not showing', () => {

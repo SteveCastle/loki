@@ -6,9 +6,13 @@
 // and Electron's Studio window reports its saves the same two ways.
 //
 // The contract, decided here and nowhere else:
-//   - Nothing ever moves the cursor or edits the current view. New files are
-//     ANNOUNCED: the job's completion toast lists them, each opening in a new
-//     window so the user's flow is left alone.
+//   - New files are ANNOUNCED: the job's completion toast lists them, each
+//     opening in a new window so the user's flow is left alone.
+//   - Only with the "Jump To New Job Output" setting (showNewJobOutput) are
+//     new files also REVEALED: added to the library on screen, whatever
+//     search or folder it shows, with the cursor moved to the first
+//     (state.tsx REVEAL_NEW_MEDIA). Without it nothing moves the cursor or
+//     edits the current view.
 //   - An overwritten file that is on screen right now is RELOADED in place,
 //     so the edit shows immediately. It is not announced (the user is
 //     already looking at it); other overwritten files are.
@@ -32,6 +36,13 @@ export interface MediaChangePlan {
   reloadCurrent: boolean;
   /** Paths to offer on a toast (opened in a new window). */
   announce: string[];
+  /** New paths to add to the current view and move the cursor to (first). */
+  reveal: string[];
+}
+
+export interface MediaChangeOptions {
+  /** The showNewJobOutput setting: reveal new files in the current view. */
+  jumpToNew?: boolean;
 }
 
 /**
@@ -70,16 +81,21 @@ export function parseMediaChange(kind: MediaChangeKind, data: string): MediaChan
   }
 }
 
-export function planMediaChange(change: MediaChange, currentPath: string | null | undefined): MediaChangePlan {
+export function planMediaChange(
+  change: MediaChange,
+  currentPath: string | null | undefined,
+  options: MediaChangeOptions = {}
+): MediaChangePlan {
   const paths = dedupe(change.paths);
   if (change.kind === 'created') {
-    return { refresh: [], reloadCurrent: false, announce: paths };
+    return { refresh: [], reloadCurrent: false, announce: paths, reveal: options.jumpToNew ? paths : [] };
   }
   const isCurrent = (p: string) => samePath(p, currentPath);
   return {
     refresh: paths,
     reloadCurrent: paths.some(isCurrent),
     announce: paths.filter((p) => !isCurrent(p)),
+    reveal: [],
   };
 }
 

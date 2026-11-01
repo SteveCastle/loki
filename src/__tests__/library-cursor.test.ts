@@ -3,6 +3,7 @@
 // the NEXT item — not skip one, not fall off the end.
 import {
   cursorAfterRemoval,
+  libraryWithPaths,
   libraryWithout,
 } from '../renderer/library-cursor';
 
@@ -58,5 +59,26 @@ describe('cursorAfterRemoval', () => {
 
   it('leaves the cursor untouched for a path that is not in the library', () => {
     expect(cursorAfterRemoval(lib('a', 'b'), 1, 'ghost')).toBe(1);
+  });
+});
+
+// Job output revealed in the current view (REVEAL_NEW_MEDIA): new paths go in
+// front once each, paths already held (any spelling) are not added again.
+describe('libraryWithPaths', () => {
+  const norm = (p: string) => p.replace(/\\/g, '/');
+  const make = (path: string) => ({ path });
+
+  it('puts missing paths in front, once each', () => {
+    const before = lib('C:/a.png', 'C:/b.png');
+    expect(libraryWithPaths(before, ['C:/new.png', 'c:\\new.png'], norm, make)).toEqual(lib('C:/new.png', 'C:/a.png', 'C:/b.png'));
+  });
+
+  it('returns the same array when every path is already there', () => {
+    const before = lib('C:/a.png', 'C:/b.png');
+    expect(libraryWithPaths(before, ['c:\\B.png', 'C:/a.png'], norm, make)).toBe(before);
+  });
+
+  it('adds only the paths it lacks', () => {
+    expect(libraryWithPaths(lib('C:/a.png'), ['C:/a.png', 'C:/c.png'], norm, make)).toEqual(lib('C:/c.png', 'C:/a.png'));
   });
 });

@@ -63,7 +63,8 @@ export type SettingKey =
   | 'subtitlesEnabled'
   | 'showDescriptionOverlay'
   | 'descriptionOverlaySize'
-  | 'descriptionOverlayPadding';
+  | 'descriptionOverlayPadding'
+  | 'showNewJobOutput';
 
 export type LayoutModeOption = 'grid' | 'masonry';
 
@@ -104,6 +105,7 @@ export type Settings = {
   showDescriptionOverlay: boolean;
   descriptionOverlaySize: number;
   descriptionOverlayPadding: number;
+  showNewJobOutput: boolean;
 };
 
 export const SCALE_MODES = {
@@ -604,6 +606,25 @@ export const SUBTITLES_ENABLED = {
   },
 };
 
+// When a job (or Studio) writes a new file, add it to the library on screen
+// and move the cursor to it, whatever search or folder is showing
+// (media-changes.ts). Off, the finished toast only links to the new files.
+export const SHOW_NEW_JOB_OUTPUT = {
+  title: 'Jump To New Job Output',
+  reload: false,
+  display: 'general',
+  options: {
+    yes: {
+      label: 'Yes',
+      value: true,
+    },
+    no: {
+      label: 'No',
+      value: false,
+    },
+  },
+};
+
 // Shows the media description as a closed-caption-style overlay across the
 // bottom of the detail view.
 export const SHOW_DESCRIPTION_OVERLAY = {
@@ -758,4 +779,5 @@ export const SETTINGS: SettingsObject = {
   showDescriptionOverlay: SHOW_DESCRIPTION_OVERLAY,
   descriptionOverlaySize: DESCRIPTION_OVERLAY_SIZE,
   descriptionOverlayPadding: DESCRIPTION_OVERLAY_PADDING,
+  showNewJobOutput: SHOW_NEW_JOB_OUTPUT,
 };

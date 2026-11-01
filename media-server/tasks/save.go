@@ -155,7 +155,8 @@ func broadcastMediaUpdated(jobID string, paths []string) {
 
 // broadcastMediaCreated tells clients a job wrote these new files (save
 // alongside/folder, a terminal AI step). Clients announce them on the job's
-// completion toast; they do not change the user's current view.
+// completion toast, and only move the user's view when the viewer's "Jump To
+// New Job Output" setting is on.
 func broadcastMediaCreated(jobID string, paths []string) {
 	broadcastMediaChange("media-created", jobID, paths)
 }

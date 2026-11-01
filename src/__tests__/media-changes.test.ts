@@ -55,13 +55,27 @@ describe('planMediaChange', () => {
   it('announces new files and never reloads or refreshes for them', () => {
     expect(
       planMediaChange({ kind: 'created', paths: ['C:/out_1.png', 'C:/out_2.png'] }, 'C:/in.png')
-    ).toEqual({ refresh: [], reloadCurrent: false, announce: ['C:/out_1.png', 'C:/out_2.png'] });
+    ).toEqual({ refresh: [], reloadCurrent: false, announce: ['C:/out_1.png', 'C:/out_2.png'], reveal: [] });
+  });
+
+  it('also reveals new files when the jump setting is on', () => {
+    const change = { kind: 'created' as const, paths: ['C:/out_1.png', 'c:\\out_1.png', 'C:/out_2.png'] };
+    expect(planMediaChange(change, null, { jumpToNew: true })).toEqual({
+      refresh: [],
+      reloadCurrent: false,
+      announce: ['C:/out_1.png', 'C:/out_2.png'],
+      reveal: ['C:/out_1.png', 'C:/out_2.png'],
+    });
+  });
+
+  it('never reveals overwrites, even with the jump setting on', () => {
+    expect(planMediaChange({ kind: 'updated', paths: ['C:/other.png'] }, 'C:/in.png', { jumpToNew: true }).reveal).toEqual([]);
   });
 
   it('reloads an overwritten file that is on screen instead of announcing it', () => {
     expect(
       planMediaChange({ kind: 'updated', paths: ['C:\\in.png'] }, 'c:/in.png')
-    ).toEqual({ refresh: ['C:\\in.png'], reloadCurrent: true, announce: [] });
+    ).toEqual({ refresh: ['C:\\in.png'], reloadCurrent: true, announce: [], reveal: [] });
   });
 
   it('announces overwritten files that are not on screen', () => {
@@ -71,6 +85,7 @@ describe('planMediaChange', () => {
       refresh: ['C:/in.png', 'C:/other.png'],
       reloadCurrent: true,
       announce: ['C:/other.png'],
+      reveal: [],
     });
     expect(planMediaChange({ kind: 'updated', paths: ['/a.png'] }, null).announce).toEqual(['/a.png']);
   });

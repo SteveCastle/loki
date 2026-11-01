@@ -40,6 +40,7 @@ import { markStartup } from './startup-marks';
 import {
   cursorAfterRemoval,
   findPathIndex,
+  libraryWithPaths,
   libraryWithout,
 } from './library-cursor';
 import { extendSelection } from './context-selection';
@@ -684,6 +685,7 @@ const getInitialContext = (): LibraryState => {
     ['showDescriptionOverlay', false],
     ['descriptionOverlaySize', 18],
     ['descriptionOverlayPadding', 4],
+    ['showNewJobOutput', false],
     ['incrementCursor', 'arrowright'],
     ['decrementCursor', 'arrowleft'],
     ['toggleTagPreview', 'shift'],
@@ -837,6 +839,7 @@ const getInitialContext = (): LibraryState => {
       showDescriptionOverlay: batched['showDescriptionOverlay'] as boolean,
       descriptionOverlaySize: batched['descriptionOverlaySize'] as number,
       descriptionOverlayPadding: batched['descriptionOverlayPadding'] as number,
+      showNewJobOutput: batched['showNewJobOutput'] as boolean,
     },
     hotKeys: {
       incrementCursor: batched['incrementCursor'] as string,
@@ -1693,14 +1696,69 @@ export const libraryMachine = createMachine(
               }),
             ],
           },
-          // A file just created by a job (e.g. 4kify output) that the active
-          // search/filter/query doesn't include. Add it to the in-memory library
-          // PROVISIONALLY — without touching the query or history — and jump
-          // the cursor to it so the user can act on it. It is not persisted
-          // anywhere: any reload or re-query drops it if it doesn't match,
-          // which is intended. Items already in the library are just
-          // navigated to. A media-type filter that would hide it outright is
-          // cleared (revealPastTypeFilter), or the jump couldn't land.
+          // Files a job (or Studio) just wrote, with the "Jump To New Job
+          // Output" setting on (media-changes.ts decides; toast-system.tsx
+          // sends it). The active search/filter/query may not include them,
+          // so they are added to the in-memory library PROVISIONALLY —
+          // without touching the query or history — and the cursor jumps to
+          // the first. Nothing is reloaded first (waiting on a re-query to
+          // land was the flaky part), and nothing is persisted: any reload
+          // or re-query drops them if they don't match, which is intended.
+          // Files already in the library are just navigated to. A media-type
+          // filter that would hide the file is cleared
+          // (revealPastTypeFilter), or the jump couldn't land. During a
+          // folder scan the file is pinned, like a cursor move, so the next
+          // batch keeps it under the cursor.
+          REVEAL_NEW_MEDIA: {
+            actions: [
+              assign<LibraryState, AnyEventObject>((context, event) =>
+                revealPastTypeFilter(
+                  context,
+                  (event.paths || []).filter(Boolean)[0]
+                )
+              ),
+              assign<LibraryState, AnyEventObject>((context, event) => {
+                const paths: string[] = (event.paths || []).filter(Boolean);
+                if (paths.length === 0) return {};
+                const library = libraryWithPaths(
+                  context.library,
+                  paths,
+                  path.normalize,
+                  (p) => ({ path: p, mtimeMs: Date.now() } as Item)
+                );
+                const added = library !== context.library;
+                const loadId = added ? newLoadId() : context.libraryLoadId;
+                const view = filter(
+                  loadId,
+                  context.textFilter,
+                  library,
+                  context.settings.filters,
+                  context.settings.sortBy
+                );
+                const idx = findPathIndex(view, paths[0], path.normalize);
+                if (idx < 0 && !added) return {};
+                const cursor = idx > -1 ? idx : context.cursor;
+                updatePersistedCursor(context, cursor);
+                return {
+                  library,
+                  libraryLoadId: loadId,
+                  // In-place edit of the current view, not a navigation: keep
+                  // the list's scroll position (same contract as DELETE_FILE).
+                  preserveScrollFromLoadId: added
+                    ? context.libraryLoadId
+                    : context.preserveScrollFromLoadId,
+                  cursor,
+                  scrollToCursorEventId: uniqueId(),
+                  pinnedPath: context.streaming
+                    ? view[cursor]?.path || context.pinnedPath
+                    : context.pinnedPath,
+                  userMovedCursorDuringStreaming:
+                    context.streaming || context.userMovedCursorDuringStreaming,
+                  videoPlayer: { ...context.videoPlayer, loopCount: 0 },
+                };
+              }),
+            ],
+          },
           INCREMENT_CURSOR: {
             actions: assign<LibraryState, AnyEventObject>((context, event) => {
               const view = filter(
