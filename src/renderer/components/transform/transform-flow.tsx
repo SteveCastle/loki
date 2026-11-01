@@ -31,6 +31,8 @@ import {
 import { EngineSetupDeferred } from './engine-setup';
 import { markUsed, savedTransformKey } from '../../saved-recent';
 import { useReshootModels } from './reshoot-models';
+import { applyPromptGuide, dreamPromptGuide, dreamRecipeOf, effectiveDreamModel, useDreamModels } from '../dream/dream-models';
+import { DREAM_ENABLED } from '../../features';
 import { TransformFlowView, validateForRun, validateShape, type PromptPreviewState } from './flow-view';
 import { canStartScene, openSceneEditor } from '../scene/launch';
 import { requestLibraryPick } from '../scene/pick-bridge';
@@ -80,6 +82,7 @@ function FlowSession({ req }: { req: NonNullable<ReturnType<typeof useFlowReques
   const { libraryService } = useContext(GlobalStateContext);
   const authToken = useSelector(libraryService, (state) => state.context.authToken);
   const reshootModels = useReshootModels(authToken);
+  const dreamModels = useDreamModels(DREAM_ENABLED, authToken);
   const [paths, setPaths] = useState<string[]>(req.paths);
   const [intent, setIntent] = useState<IntentId | null>(req.intent || null);
   const [phase, setPhase] = useState<FlowPhase>(req.phase || (req.intent ? 'shape' : 'choose'));
@@ -124,6 +127,32 @@ function FlowSession({ req }: { req: NonNullable<ReturnType<typeof useFlowReques
   }, []);
 
   const patch = useCallback((p: Partial<TransformSettings>) => setSettings((prev) => ({ ...prev, ...p })), []);
+
+  // The chosen image model's recipe follows the server's list (and '' the server's default model, whatever it is
+  // now), so a remembered or saved choice samples the way its model needs.
+  const isDreamIntent = !!intent && intentById(intent).engine === 'dream';
+  useEffect(() => {
+    if (!isDreamIntent || !dreamModels.catalog.loaded) return;
+    const m = effectiveDreamModel(dreamModels.catalog, settings.dreamModel);
+    if (!m) return;
+    const r = dreamRecipeOf(m);
+    const label = settings.dreamModel ? m.label : '';
+    if (r.dreamTurbo !== settings.dreamTurbo || r.dreamDistilled !== settings.dreamDistilled || r.dreamSteps !== settings.dreamSteps || label !== settings.dreamLabel) {
+      patch({ ...r, dreamLabel: label });
+    }
+  }, [isDreamIntent, dreamModels.catalog, settings.dreamModel, settings.dreamTurbo, settings.dreamDistilled, settings.dreamSteps, settings.dreamLabel, patch]);
+
+  // A starting prompt and negative written the way the model's card recommends, put in when the boxes are empty (or
+  // still hold another model's sample) as the model's architecture changes; text the user wrote is never replaced.
+  // Generate gets both, Reimagine (whose prompt describes its picture) only the negative.
+  const guidedArch = useRef<string | null>(null);
+  const dreamArch = isDreamIntent ? effectiveDreamModel(dreamModels.catalog, settings.dreamModel)?.arch || (dreamModels.catalog.loaded ? 'moss' : '') : '';
+  useEffect(() => {
+    if (!dreamArch || guidedArch.current === dreamArch) return;
+    guidedArch.current = dreamArch;
+    const g = dreamPromptGuide(dreamArch);
+    setSettings((prev) => ({ ...prev, ...applyPromptGuide(prev, g, intent === 'generate') }));
+  }, [dreamArch, intent]);
 
   // GPU queue depth, fetched when the review opens.
   useEffect(() => {
@@ -313,6 +342,8 @@ function FlowSession({ req }: { req: NonNullable<ReturnType<typeof useFlowReques
     <TransformFlowView
       paths={paths}
       reshootModels={reshootModels}
+      dreamCatalog={dreamModels.catalog}
+      onRefreshDreamModels={dreamModels.refresh}
       intent={intent}
       phase={phase}
       settings={settings}

@@ -1,0 +1,259 @@
+/* Image model picker (model-picker.tsx). Uses the Transform flow's tokens when inside it, with fallbacks for other
+   hosts (the Scene editor's dialog). Flat black surfaces, hairline borders, the #00c896 accent. */
+
+.mp-root {
+  --mp-accent: var(--ts-accent, #00c896);
+  --mp-accent-soft: var(--ts-accent-soft, rgba(0, 200, 150, 0.15));
+  --mp-hairline: var(--ts-hairline, rgba(255, 255, 255, 0.1));
+  --mp-field: var(--ts-field, rgba(255, 255, 255, 0.05));
+  --mp-dim: var(--ts-dim, rgba(255, 255, 255, 0.7));
+  --mp-faint: var(--ts-faint, rgba(255, 255, 255, 0.45));
+  --mp-caution: var(--ts-caution, #e6a23c);
+  position: relative;
+  width: 100%;
+  font-size: 13px;
+  color: white;
+}
+
+.mp-button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 36px;
+  padding: 6px 10px;
+  background: var(--mp-field);
+  border: 1px solid var(--mp-hairline);
+  border-radius: 5px;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.mp-button:hover,
+.mp-root.open .mp-button {
+  border-color: rgba(255, 255, 255, 0.25);
+}
+.mp-button:focus-visible {
+  outline: 1px solid var(--mp-accent);
+  outline-offset: 1px;
+}
+.mp-button-name {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.mp-button-sub {
+  flex: 1;
+  color: var(--mp-faint);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.mp-caret {
+  color: var(--mp-faint);
+}
+
+.mp-arch {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--mp-dim);
+}
+.mp-arch-moss {
+  background: rgba(0, 200, 150, 0.14);
+  color: #5fe0bd;
+}
+.mp-arch-krea2 {
+  background: rgba(120, 150, 255, 0.16);
+  color: #a9b9ff;
+}
+.mp-arch-flux2 {
+  background: rgba(255, 170, 80, 0.15);
+  color: #ffc58a;
+}
+.mp-arch-anima {
+  background: rgba(255, 120, 190, 0.15);
+  color: #ffa6d3;
+}
+
+.mp-status {
+  flex: none;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.mp-status.ready {
+  color: var(--mp-accent);
+}
+.mp-status.dl {
+  color: var(--mp-caution);
+}
+
+.mp-panel {
+  margin-top: 4px;
+  border: 1px solid var(--mp-hairline);
+  border-radius: 5px;
+  background: var(--controls-background-color, #000);
+  overflow: hidden;
+}
+
+.mp-search-row {
+  display: flex;
+  gap: 6px;
+  padding: 6px;
+  border-bottom: 1px solid var(--mp-hairline);
+}
+.mp-search {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+  background: var(--mp-field);
+  border: 1px solid var(--mp-hairline);
+  border-radius: 4px;
+  color: inherit;
+  font: inherit;
+  user-select: text;
+}
+.mp-search:focus {
+  outline: none;
+  border-color: var(--mp-accent);
+}
+.mp-refresh {
+  flex: none;
+  width: 32px;
+  background: var(--mp-field);
+  border: 1px solid var(--mp-hairline);
+  border-radius: 4px;
+  color: var(--mp-dim);
+  font: inherit;
+  cursor: pointer;
+}
+.mp-refresh:hover:not(:disabled) {
+  color: white;
+  border-color: rgba(255, 255, 255, 0.25);
+}
+.mp-refresh:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.mp-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 6px;
+  border-bottom: 1px solid var(--mp-hairline);
+}
+.mp-filter {
+  padding: 2px 8px;
+  background: transparent;
+  border: 1px solid var(--mp-hairline);
+  border-radius: 999px;
+  color: var(--mp-dim);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.mp-filter small {
+  color: var(--mp-faint);
+  margin-left: 2px;
+}
+.mp-filter:hover {
+  color: white;
+}
+.mp-filter.active {
+  background: var(--mp-accent-soft);
+  border-color: var(--mp-accent);
+  color: white;
+}
+
+.mp-list {
+  max-height: 280px;
+  overflow-y: auto;
+  padding: 2px 0;
+}
+.mp-group {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 6px 10px 3px;
+  background: var(--controls-background-color, #000);
+  color: var(--mp-faint);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.mp-group small {
+  font-weight: 400;
+  margin-left: 4px;
+}
+.mp-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px 5px 6px;
+  cursor: pointer;
+}
+.mp-row.active {
+  background: rgba(255, 255, 255, 0.06);
+}
+.mp-row.selected .mp-row-name {
+  color: var(--mp-accent);
+}
+.mp-check {
+  flex: none;
+  width: 14px;
+  color: var(--mp-accent);
+  text-align: center;
+}
+.mp-row-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.mp-row-name,
+.mp-row-file {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mp-row-file {
+  color: var(--mp-faint);
+  font-size: 11px;
+}
+.mp-row-variant {
+  flex: none;
+  color: var(--mp-dim);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.mp-empty {
+  padding: 14px 10px;
+  color: var(--mp-faint);
+  text-align: center;
+}
+.mp-foot {
+  padding: 6px 10px;
+  border-top: 1px solid var(--mp-hairline);
+  color: var(--mp-faint);
+  font-size: 11px;
+}
+.mp-foot.warn {
+  color: var(--mp-caution);
+}
+
+@media (max-width: 560px) {
+  .mp-row-variant {
+    display: none;
+  }
+}

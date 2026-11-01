@@ -12,6 +12,11 @@ import {
   dreamSize,
   maxVariations,
   qualityLabel,
+  dreamModelName,
+  dreamQualityLabel,
+  dreamRecipe,
+  dreamStepsFor,
+  dreamUnguided,
   strengthOf,
   usesSelection,
   classify,
@@ -48,6 +53,8 @@ import { GlyphCheck, GlyphDie, GlyphMusic, GlyphPin, GlyphScene, IntentIcon } fr
 import { markUsed, savedTransformKey } from '../../saved-recent';
 import CameraRig from './camera-rig';
 import type { ReshootModelChoice } from './reshoot-models';
+import ModelPicker from '../dream/model-picker';
+import { dreamPromptGuide, dreamRecipeOf, effectiveDreamModel, type DreamCatalog } from '../dream/dream-models';
 import './transform-flow.css';
 
 // ---------------------------------------------------------------------------
@@ -613,6 +620,9 @@ export interface FlowViewProps {
   paths: string[];
   /** The server's extra video models (reshoot-models.ts), offered after H3 and Fast. */
   reshootModels?: ReshootModelChoice[];
+  /** The image models the server's loki-dream can run (dream-models.ts), for Generate / Reimagine. */
+  dreamCatalog?: DreamCatalog;
+  onRefreshDreamModels?: () => void;
   intent: IntentId | null;
   phase: FlowPhase;
   settings: TransformSettings;
@@ -917,6 +927,18 @@ const QUALITY_OPTIONS = (engine: EngineId): Array<SegOption<Quality>> =>
         { value: 'fine', label: 'Fine', sub: 'slow' },
       ];
 
+/** Generate / Reimagine's qualities for the chosen model (see dreamRecipe): Kromoss's table with Turbo, or a base
+ * model's own steps scaled. A distilled model has none. */
+function dreamQualityOptions(s: TransformSettings): Array<SegOption<Quality>> {
+  if (dreamRecipe(s) === 'lora') return QUALITY_OPTIONS('dream');
+  const n = (q: Quality) => `${dreamStepsFor(s, q)} steps`;
+  return [
+    { value: 'draft', label: 'Draft', sub: `${n('draft')}, fast` },
+    { value: 'balanced', label: 'Balanced', sub: n('balanced') },
+    { value: 'fine', label: 'Fine', sub: `${n('fine')}, slow` },
+  ];
+}
+
 const ASPECT_OPTIONS: Array<SegOption<DreamAspect>> = [
   ...DREAM_ASPECTS.map((a) => ({ value: a.id, label: a.label, sub: `${a.width}×${a.height}` })),
   { value: 'custom', label: 'Custom' },
@@ -980,6 +1002,7 @@ function ShapeView(props: FlowViewProps & { def: ReturnType<typeof intentById> }
   const isRetouch = def.engine === 'retouch';
   const isReshoot = def.engine === 'reshoot';
   const isDream = def.engine === 'dream';
+  const catalog: DreamCatalog = props.dreamCatalog || { models: [], defaultFile: '', loaded: false, loading: false };
   const manual = s.manualPrompt !== null;
   const pins = activePins(def.id, s.pinned);
   const groups = runGroups(def.id, paths, s.pinned);
@@ -1112,7 +1135,19 @@ function ShapeView(props: FlowViewProps & { def: ReturnType<typeof intentById> }
           </p>
         )}
 
-        {isDream && s.quality !== 'draft' && (
+        {isDream && (
+          <Field label="Model" hint={catalog.models.length ? `${catalog.models.length} on the server` : undefined}>
+            <ModelPicker
+              catalog={catalog}
+              value={s.dreamModel}
+              onRefresh={() => props.onRefreshDreamModels?.()}
+              onChange={(file, m) => onSettings({ dreamModel: file, dreamLabel: file && m ? m.label : '', ...dreamRecipeOf(m || effectiveDreamModel(catalog, '')) })}
+            />
+            <p className="ts-note">{dreamPromptGuide(effectiveDreamModel(catalog, s.dreamModel)?.arch).tip}</p>
+          </Field>
+        )}
+
+        {isDream && !dreamUnguided(s) && (
           <Field label="Avoid" hint="optional · what the picture should not have">
             <textarea
               className="ts-text"
@@ -1292,10 +1327,19 @@ function ShapeView(props: FlowViewProps & { def: ReturnType<typeof intentById> }
           </Field>
         )}
 
-        {!isReshoot || s.reshootModel !== 'fast' ? (
+        {isDream && dreamRecipe(s) === 'distilled' ? (
+          <p className="ts-note">
+            This model is distilled: it always runs its own {dreamStepsFor(s)} steps without guidance, so there is no quality setting and no “Avoid” prompt.
+          </p>
+        ) : !isReshoot || s.reshootModel !== 'fast' ? (
           <Field label="Quality">
-            <Segmented<Quality> label="Quality" value={s.quality} options={QUALITY_OPTIONS(def.engine)} onChange={(v) => onSettings({ quality: v })} />
-            {isDream && s.quality === 'draft' ? (
+            <Segmented<Quality>
+              label="Quality"
+              value={s.quality}
+              options={isDream ? dreamQualityOptions(s) : QUALITY_OPTIONS(def.engine)}
+              onChange={(v) => onSettings({ quality: v })}
+            />
+            {isDream && dreamRecipe(s) === 'lora' && s.quality === 'draft' ? (
               <p className="ts-note">Turbo runs the distilled 8-step model without guidance: several times faster, a little less detail, and no “Avoid” prompt.</p>
             ) : null}
           </Field>
@@ -1639,7 +1683,7 @@ function ReviewView(props: FlowViewProps & { def: ReturnType<typeof intentById> 
               {def.id === 'generate' ? ' — added to your library, in its Generated folder' : ` — saved beside the original${plan.outputs > 1 ? 's' : ''}`}
             </span>
           </dd>
-          {def.engine === 'dream' && s.quality !== 'draft' && s.negative.trim() ? (
+          {def.engine === 'dream' && !dreamUnguided(s) && s.negative.trim() ? (
             <>
               <dt>Avoid</dt>
               <dd className="ts-quote">{s.negative.trim()}</dd>
@@ -1647,8 +1691,29 @@ function ReviewView(props: FlowViewProps & { def: ReturnType<typeof intentById> 
           ) : null}
           <dt>Settings</dt>
           <dd>
-            {def.engine === 'reshoot' && s.reshootFile
-              ? `${reshootModelLabel(s.reshootFile, props.reshootModels)} model${s.reshootModel === 'fast' ? '' : `, ${qualityLabel(def.engine, s.quality)} quality`}`
+            {def.engine === 'dream'
+              ? `${
+                  dreamModelName(s) ||
+                  `default model${
+                    props.dreamCatalog
+                      ? ` (${
+                          effectiveDreamModel(props.dreamCatalog, '')?.label ||
+                          'the server’s'
+                        })`
+                      : ''
+                  }`
+                }, ${dreamQualityLabel(s)}${
+                  dreamRecipe(s) === 'distilled' ? '' : ' quality'
+                }`
+              : def.engine === 'reshoot' && s.reshootFile
+              ? `${reshootModelLabel(
+                  s.reshootFile,
+                  props.reshootModels
+                )} model${
+                  s.reshootModel === 'fast'
+                    ? ''
+                    : `, ${qualityLabel(def.engine, s.quality)} quality`
+                }`
               : def.engine === 'reshoot' && s.reshootModel === 'fast'
                 ? 'fast model'
                 : `${qualityLabel(def.engine, s.quality)} quality`}{' '}

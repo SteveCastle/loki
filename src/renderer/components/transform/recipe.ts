@@ -191,7 +191,22 @@ function fromDream(rec: Json, args: string[]): RebuiltTask | null {
   const s: TransformSettings = { ...settingsFor(id) };
   s.prompt = (typeof rec.prompt === 'string' ? rec.prompt : argValue(args, '--prompt', '-p') || '').trim();
   if (!s.prompt) return null;
-  if (hasArg(args, '--turbo')) s.quality = 'draft';
+  // The model it ran: a swapped-in one is named in `dit` (Kromoss's own files are the default). Another
+  // architecture's record says so; its steps become the model's own (Balanced), the list refines the rest.
+  const other = typeof rec.architecture === 'string' && rec.architecture !== 'moss';
+  if (typeof rec.dit === 'string' && rec.dit && !/^kromoss_(int8|bf16)/i.test(rec.dit)) {
+    s.dreamModel = rec.dit;
+    s.dreamLabel = typeof rec.model === 'string' ? rec.model : '';
+    if (other) {
+      s.dreamTurbo = false;
+      s.dreamDistilled = rec.turbo === true;
+      s.dreamSteps = typeof rec.steps === 'number' ? rec.steps : 0;
+    }
+  }
+  if (other) {
+    s.quality = 'balanced';
+    if (!s.dreamDistilled) s.negative = (argValue(args, '--negative') || '').trim();
+  } else if (hasArg(args, '--turbo')) s.quality = 'draft';
   else {
     const steps = parseFloat(argValue(args, '--steps') ?? '');
     s.quality = nearestQuality('dream', Number.isFinite(steps) ? steps : typeof rec.steps === 'number' ? rec.steps : 50);

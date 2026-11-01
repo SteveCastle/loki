@@ -555,8 +555,11 @@ export const sceneApi = {
   /** Frame f of version n's roto matte as a mask piece over rect (clip pixels), and the clip's size. */
   matteFrame: (id: string, layer: string, n: number, frame: number) =>
     call<{ mask: string; rect: Rect; width: number; height: number }>('POST', `/api/scenes/${enc(id)}/layers/${enc(layer)}/versions/${n}/matte`, { frame }),
-  /** A new picture from a prompt (loki-dream) to start a scene from; dreamStatus follows it. */
-  dream: (req: { prompt: string; negative?: string; size?: string; turbo?: boolean }) => call<DreamStatus>('POST', '/api/scene-dream', req),
+  /**
+   * A new picture from a prompt (loki-dream) to start a scene from; dreamStatus follows it. model: a file from
+   * GET /api/dream/models ('' = the server's default).
+   */
+  dream: (req: { prompt: string; negative?: string; size?: string; turbo?: boolean; model?: string }) => call<DreamStatus>('POST', '/api/scene-dream', req),
   dreamStatus: (job: string) => call<DreamStatus>('GET', `/api/scene-dream/${enc(job)}`),
   untrack: (id: string, layer: string, n: number) => call<Scene>('POST', `/api/scenes/${enc(id)}/layers/${enc(layer)}/versions/${n}/untrack`, {}),
 };

@@ -155,6 +155,20 @@ export interface TransformSettings {
   aspect: DreamAspect;
   /** Reimagine: how much of the image is redrawn, 0-1. */
   strength: number;
+  /**
+   * Generate / Reimagine: the diffusion model, by file name (one of GET /api/dream/models: Kromoss, a MOSS-Image
+   * fine-tune, Krea 2, FLUX.2 klein, Anima); '' = the server's default. The fields after it are that model's recipe,
+   * copied from the server's list when it is picked, so a saved task or a rerun samples the same way.
+   */
+  dreamModel: string;
+  /** Its display name (summaries), '' = derive from the file. */
+  dreamLabel: string;
+  /** Its Turbo quality is the 8-step distillation LoRA (MOSS-Image models). */
+  dreamTurbo: boolean;
+  /** A step-distilled checkpoint: always its own steps, without guidance (no quality choice, no Avoid prompt). */
+  dreamDistilled: boolean;
+  /** The steps it runs with by default (0 = unknown: Kromoss's table). */
+  dreamSteps: number;
 }
 
 export interface IntentDef {
@@ -203,6 +217,11 @@ export const BASE_SETTINGS: TransformSettings = {
   negative: '',
   aspect: 'square',
   strength: 0.8,
+  dreamModel: '',
+  dreamLabel: '',
+  dreamTurbo: true,
+  dreamDistilled: false,
+  dreamSteps: 0,
 };
 
 const ALL_INTENTS: IntentDef[] = [
@@ -406,7 +425,10 @@ export function runSummary(id: IntentId, s: TransformSettings): string {
   } else if (id === 'reimagine') parts.push(`strength ${strengthOf(s)}`);
   else parts.push(`${s.duration.toFixed(1).replace(/\.0$/, '')} s`);
   if (engine === 'reshoot' && s.reshootFile) parts.push(reshootFileLabel(s.reshootFile));
-  else parts.push(engine === 'reshoot' && s.reshootModel === 'fast' ? 'fast model' : qualityLabel(engine, s.quality));
+  else if (engine === 'dream') {
+    if (s.dreamModel) parts.push(dreamModelName(s));
+    parts.push(dreamQualityLabel(s));
+  } else parts.push(engine === 'reshoot' && s.reshootModel === 'fast' ? 'fast model' : qualityLabel(engine, s.quality));
   if (s.variations > 1) parts.push(`${s.variations} variations`);
   if (s.seedMode === 'fixed') parts.push(`seed ${s.seed}`);
   const refs = pinnable(id) ? (s.pinned || []).length : 0;
@@ -645,8 +667,53 @@ export function reshootFileLabel(file: string): string {
   return file.replace(/^.*[\\/]/, '').replace(/\.safetensors$/i, '');
 }
 
-export function stepsForSettings(engine: EngineId, s: Pick<TransformSettings, 'quality' | 'reshootModel'>): number {
+export function stepsForSettings(engine: EngineId, s: Pick<TransformSettings, 'quality' | 'reshootModel'> & Partial<DreamRecipeFields>): number {
+  if (engine === 'dream') return dreamStepsFor(s);
   return engine === 'reshoot' && s.reshootModel === 'fast' ? FAST_STEPS : stepsFor(engine, s.quality);
+}
+
+// --- loki-dream models ------------------------------------------------------------
+
+type DreamRecipeFields = Pick<TransformSettings, 'dreamTurbo' | 'dreamDistilled' | 'dreamSteps'>;
+
+/**
+ * How the chosen model samples: `lora` (MOSS-Image: Turbo = the distillation LoRA, else Kromoss's step table),
+ * `distilled` (a few-step checkpoint: its own steps, no guidance) or `steps` (a base model of another architecture:
+ * the quality scales its own default steps).
+ */
+export type DreamRecipe = 'lora' | 'distilled' | 'steps';
+
+export function dreamRecipe(s: Partial<DreamRecipeFields>): DreamRecipe {
+  if (s.dreamDistilled) return 'distilled';
+  return s.dreamTurbo === false ? 'steps' : 'lora';
+}
+
+/** Steps a dream run takes at a quality. */
+export function dreamStepsFor(s: Pick<TransformSettings, 'quality'> & Partial<DreamRecipeFields>, q: Quality = s.quality): number {
+  const kind = dreamRecipe(s);
+  if (kind === 'lora') return QUALITY_STEPS.dream[q];
+  const base = s.dreamSteps && s.dreamSteps > 0 ? s.dreamSteps : QUALITY_STEPS.dream.balanced;
+  if (kind === 'distilled' || q === 'balanced') return base;
+  return q === 'draft' ? Math.max(1, Math.round(base * 0.5)) : Math.min(100, Math.round(base * 1.6));
+}
+
+/** The run has no negative branch: the turbo LoRA, or a distilled checkpoint (the Avoid prompt does nothing). */
+export function dreamUnguided(s: Pick<TransformSettings, 'quality'> & Partial<DreamRecipeFields>): boolean {
+  const kind = dreamRecipe(s);
+  return kind === 'distilled' || (kind === 'lora' && s.quality === 'draft');
+}
+
+/** What a dream run's quality is called. */
+export function dreamQualityLabel(s: Pick<TransformSettings, 'quality'> & Partial<DreamRecipeFields>): string {
+  const kind = dreamRecipe(s);
+  if (kind === 'distilled') return 'distilled';
+  return kind === 'lora' ? qualityLabel('dream', s.quality) : s.quality;
+}
+
+/** A model's name for summaries: its label, else the file name without its extension; '' for the default. */
+export function dreamModelName(s: Pick<TransformSettings, 'dreamModel' | 'dreamLabel'>): string {
+  if (!s.dreamModel) return '';
+  return s.dreamLabel || s.dreamModel.replace(/\.safetensors$/i, '');
 }
 
 /** `WxH` → [w, h] (positive integers) or null. */
@@ -976,10 +1043,13 @@ function buildDreamJobs(
   const prompt = (s.manualPrompt !== null ? s.manualPrompt : s.prompt).trim();
   const common = (f: Record<string, string>, seed: number) => {
     put(f, 'prompt', prompt);
-    // Turbo is its own step count at CFG 1, which ignores a negative prompt: send neither.
-    if (s.quality === 'draft') put(f, 'turbo', true);
-    else {
-      put(f, 'steps', stepsFor('dream', s.quality));
+    put(f, 'model', s.dreamModel);
+    const kind = dreamRecipe(s);
+    // Turbo (the LoRA) and a distilled checkpoint run their own steps at CFG 1, which ignores a negative prompt:
+    // send neither.
+    if (kind === 'lora' && s.quality === 'draft') put(f, 'turbo', true);
+    else if (kind !== 'distilled') {
+      put(f, 'steps', dreamStepsFor(s));
       put(f, 'negative', s.negative.trim());
     }
     put(f, 'seed', seed);
@@ -1053,7 +1123,7 @@ export function planFor(
   const jobCount = built.jobs.length;
   const variations = Math.min(maxVariations(id), Math.max(1, Math.round(s.variations)));
   if (def.engine === 'dream') {
-    const turbo = s.quality === 'draft';
+    const turbo = dreamUnguided(s);
     if (id === 'generate') {
       const size = dreamSize(s);
       return { jobCount, outputs: variations, outputName: 'dream_….png', outWidth: size?.[0], outHeight: size?.[1], engine: 'dream', steps, turbo };

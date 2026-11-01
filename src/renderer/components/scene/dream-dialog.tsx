@@ -1,8 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { sceneApi, type DreamStatus, type Scene } from './scene-api';
+import ModelPicker from '../dream/model-picker';
+import { applyPromptGuide, dreamPromptGuide, effectiveDreamModel, useDreamModels } from '../dream/dream-models';
 
-// "New scene from a prompt": a picture made by loki-dream (Kromoss) becomes
-// the base of a new scene. The picture lands in the library (its Generated
+// "New scene from a prompt": a picture made by loki-dream (Kromoss, or any
+// model the server lists) becomes the base of a new scene. The prompt and the
+// negative start as a sample written for the chosen model. The picture lands
+// in the library (its Generated
 // folder) like any other, and the scene is started from it.
 
 const SHAPES: Array<{ id: string; label: string; size: string }> = [
@@ -21,6 +25,23 @@ export default function DreamDialog({ onClose, onScene }: DreamDialogProps) {
   const [prompt, setPrompt] = useState('');
   const [shape, setShape] = useState('landscape');
   const [turbo, setTurbo] = useState(false);
+  const [model, setModel] = useState('');
+  const models = useDreamModels(true);
+  const chosen = effectiveDreamModel(models.catalog, model);
+  // Turbo is MOSS-Image's distillation LoRA; other models run their own recipe (unknown = the default: offer it).
+  const canTurbo = !chosen || chosen.turbo;
+  // The run uses guidance (a negative prompt does something): not the turbo LoRA, not a distilled checkpoint.
+  const guided = chosen ? !chosen.distilled && !(chosen.turbo && turbo) : !turbo;
+  const [negative, setNegative] = useState('');
+  // The model's sample prompt / negative, while the boxes are empty or hold another model's sample.
+  const arch = chosen?.arch || (models.catalog.loaded ? 'moss' : '');
+  useEffect(() => {
+    if (!arch) return;
+    const g = applyPromptGuide({ prompt, negative }, dreamPromptGuide(arch), true);
+    if (g.prompt !== undefined) setPrompt(g.prompt);
+    if (g.negative !== undefined) setNegative(g.negative);
+    // only when the architecture changes
+  }, [arch]);
   const [status, setStatus] = useState<DreamStatus | null>(null);
   const [error, setError] = useState('');
   const alive = useRef(true);
@@ -36,7 +57,13 @@ export default function DreamDialog({ onClose, onScene }: DreamDialogProps) {
   const start = async () => {
     setError('');
     try {
-      let st = await sceneApi.dream({ prompt, size: SHAPES.find((x) => x.id === shape)?.size, turbo });
+      let st = await sceneApi.dream({
+        prompt,
+        negative: guided ? negative.trim() : undefined,
+        size: SHAPES.find((x) => x.id === shape)?.size,
+        turbo: turbo && canTurbo,
+        model,
+      });
       setStatus(st);
       while (alive.current && !['completed', 'error', 'cancelled'].includes(st.state)) {
         // eslint-disable-next-line no-await-in-loop
@@ -61,7 +88,7 @@ export default function DreamDialog({ onClose, onScene }: DreamDialogProps) {
     <div className="sc-modal-back" role="presentation" onMouseDown={(e) => e.target === e.currentTarget && !running && onClose()}>
       <div className="sc-modal" role="dialog" aria-label="New scene from a prompt">
         <h3>New scene from a prompt</h3>
-        <p className="sc-faint">Kromoss draws a new picture (it goes to the library’s Generated folder) and a scene starts from it.</p>
+        <p className="sc-faint">{chosen?.label || 'Kromoss'} draws a new picture (it goes to the library’s Generated folder) and a scene starts from it.</p>
         <textarea
           className="sc-prompt"
           rows={4}
@@ -75,6 +102,12 @@ export default function DreamDialog({ onClose, onScene }: DreamDialogProps) {
           disabled={running}
         />
         <div className="sc-grid">
+          <span className="sc-label">Model</span>
+          <ModelPicker catalog={models.catalog} value={model} onRefresh={models.refresh} onChange={(file) => setModel(file)} />
+          {guided ? <span className="sc-label">Avoid</span> : null}
+          {guided ? (
+            <input className="sc-input" value={negative} disabled={running} placeholder="what the picture should not have" aria-label="Negative prompt" onChange={(e) => setNegative(e.target.value)} />
+          ) : null}
           <span className="sc-label">Shape</span>
           <div className="sc-seg" role="radiogroup">
             {SHAPES.map((x) => (
@@ -83,15 +116,17 @@ export default function DreamDialog({ onClose, onScene }: DreamDialogProps) {
               </button>
             ))}
           </div>
-          <span className="sc-label">Speed</span>
-          <div className="sc-seg" role="radiogroup">
-            <button type="button" role="radio" aria-checked={!turbo} className={turbo ? '' : 'on'} disabled={running} onClick={() => setTurbo(false)}>
-              Best
-            </button>
-            <button type="button" role="radio" aria-checked={turbo} className={turbo ? 'on' : ''} disabled={running} onClick={() => setTurbo(true)} title="8 steps with the turbo LoRA: several times faster">
-              Turbo
-            </button>
-          </div>
+          {canTurbo ? <span className="sc-label">Speed</span> : null}
+          {canTurbo ? (
+            <div className="sc-seg" role="radiogroup">
+              <button type="button" role="radio" aria-checked={!turbo} className={turbo ? '' : 'on'} disabled={running} onClick={() => setTurbo(false)}>
+                Best
+              </button>
+              <button type="button" role="radio" aria-checked={turbo} className={turbo ? 'on' : ''} disabled={running} onClick={() => setTurbo(true)} title="8 steps with the turbo LoRA: several times faster">
+                Turbo
+              </button>
+            </div>
+          ) : null}
         </div>
         {running && (
           <div className="sc-generate">
