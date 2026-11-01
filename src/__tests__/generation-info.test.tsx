@@ -102,6 +102,23 @@ describe('Save as Transform task', () => {
     submit.mockRestore();
   });
 
+  test('Shift-click Regenerate opens the run in the Transform flow instead of queuing it', async () => {
+    // eslint-disable-next-line global-require
+    const store = require('../renderer/components/transform/store');
+    const submit = jest.spyOn(store, 'submitJobs').mockResolvedValue(['j1']);
+    const chunks = { loki: JSON.stringify(stamped) };
+    const { getByText } = render(<GenerationInfo chunks={chunks} jobs={{ authToken: 'tok', notify: jest.fn() }} />);
+    await act(async () => { fireEvent.click(getByText('↻ Regenerate'), { shiftKey: true }); });
+    expect(submit).not.toHaveBeenCalled();
+    const req = store.getFlowRequest();
+    expect(req.intent).toBe('edit');
+    expect(req.phase).toBe('shape');
+    expect(req.paths).toEqual(['C:/m/me.png', 'C:/m/jacket.png']);
+    expect(req.settings.prompt).toBe('put the jacket of <image2> on <image1>');
+    store.closeTransformFlow();
+    submit.mockRestore();
+  });
+
   test('switching between images keeps exactly one Regenerate and one Save button', () => {
     const jobs = { authToken: 'tok', notify: jest.fn() };
     const other = { ...stamped, seed: 6, meta: { ...stamped.meta, paths: ['C:/m/you.png', 'C:/m/jacket.png'] } };

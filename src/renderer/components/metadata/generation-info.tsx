@@ -4,7 +4,7 @@ import { mediaServerBase } from '../../platform';
 import { rerunFromRecord, suggestTaskName, taskFromRecord, type RebuiltTask, type Rerun } from '../transform/recipe';
 import { buildJobs, intentById } from '../transform/intents';
 import { EngineSetupDeferred } from '../transform/engine-setup';
-import { saveTemplate, submitJobs } from '../transform/store';
+import { openTransformFlow, saveTemplate, submitJobs } from '../transform/store';
 import copyIcon from '../../../../assets/copy.svg';
 
 import './generation-info.css';
@@ -120,13 +120,18 @@ export interface JobAccess {
 }
 
 /* "Regenerate": the same run queued again in one click, with a fresh random seed. The result arrives like any other
- * Transform job's (job toast, then the library). */
+ * Transform job's (job toast, then the library). Shift-click loads the run into the Transform flow to adjust first,
+ * like the palette's "… again". */
 function Regenerate({ rerun, jobs }: { rerun: Rerun; jobs: JobAccess }) {
   const { authToken, notify: toast } = jobs;
   const [state, setState] = useState<'idle' | 'busy' | 'queued'>('idle');
   const { task, paths } = rerun;
   const title = intentById(task.intent).title;
-  const run = async () => {
+  const run = async (e: React.MouseEvent) => {
+    if (e.shiftKey) {
+      openTransformFlow({ paths, intent: task.intent, phase: 'shape', settings: task.settings });
+      return;
+    }
     const built = buildJobs(task.intent, task.settings, paths, { recipe: true });
     if (built.error || built.jobs.length === 0) {
       toast('error', 'Cannot regenerate', built.error || 'Nothing to run');
@@ -153,7 +158,8 @@ function Regenerate({ rerun, jobs }: { rerun: Rerun; jobs: JobAccess }) {
       disabled={state === 'busy' || !authToken}
       title={
         `Queue this ${title} run again with the same prompt, inputs and settings and a new random seed` +
-        (task.approximate ? ' (rebuilt from the engine settings: this file predates stamped recipes, so it may differ a little)' : '')
+        (task.approximate ? ' (rebuilt from the engine settings: this file predates stamped recipes, so it may differ a little)' : '') +
+        '. Shift-click to change the settings first'
       }
       onClick={run}
     >
