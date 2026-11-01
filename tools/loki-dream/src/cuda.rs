@@ -16,6 +16,7 @@ const FATBINS: &[(&str, &[u8])] = &[
     ("sage_attn", include_bytes!(concat!(env!("OUT_DIR"), "/sage_attn.fatbin"))),
     ("dream", include_bytes!(concat!(env!("OUT_DIR"), "/dream.fatbin"))),
     ("arch", include_bytes!(concat!(env!("OUT_DIR"), "/arch.fatbin"))),
+    ("sdxl", include_bytes!(concat!(env!("OUT_DIR"), "/sdxl.fatbin"))),
 ];
 
 /// Kernel argument value. Pointers are passed as raw 64-bit device addresses.

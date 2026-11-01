@@ -17,8 +17,8 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 /// The architectures' default models, in the order they are offered.
-fn default_specs() -> [(Arch, &'static Spec); 4] {
-    [(Arch::Moss, &models::DIT_INT8), (Arch::Krea2, &models::KREA2_DIT), (Arch::Flux2, &models::KLEIN_DIT), (Arch::Anima, &models::ANIMA_DIT)]
+fn default_specs() -> [(Arch, &'static Spec); 5] {
+    [(Arch::Moss, &models::DIT_INT8), (Arch::Krea2, &models::KREA2_DIT), (Arch::Flux2, &models::KLEIN_DIT), (Arch::Anima, &models::ANIMA_DIT), (Arch::Sdxl, &models::SDXL_BASE)]
 }
 
 /// How a checkpoint stores its big weights: the dtype of most 2D weight bytes (int8 ConvRot, fp8, nvfp4, bf16, ...).
@@ -98,7 +98,8 @@ fn entry(path: &Path, a: Arch, st: Option<&SafeTensors>, local: bool, download: 
         "loras": a == Arch::Moss,
         "local": local,
         "text_encoder": te,
-        "vae": need(engines::vae_spec(a)),
+        // SDXL: both inside the checkpoint (null)
+        "vae": engines::vae_spec(a).map(need),
     });
     let o = e.as_object_mut().unwrap();
     if let Some(st) = st {

@@ -41,11 +41,14 @@ MODELS (the diffusion model file decides the architecture; it is detected from t
   krea2   Krea 2 (raw / turbo)             Qwen3-VL-4B + Qwen-Image VAE   raw 28 steps CFG 5.5; turbo 8 steps CFG 1
   flux2   FLUX.2 klein 4B / 9B             Qwen3-4B / 8B + FLUX.2 VAE     base 50 steps CFG 4; distilled 4 steps CFG 1
   anima   Anima (base / aesthetic / turbo) Qwen3-0.6B + Qwen-Image VAE    30 steps CFG 4; turbo 10 steps CFG 1
+  sdxl    SDXL and SDXL-architecture checkpoints (UNet, CLIP-L + bigG and VAE in one file; default: SDXL base 1.0)
+                                                                          30 steps CFG 6; distilled 8 steps CFG 1
   Which variant a checkpoint is goes by its name: Krea 2 is turbo unless named raw/base (its fine-tunes are turbo-based),
-  klein is distilled unless named base, Anima is base unless named turbo; --turbo forces the distilled settings and
-  --steps / --cfg override any default. Other architectures (FLUX.1, SDXL, Qwen-Image, ...) are refused by name.
+  klein is distilled unless named base, Anima is base unless named turbo, SDXL is distilled when named lightning / turbo /
+  hyper / dmd / lcm; --turbo forces the distilled settings and --steps / --cfg override any default. Other architectures
+  (FLUX.1, SD 1.x / 2.x, SDXL refiners, Qwen-Image, ...) are refused by name.
 
-SIZE (default 1024x1024; the models work in multiples of 16 pixels; about 1 megapixel is their home ground)
+SIZE (default 1024x1024; the models work in multiples of 16 pixels, SDXL 32; about 1 megapixel is their home ground)
   --size WxH | --aspect W:H [--megapixels MP (default 1)] | --megapixels MP (square)
   A size that is not a multiple of 16 is generated at the nearest multiple and Lanczos-resampled to exactly what you
   asked (--snap keeps the multiple of 16). With --init and no size flag: the init image's own size.
@@ -55,6 +58,10 @@ SAMPLING
   branch with block 22 skipped; Krea 2 and FLUX.2: resolution-dependent shift; Anima: shift 3). --cfg is classic
   classifier-free guidance (uncond + cfg * (cond - uncond); 1 = no negative branch). --seed N reproduces an image; the
   noise is drawn exactly like torch.randn on the CPU, so a seed means the same as in diffusers/ComfyUI.
+  SDXL samples like ComfyUI's KSampler: --sampler euler_ancestral (default) | euler | dpmpp_2m, --scheduler normal
+  (default) | karras | sgm_uniform (distilled checkpoints: euler + sgm_uniform), eps or v prediction as the checkpoint
+  says. Its prompts take ComfyUI's weighting: (text) x1.1 per level, (text:1.3), \\( and \\) for literal brackets, and run
+  past 75 tokens in chunks of 75.
 
 IMG2IMG / INPAINT
   --init IMG --strength F    noise the encoded image to F (0..1, default 0.6) and denoise the rest of the schedule
@@ -135,6 +142,12 @@ pub(crate) struct Cli {
     /// Apply a LoRA (repeatable): FILE or FILE:STRENGTH. MOSS-Image only: Kromoss/MOSS-format (kohya) and ComfyUI/diffusers keys.
     #[arg(long = "lora", value_name = "FILE[:SCALE]")]
     pub(crate) loras: Vec<String>,
+    /// SDXL sampler: euler_ancestral (default), euler (distilled checkpoints' default) or dpmpp_2m.
+    #[arg(long, value_name = "NAME")]
+    pub(crate) sampler: Option<String>,
+    /// SDXL scheduler: normal (default), karras or sgm_uniform (distilled checkpoints' default).
+    #[arg(long, value_name = "NAME")]
+    pub(crate) scheduler: Option<String>,
     /// Scheduler shift (MOSS-Image 5, Anima 3; Krea 2 and FLUX.2 shift by resolution unless this is given).
     #[arg(long)]
     pub(crate) shift: Option<f32>,
@@ -213,12 +226,13 @@ pub fn main(prog: &'static str) {
     }
 }
 
-fn round16(x: f64) -> usize {
-    (((x / 16.0).round() as usize) * 16).max(16)
+fn round_to(x: f64, align: usize) -> usize {
+    (((x / align as f64).round() as usize) * align).max(align)
 }
 
-/// ((generated w, h), (delivered w, h))
-fn target_size(cli: &Cli, init: Option<(usize, usize)>) -> Result<((usize, usize), (usize, usize))> {
+/// ((generated w, h), (delivered w, h)); generated sizes are multiples of `align` (16, SDXL 32).
+fn target_size(cli: &Cli, init: Option<(usize, usize)>, align: usize) -> Result<((usize, usize), (usize, usize))> {
+    let round16 = |x: f64| round_to(x, align);
     ensure!(!(cli.size.is_some() && (cli.aspect.is_some() || cli.megapixels.is_some())), "use --size, or --aspect/--megapixels, not both");
     let out = if let Some(s) = &cli.size {
         let (a, b) = s.split_once(['x', 'X']).context("--size must look like WIDTHxHEIGHT")?;
@@ -295,13 +309,14 @@ pub(crate) enum ModelChoice {
 }
 
 /// The default models a bare --model name can download, by architecture.
-const DEFAULT_SPECS: [(Arch, &models::Spec); 6] = [
+const DEFAULT_SPECS: [(Arch, &models::Spec); 7] = [
     (Arch::Moss, &models::DIT_INT8),
     (Arch::Moss, &models::DIT_BF16),
     (Arch::Krea2, &models::KREA2_DIT),
     (Arch::Flux2, &models::KLEIN_DIT),
     (Arch::Anima, &models::ANIMA_DIT),
     (Arch::Anima, &models::ANIMA_TURBO_DIT),
+    (Arch::Sdxl, &models::SDXL_BASE),
 ];
 
 /// A bare file name (no folder) that is one of the default models' own: what it would download.
@@ -367,6 +382,7 @@ fn default_spec(cli: &Cli, a: Arch) -> Result<&'static models::Spec> {
         Arch::Krea2 => &models::KREA2_DIT,
         Arch::Flux2 => &models::KLEIN_DIT,
         Arch::Anima => &models::ANIMA_DIT,
+        Arch::Sdxl => &models::SDXL_BASE,
     })
 }
 
@@ -594,6 +610,9 @@ fn run(prog: &'static str, argv: Vec<String>) -> Result<()> {
         crate::info!("warning: CFG 1 has no negative branch; --negative ignored");
     }
     let negative = if cfg != 1.0 { Some(cli.negative.clone().unwrap_or_default()) } else { None };
+    if a != Arch::Sdxl {
+        ensure!(cli.sampler.is_none() && cli.scheduler.is_none(), "--sampler / --scheduler are SDXL settings ({} model given)", a.name());
+    }
     if a != Arch::Moss {
         ensure!(cli.loras.is_empty(), "--lora is supported for MOSS-Image models only ({} model given)", a.name());
         ensure!(cli.skip_layers.is_none(), "--skip-layers is a MOSS-Image setting ({} model given)", a.name());
@@ -622,7 +641,7 @@ fn run(prog: &'static str, argv: Vec<String>) -> Result<()> {
         Some(p) => Some(Rgb8::load(p)?),
         None => None,
     };
-    let ((gw, gh), (ow, oh)) = target_size(&cli, init_img.as_ref().map(|i| (i.w, i.h)))?;
+    let ((gw, gh), (ow, oh)) = target_size(&cli, init_img.as_ref().map(|i| (i.w, i.h)), if a == Arch::Sdxl { 32 } else { 16 })?;
     let init_gen = init_img.as_ref().map(|i| i.resize_lanczos(gw, gh));
     let mask_gen = match &cli.mask {
         Some(p) => Some(Mask::load(p)?.resize(gw, gh)),
@@ -681,6 +700,7 @@ fn run(prog: &'static str, argv: Vec<String>) -> Result<()> {
     let plan = Plan { prog, prompts, negative, steps, cfg, jobs, gen: (gw, gh), out: (ow, oh), init_img, init_gen, mask_gen, meta, dit, arch: a, stdout_is_image };
     match a {
         Arch::Moss => run_moss(&cli, &plan),
+        Arch::Sdxl => crate::sdxl::run(&cli, &plan, distilled),
         _ => crate::engines::run(&cli, &plan, distilled),
     }
 }

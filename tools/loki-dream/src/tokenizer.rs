@@ -37,7 +37,7 @@ pub struct Tokenizer {
     special: Vec<(String, u32)>,
 }
 
-fn bytes_to_unicode() -> [char; 256] {
+pub(crate) fn bytes_to_unicode() -> [char; 256] {
     // GPT-2 byte<->unicode mapping
     let mut bs: Vec<u32> = (b'!' as u32..=b'~' as u32).chain(0xA1..=0xAC).chain(0xAE..=0xFF).collect();
     let mut cs: Vec<u32> = bs.clone();

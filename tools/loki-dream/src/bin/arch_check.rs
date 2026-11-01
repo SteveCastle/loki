@@ -91,8 +91,90 @@ fn pack16(v: &[f32], h: usize, w: usize) -> Vec<f32> {
     out
 }
 
+/// `arch_check sdxl te|unet|vae DIR --ckpt FILE`: the SDXL stages against ref/ref_sdxl.py.
+fn sdxl(args: &[String]) -> Result<()> {
+    use loki_dream::clip::{chunks, ClipTokenizer, SdxlText, TextCond};
+    use loki_dream::safetensors::SafeTensors;
+    use loki_dream::sdxl::Unet;
+    use loki_dream::vae::Plane;
+    let d = Dump::open(Path::new(&args[1]))?;
+    let ckpt = arg(args, "--ckpt").context("--ckpt FILE")?;
+    let dev = Device::new(0)?;
+    loki_dream::ops::gemm_init(&dev)?;
+    loki_dream::ops::attn_init(&dev)?;
+    Vae::init_kernels(&dev)?;
+    match args[0].as_str() {
+        "te" => {
+            let prompts: Vec<String> = serde_json::from_value(d.json("prompts.json")?)?;
+            let st = SafeTensors::open(&ckpt)?;
+            let te = SdxlText::load(dev.clone(), &st)?;
+            let tok = ClipTokenizer::new()?;
+            for (i, p) in prompts.iter().enumerate() {
+                let c = &chunks(&tok, p)[0];
+                let ids_l: Vec<f32> = c.filled(loki_dream::clip::EOS).iter().map(|&x| x as f32).collect();
+                let ids_g: Vec<f32> = c.filled(0).iter().map(|&x| x as f32).collect();
+                println!("prompt {i}: {p:?}");
+                println!("  ids CLIP-L {}  ids bigG {}", if ids_l == d.f32(&format!("te{i}_ids_l"))? { "identical" } else { "DIFFER" }, if ids_g == d.f32(&format!("te{i}_ids_g"))? { "identical" } else { "DIFFER" });
+                let tc = te.encode(&tok, p)?;
+                let want = d.f32(&format!("te{i}_ctx"))?;
+                let (l, g): (Vec<f32>, Vec<f32>) = (tc.ctx.chunks(2048).flat_map(|r| r[..768].to_vec()).collect(), tc.ctx.chunks(2048).flat_map(|r| r[768..].to_vec()).collect());
+                metrics("  context CLIP-L", &l, &want.chunks(2048).flat_map(|r| r[..768].to_vec()).collect::<Vec<_>>());
+                metrics("  context bigG", &g, &want.chunks(2048).flat_map(|r| r[768..].to_vec()).collect::<Vec<_>>());
+                metrics("  pooled", &tc.pooled, &d.f32(&format!("te{i}_pooled"))?);
+            }
+        }
+        "unet" => {
+            let meta = d.json("unet.json")?;
+            let (w, h) = (meta["size"][0].as_u64().unwrap() as usize, meta["size"][1].as_u64().unwrap() as usize);
+            let t = meta["t"].as_f64().unwrap() as f32;
+            let (lh, lw) = (h / 8, w / 8);
+            let unet = Unet::load(dev.clone(), &ckpt)?;
+            let tc = TextCond { ctx: d.f32("te0_ctx")?, tokens: 77, pooled: d.f32("te0_pooled")? };
+            let br = unet.prepare(&tc, h, w)?;
+            let x = d.f32("unet_x")?;
+            let n = lh * lw;
+            let mut bits = vec![0u16; n * 8];
+            for p in 0..n {
+                for c in 0..4 {
+                    bits[p * 8 + c] = bf16_bits(x[c * n + p]);
+                }
+            }
+            let inp = Plane { t: Tensor::from_bf16(&dev, &bits, &[n, 8])?, h: lh, w: lw, c: 8 };
+            let t0 = std::time::Instant::now();
+            let o = unet.forward(&br, &inp, t)?;
+            dev.sync()?;
+            let el = t0.elapsed().as_secs_f64();
+            let v = o.t.to_f32_vec(&dev)?;
+            let got: Vec<f32> = (0..4 * n).map(|i| v[(i % n) * 8 + i / n]).collect();
+            metrics(&format!("eps {w}x{h} t={t} ({el:.2}s)"), &got, &d.f32("unet_eps")?);
+        }
+        "vae" => {
+            let meta = d.json("vae.json")?;
+            let (w, h) = (meta["size"][0].as_u64().unwrap() as usize, meta["size"][1].as_u64().unwrap() as usize);
+            let (lh, lw) = (h / 8, w / 8);
+            let vae = Vae::load_sd(dev.clone(), &ckpt)?;
+            let lat = d.f32("vae_lat")?;
+            let n = lh * lw;
+            let hwc: Vec<f32> = (0..4 * n).map(|i| lat[(i % 4) * n + i / 4]).collect();
+            let rgb = vae.decode_sd(&hwc, lh, lw)?;
+            let got: Vec<f32> = rgb.iter().map(|&b| b as f32).collect();
+            let want = d.f32("vae_rgb")?;
+            println!("decode PSNR {:.2} dB", psnr(&got, &want));
+            let img: Vec<f32> = want.iter().map(|v| v / 255.0).collect();
+            let enc = vae.encode_sd(&img, h, w)?;
+            let we = d.f32("vae_enc")?;
+            metrics("encode (latent mean)", &enc, &(0..4 * n).map(|i| we[(i % 4) * n + i / 4]).collect::<Vec<_>>());
+        }
+        o => bail!("arch_check sdxl: unknown stage {o}"),
+    }
+    Ok(())
+}
+
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().map(|a| a == "sdxl").unwrap_or(false) {
+        return sdxl(&args[1..]);
+    }
     if args.len() < 3 {
         bail!("usage: arch_check te|dit|vae ARCH DIR [--te FILE] [--dit FILE] [--vae FILE] [--int8|--bf16]");
     }
@@ -222,6 +304,7 @@ fn main() -> Result<()> {
                     }
                 }
                 Arch::Moss => bail!("use dream_check for MOSS-Image"),
+                Arch::Sdxl => bail!("SDXL is checked with the sdxl command"),
             }
             dev.sync()?;
             println!("load + forwards {:.2}s", t0.elapsed().as_secs_f64());
@@ -237,8 +320,8 @@ fn main() -> Result<()> {
             let want_u8: Vec<f32> = (0..npix).flat_map(|p| (0..3).map(move |ch| (p, ch))).map(|(p, ch)| ((want[ch * npix + p] + 1.0) * 127.5).round().clamp(0.0, 255.0)).collect();
             let rgb = if a == Arch::Flux2 {
                 let v = Vae::load(dev.clone(), &vp)?;
-                let mean = v.bn_mean.to_f32_vec(&dev)?;
-                let var = v.bn_var.to_f32_vec(&dev)?;
+                let mean = v.bn_mean.as_ref().context("bn")?.to_f32_vec(&dev)?;
+                let var = v.bn_var.as_ref().context("bn")?.to_f32_vec(&dev)?;
                 let mut tok = vec![0f32; lh * lw * 128];
                 for ci in 0..c {
                     for y in 0..zh {

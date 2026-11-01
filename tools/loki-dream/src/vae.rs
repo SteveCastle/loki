@@ -3,12 +3,16 @@
 //! eps 1e-6) + SiLU, single-head mid attention, 32 latent channels at 1/8, then a 2x2 patch (128 channels at 1/16) and a
 //! BatchNorm standardization (running mean/var, eps 1e-4) into the DiT's latent space.
 //! Channels-last bf16 planes with f32 accumulation (the reference runs the VAE in fp32).
+//!
+//! The same network (with the full 512-512-256-128 decoder) is the SDXL VAE: `load_sd` reads it from an SDXL checkpoint
+//! (`first_stage_model.*`, original LDM names) or a standalone SD VAE file, with 4 latent channels at 1/8 scaled by
+//! 0.13025 and no patching or BatchNorm (`encode_sd` / `decode_sd`).
 use crate::cuda::{Arg, Device};
 use crate::ops::{self, Act, Epi};
 use crate::safetensors::SafeTensors;
 use crate::tensor::{bf16_bits, DType, Tensor};
 use crate::weights::Loader;
-use anyhow::{ensure, Result};
+use anyhow::{ensure, Context, Result};
 use cudarc::driver::PushKernelArg;
 use std::path::Path;
 use std::sync::Arc;
@@ -200,8 +204,48 @@ pub struct Vae {
     dec_up: Vec<(Vec<ResBlock>, Option<Conv>)>,
     dec_norm: Norm,
     dec_out: Conv,
-    pub bn_mean: Tensor,
-    pub bn_var: Tensor,
+    pub bn_mean: Option<Tensor>,
+    pub bn_var: Option<Tensor>,
+}
+
+/// SDXL's latent scale factor.
+pub const SDXL_SCALE: f32 = 0.13025;
+
+/// The diffusers name of an SD VAE tensor stored under its original LDM name (`first_stage_model.` stripped; decoder
+/// levels counted from the top, `up_levels` of them); None for tensors that are not the VAE's. Diffusers names pass
+/// through unchanged.
+pub fn sd_vae_name(k: &str, up_levels: usize) -> Option<String> {
+    let k = k.strip_prefix("first_stage_model.").unwrap_or(k);
+    if !(k.starts_with("encoder.") || k.starts_with("decoder.") || k.starts_with("quant_conv.") || k.starts_with("post_quant_conv.")) {
+        return None;
+    }
+    if k.contains("_blocks.") || k.contains("conv_norm_out") || k.contains("mid_block") {
+        return Some(k.to_string());
+    }
+    let parts: Vec<&str> = k.split('.').collect();
+    let res = |rest: &[&str]| rest.join(".").replace("nin_shortcut", "conv_shortcut");
+    let out = match parts.as_slice() {
+        [side, "down", i, "block", j, rest @ ..] => format!("{side}.down_blocks.{i}.resnets.{j}.{}", res(rest)),
+        [side, "down", i, "downsample", rest @ ..] => format!("{side}.down_blocks.{i}.downsamplers.0.{}", rest.join(".")),
+        [side, "up", i, "block", j, rest @ ..] => format!("{side}.up_blocks.{}.resnets.{j}.{}", up_levels - 1 - i.parse::<usize>().ok()?, res(rest)),
+        [side, "up", i, "upsample", rest @ ..] => format!("{side}.up_blocks.{}.upsamplers.0.{}", up_levels - 1 - i.parse::<usize>().ok()?, rest.join(".")),
+        [side, "mid", "block_1", rest @ ..] => format!("{side}.mid_block.resnets.0.{}", res(rest)),
+        [side, "mid", "block_2", rest @ ..] => format!("{side}.mid_block.resnets.1.{}", res(rest)),
+        [side, "mid", "attn_1", what, rest @ ..] => {
+            let n = match *what {
+                "norm" => "group_norm",
+                "q" => "to_q",
+                "k" => "to_k",
+                "v" => "to_v",
+                "proj_out" => "to_out.0",
+                _ => return None,
+            };
+            format!("{side}.mid_block.attentions.0.{n}.{}", rest.join("."))
+        }
+        [side, "norm_out", rest @ ..] => format!("{side}.conv_norm_out.{}", rest.join(".")),
+        _ => k.to_string(),
+    };
+    Some(out)
 }
 
 fn norm(l: &mut Loader, p: &str) -> Result<Norm> {
@@ -216,6 +260,27 @@ impl Vae {
     pub fn load(dev: Arc<Device>, path: &Path) -> Result<Vae> {
         let st = SafeTensors::open(path)?;
         ensure!(st.has("bn.running_mean") && st.has("decoder.conv_in.weight"), "{} is not a FLUX.2 VAE", path.display());
+        Self::from_st(dev, st)
+    }
+
+    /// The SD / SDXL VAE of a checkpoint (`first_stage_model.*`) or a standalone SD VAE file (LDM or diffusers names).
+    pub fn load_sd(dev: Arc<Device>, path: &Path) -> Result<Vae> {
+        let st = SafeTensors::open(path)?;
+        let up_levels = st
+            .tensors
+            .keys()
+            .filter_map(|k| k.strip_prefix("first_stage_model.").unwrap_or(k).strip_prefix("decoder.up."))
+            .filter_map(|r| r.split('.').next()?.parse::<usize>().ok())
+            .max()
+            .map(|m| m + 1)
+            .unwrap_or(4);
+        let st = st.renamed(|k| sd_vae_name(k, up_levels));
+        ensure!(st.has("decoder.conv_in.weight") && st.has("post_quant_conv.weight"), "{} has no SD VAE (first_stage_model.*)", st.path);
+        ensure!(!st.has("bn.running_mean"), "{} is a FLUX.2 VAE, not an SD VAE", st.path);
+        Self::from_st(dev, st)
+    }
+
+    fn from_st(dev: Arc<Device>, st: SafeTensors) -> Result<Vae> {
         let mut l = Loader::new(&st, dev.clone());
         let t0 = std::time::Instant::now();
         let res = |l: &mut Loader, p: &str| -> Result<ResBlock> {
@@ -242,9 +307,10 @@ impl Vae {
         };
         let enc_in = Conv::load(&mut l, "encoder.conv_in", Some(8), None)?;
         let mut enc_down = Vec::new();
+        let count = |st: &SafeTensors, p: &str| (0..).take_while(|j| st.has(&format!("{p}.resnets.{j}.conv1.weight"))).count();
         for i in 0..4 {
             let p = format!("encoder.down_blocks.{i}");
-            let blocks = (0..2).map(|j| res(&mut l, &format!("{p}.resnets.{j}"))).collect::<Result<Vec<_>>>()?;
+            let blocks = (0..count(l.st, &p)).map(|j| res(&mut l, &format!("{p}.resnets.{j}"))).collect::<Result<Vec<_>>>()?;
             let down = if l.st.has(&format!("{p}.downsamplers.0.conv.weight")) { Some(Conv::load(&mut l, &format!("{p}.downsamplers.0.conv"), None, None)?) } else { None };
             enc_down.push((blocks, down));
         }
@@ -252,20 +318,20 @@ impl Vae {
         let enc_norm = norm(&mut l, "encoder.conv_norm_out")?;
         let enc_out = Conv::load(&mut l, "encoder.conv_out", None, None)?;
         let quant = Conv::load(&mut l, "quant_conv", None, None)?;
-        let post_quant = Conv::load(&mut l, "post_quant_conv", None, None)?;
-        let dec_in = Conv::load(&mut l, "decoder.conv_in", None, None)?;
+        let post_quant = Conv::load(&mut l, "post_quant_conv", Some(8), Some(8))?;
+        let dec_in = Conv::load(&mut l, "decoder.conv_in", Some(8), None)?;
         let dec_mid = (res(&mut l, "decoder.mid_block.resnets.0")?, attn(&mut l, "decoder.mid_block.attentions.0")?, res(&mut l, "decoder.mid_block.resnets.1")?);
         let mut dec_up = Vec::new();
         for i in 0..4 {
             let p = format!("decoder.up_blocks.{i}");
-            let blocks = (0..3).map(|j| res(&mut l, &format!("{p}.resnets.{j}"))).collect::<Result<Vec<_>>>()?;
+            let blocks = (0..count(l.st, &p)).map(|j| res(&mut l, &format!("{p}.resnets.{j}"))).collect::<Result<Vec<_>>>()?;
             let up = if l.st.has(&format!("{p}.upsamplers.0.conv.weight")) { Some(Conv::load(&mut l, &format!("{p}.upsamplers.0.conv"), None, None)?) } else { None };
             dec_up.push((blocks, up));
         }
         let dec_norm = norm(&mut l, "decoder.conv_norm_out")?;
         let dec_out = Conv::load(&mut l, "decoder.conv_out", None, Some(8))?;
-        let bn_mean = l.f32("bn.running_mean")?;
-        let bn_var = l.f32("bn.running_var")?;
+        let bn_mean = l.f32_opt("bn.running_mean")?;
+        let bn_var = l.f32_opt("bn.running_var")?;
         crate::info!("  vae: {:.2} GB uploaded in {:.1}s", l.uploaded as f64 / 1e9, t0.elapsed().as_secs_f64());
         drop(l);
         st.drop_in_background();
@@ -326,6 +392,29 @@ impl Vae {
     pub fn encode(&self, rgb: &[f32], h: usize, w: usize) -> Result<Tensor> {
         let dev = &self.dev;
         ensure!(h % 16 == 0 && w % 16 == 0, "vae encode: size must be a multiple of 16");
+        let (bn_mean, bn_var) = (self.bn_mean.as_ref().context("not a FLUX.2 VAE")?, self.bn_var.as_ref().context("not a FLUX.2 VAE")?);
+        let q = self.moments(rgb, h, w)?;
+        let (lh, lw) = (h / 16, w / 16);
+        let tok = Tensor::new(dev, DType::F32, &[lh * lw, 128])?;
+        dev.launch_n("k_latent_pack", lh * lw * 128, &[Arg::Ptr(q.t.ptr), Arg::I32(q.c as i32), Arg::Ptr(tok.ptr), Arg::I32(lh as i32), Arg::I32(lw as i32), Arg::Ptr(bn_mean.ptr), Arg::Ptr(bn_var.ptr), Arg::F32(BN_EPS)])?;
+        Ok(tok)
+    }
+
+    /// SD: `rgb` f32 HWC [h, w, 3] in [0, 1] (multiples of 8) -> the scaled latent's mean, f32 HWC [h/8, w/8, 4].
+    pub fn encode_sd(&self, rgb: &[f32], h: usize, w: usize) -> Result<Vec<f32>> {
+        ensure!(h % 8 == 0 && w % 8 == 0, "vae encode: size must be a multiple of 8");
+        let q = self.moments(rgb, h, w)?;
+        let v = q.t.to_f32_vec(&self.dev)?;
+        let mut out = Vec::with_capacity(q.npix() * 4);
+        for p in 0..q.npix() {
+            out.extend(v[p * q.c..p * q.c + 4].iter().map(|x| x * SDXL_SCALE));
+        }
+        Ok(out)
+    }
+
+    /// The encoder through quant_conv: the latent distribution's moments [h/8, w/8, 2 * latent channels].
+    fn moments(&self, rgb: &[f32], h: usize, w: usize) -> Result<Plane> {
+        let dev = &self.dev;
         let rgb_t = Tensor::from_f32(dev, rgb, &[h * w, 3])?;
         let x0 = Plane::new(dev, h, w, 8)?;
         dev.launch_n("k_rgb_to_plane8", h * w, &[Arg::Ptr(rgb_t.ptr), Arg::Ptr(x0.t.ptr), Arg::I64((h * w) as i64)])?;
@@ -353,19 +442,35 @@ impl Vae {
         drop(hn);
         let q = Plane::new(dev, x.h, x.w, self.quant.co)?;
         self.conv(&moments, &self.quant, 1, 0, false, None, &q)?;
-        let (lh, lw) = (h / 16, w / 16);
-        let tok = Tensor::new(dev, DType::F32, &[lh * lw, 128])?;
-        dev.launch_n("k_latent_pack", lh * lw * 128, &[Arg::Ptr(q.t.ptr), Arg::I32(q.c as i32), Arg::Ptr(tok.ptr), Arg::I32(lh as i32), Arg::I32(lw as i32), Arg::Ptr(self.bn_mean.ptr), Arg::Ptr(self.bn_var.ptr), Arg::F32(BN_EPS)])?;
-        Ok(tok)
+        Ok(q)
     }
 
     // ------------------------------------------------------------------ decoder
     /// Normalized DiT latent tokens f32 [h*w, 128] -> RGB u8 [h*16, w*16, 3] (clamped to [-1, 1] like the pipeline).
     pub fn decode(&self, tok: &Tensor, h: usize, w: usize) -> Result<Vec<u8>> {
         let dev = &self.dev;
+        let (bn_mean, bn_var) = (self.bn_mean.as_ref().context("not a FLUX.2 VAE")?, self.bn_var.as_ref().context("not a FLUX.2 VAE")?);
         let z = Plane::new(dev, 2 * h, 2 * w, 32)?;
-        dev.launch_n("k_latent_unpack", h * w * 128, &[Arg::Ptr(tok.ptr), Arg::Ptr(z.t.ptr), Arg::I32(h as i32), Arg::I32(w as i32), Arg::Ptr(self.bn_mean.ptr), Arg::Ptr(self.bn_var.ptr), Arg::F32(BN_EPS)])?;
-        let z2 = Plane::new(dev, z.h, z.w, 32)?;
+        dev.launch_n("k_latent_unpack", h * w * 128, &[Arg::Ptr(tok.ptr), Arg::Ptr(z.t.ptr), Arg::I32(h as i32), Arg::I32(w as i32), Arg::Ptr(bn_mean.ptr), Arg::Ptr(bn_var.ptr), Arg::F32(BN_EPS)])?;
+        self.decode_plane(z)
+    }
+
+    /// SD: a latent f32 HWC [h, w, 4] (scaled, as the UNet samples it) -> RGB u8 [h*8, w*8, 3].
+    pub fn decode_sd(&self, lat: &[f32], h: usize, w: usize) -> Result<Vec<u8>> {
+        ensure!(lat.len() == h * w * 4, "vae decode: latent size");
+        let mut bits = vec![0u16; h * w * 8];
+        for p in 0..h * w {
+            for c in 0..4 {
+                bits[p * 8 + c] = bf16_bits(lat[p * 4 + c] / SDXL_SCALE);
+            }
+        }
+        let z = Plane { t: Tensor::from_bf16(&self.dev, &bits, &[h * w, 8])?, h, w, c: 8 };
+        self.decode_plane(z)
+    }
+
+    fn decode_plane(&self, z: Plane) -> Result<Vec<u8>> {
+        let dev = &self.dev;
+        let z2 = Plane::new(dev, z.h, z.w, self.post_quant.co)?;
         self.conv(&z, &self.post_quant, 1, 0, false, None, &z2)?;
         drop(z);
         let mut x = Plane::new(dev, z2.h, z2.w, self.dec_in.co)?;

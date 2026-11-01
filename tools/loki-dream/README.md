@@ -6,10 +6,11 @@ img2img, inpainting, LoRAs and an 8-step turbo mode. The whole stack is reimplem
 (int8 ConvRot tensor-core GEMMs, int8/fp8 attention), Qwen3.5's hybrid Gated-DeltaNet / gated-attention encoder,
 and the VAE. No Python, ONNX, PyTorch or ComfyUI at runtime; the only dependency is the NVIDIA driver.
 
-It also runs three other architectures, each with its own text encoder, VAE and sampler, picked by the model file
+It also runs four other architectures, each with its own text encoder, VAE and sampler, picked by the model file
 (`--model FILE`; the architecture is detected from the checkpoint): **Krea 2** (12B, Qwen3-VL-4B + Qwen-Image VAE),
-**FLUX.2 klein** (4B / 9B, Qwen3-4B / 8B + FLUX.2 VAE) and **Anima** (2B Cosmos-Predict2 with an LLM adapter, Qwen3-0.6B
-+ Qwen-Image VAE). See [Other architectures](#other-architectures-krea-2-flux2-klein-anima).
+**FLUX.2 klein** (4B / 9B, Qwen3-4B / 8B + FLUX.2 VAE), **Anima** (2B Cosmos-Predict2 with an LLM adapter, Qwen3-0.6B
++ Qwen-Image VAE) and **SDXL** (any SDXL-architecture single-file checkpoint: UNet, CLIP-L + OpenCLIP bigG and VAE in one
+file). See [Other architectures](#other-architectures-krea-2-flux2-klein-anima) and [SDXL](#sdxl).
 
 ```
 loki-dream -p "a tabby cat holding a sign that says KROMOSS"            # -> dream_<seed>.png (50 steps, CFG 3)
@@ -18,7 +19,8 @@ loki-dream --aspect 16:9 --seed 7 -p "a misty mountain lake at dawn" -o lake.png
 loki-dream --init photo.jpg --mask sky.png --strength 1 -p "a sky full of hot air balloons"
 loki-dream --model krea2_turbo_fp8_scaled -p "a portrait of an old fisherman at golden hour"      # Krea 2 Turbo, 8 steps
 loki-dream --model flux-2-klein-4b -p "a red apple on a wooden table"                            # FLUX.2 klein, 4 steps
-loki-dream --arch anima -p "masterpiece, best quality, safe, 1girl, silver hair, cherry blossoms"  # Anima (downloads Turbo)
+loki-dream --arch anima -p "masterpiece, best quality, safe, 1girl, silver hair, cherry blossoms"  # Anima 1.0
+loki-dream --model my_sdxl_checkpoint -p "a (red:1.2) vintage car, golden hour" --negative "blurry"   # any SDXL checkpoint
 ```
 
 ## Part of the loki- toolkit
@@ -28,7 +30,7 @@ loki-dream --arch anima -p "masterpiece, best quality, safe, 1girl, silver hair,
 | [loki-retouch](../loki-retouch) | image editing, upscaling, restoration, compositing | Qwen Image 2.1 |
 | [loki-reshoot](../loki-reshoot) | reference images / videos / audio -> video with sound | MiniMax H3 |
 | [loki-segment](../loki-segment) | concept / click / box segmentation, tracked roto of video | SAM 3.1 |
-| **loki-dream** (this tool) | text -> image, img2img, inpainting, LoRAs | Kromoss (MOSS-Image), Krea 2, FLUX.2 klein, Anima |
+| **loki-dream** (this tool) | text -> image, img2img, inpainting, LoRAs | Kromoss (MOSS-Image), Krea 2, FLUX.2 klein, Anima, SDXL |
 
 Shared conventions (`../CONVENTIONS.md`): stdout carries only results (the path of every image, one per line;
 `--json` one object; `-o -` the PNG). Progress, timings and warnings go to stderr (`-q` silences them). Exit status is 0 ok,
@@ -55,7 +57,8 @@ loki-dream [OPTIONS] -p PROMPT
   -o PATH|DIR|-  --json  -q  --show-prompt  --meta JSON | --meta-file FILE
   --precision int8|bf16    the diffusion model (default int8 ConvRot when present)
   -m, --model / --dit PATH|NAME   the diffusion model, any supported architecture (a bare NAME is looked up in the model folders)
-  --arch moss|krea2|flux2|anima   an architecture's default model when no --model is given
+  --arch moss|krea2|flux2|anima|sdxl   an architecture's default model when no --model is given
+  --sampler euler_ancestral|euler|dpmpp_2m  --scheduler normal|karras|sgm_uniform   SDXL only (ComfyUI's names)
   --text-encoder / --vae PATH|NAME   override the architecture's own
 ```
 
@@ -119,7 +122,8 @@ diffusers pipeline and in ComfyUI. Runs are deterministic: the same command give
 four architectures. The architecture is detected from the file's tensor names (the safetensors header only), and the
 matching text encoder, VAE, prompt template, schedule and defaults follow. `--arch NAME` picks an architecture's default
 model when no `--model` is given (and must match the file when one is). Checkpoints of other architectures are refused by
-name (`this is a FLUX.1 model; loki-dream supports ...`): FLUX.1 / Chroma, Qwen-Image, SD / SDXL UNets, SD3, Lumina,
+name (`this is a FLUX.1 model; loki-dream supports ...`): FLUX.1 / Chroma, Qwen-Image, SD 1.x / 2.x, SDXL refiners and
+UNet-only SDXL files, SD3, Lumina,
 Wan, LTX, HiDream, Cosmos without Anima's adapter, and text encoders or VAEs given by mistake.
 
 | arch | checkpoints | text encoder | VAE | defaults |
@@ -156,6 +160,29 @@ loki-dream --model anima-base-v1.0 --negative "worst quality, low quality, score
            -p "masterpiece, best quality, score_7, safe, 1girl, @artist name, ..."
 loki-dream --model anima-turbo-v1.1 --init sketch.png --strength 0.7 -p "..."    # img2img / inpainting work for all four
 ```
+
+## SDXL
+
+`--model FILE` with an SDXL-architecture checkpoint (the single-file layout: `model.diffusion_model.*` UNet,
+`conditioner.embedders.0/1` CLIP ViT-L/14 and OpenCLIP ViT-bigG/14, `first_stage_model.*` VAE, in bf16, fp16 or fp32)
+runs it end to end from that one file; `--arch sdxl` alone downloads SDXL base 1.0 (6.9 GB). Fine-tunes of SDXL are just
+other checkpoints of the same architecture. `--vae FILE` swaps in a standalone SD VAE; there is no separate text encoder.
+
+| | |
+|---|---|
+| defaults | 30 steps, CFG 6, `euler_ancestral` + `normal`; step-distilled files (named lightning / turbo / hyper / dmd / lcm): 8 steps, CFG 1, `euler` + `sgm_uniform` |
+| `--sampler` | `euler_ancestral` (default), `euler`, `dpmpp_2m` |
+| `--scheduler` | `normal` (default), `karras`, `sgm_uniform` |
+| prediction | eps, or v-prediction (with zero terminal SNR) when the checkpoint carries ComfyUI's `v_pred` / `ztsnr` markers or `modelspec.prediction_type` says so |
+| prompts | ComfyUI's syntax: `(text)` weighs x1.1 per level, `(text:1.3)` sets it, `\(` `\)` are literal; longer than 75 tokens runs on in 75-token chunks |
+| size | multiples of 32 (others are generated at the nearest and resampled); size conditioning = the generated size, no crop |
+
+Sampling follows ComfyUI's `KSampler`: the scaled-linear DDPM schedule (0.00085..0.012, 1000 steps) as k-diffusion sigmas,
+the model input scaled by 1/sqrt(sigma^2 + 1), the first noise by sqrt(1 + sigma_max^2), CFG on the denoised estimates, and
+img2img / inpainting as ComfyUI does it (the kept region re-noised to every step's sigma). The first noise is ComfyUI's CPU
+noise (`torch.randn([1, 4, H/8, W/8])` from the seed); `euler_ancestral`'s per-step noise comes from its own seeded stream,
+so ancestral runs are reproducible here but not seed-for-seed equal to ComfyUI's GPU noise. Not for SDXL (yet): LoRAs,
+embeddings (`embedding:`), the refiner.
 
 ## Models
 
@@ -197,10 +224,12 @@ folders in `$LOKI_MODELS`.
 | flux2 | VAE | `flux2-vae` (the full decoder) | Comfy-Org/Flux-2-Klein-4B | 0.34 GB |
 | anima | diffusion model (`--arch` default) | `anima-base` (Anima 1.0; `anima-turbo-v1.1`, the distilled 10-step one, downloads when named) | [circlestone-labs/Anima](https://huggingface.co/circlestone-labs/Anima) | 4.2 GB |
 | anima | text encoder | `qwen_3_06b_base` | circlestone-labs/Anima | 1.2 GB |
+| sdxl | checkpoint (`--arch` default; text encoders and VAE inside) | `sd_xl_base_1.0` | [stabilityai/stable-diffusion-xl-base-1.0](https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0) | 6.9 GB |
 
 Which klein text encoder a run needs is read from the model (`txt_in` width: 7680 = 4B, 12288 = 9B). The Qwen3 tokenizer
 (151k BPE, shared by all three) and Anima's T5 tokenizer (SentencePiece Unigram with its precompiled normalizer) are
-embedded too (`assets/qwen3`, `assets/t5`); both match the Hugging Face tokenizers on the fixtures in `tests/`.
+embedded too (`assets/qwen3`, `assets/t5`); both match the Hugging Face tokenizers on the fixtures in `tests/`. SDXL's CLIP
+BPE (49k, `assets/clip`, from openai/clip-vit-large-patch14) serves both of its text encoders.
 
 ## Building
 
@@ -212,6 +241,7 @@ driver dynamically.
 cargo test --release --lib --test tokenizer      # GPU-free (CI): unit tests + tokenizers vs Hugging Face fixtures
 cargo run --release --bin dream_check -- ...     # MOSS-Image stage checks against reference dumps (GPU, models; below)
 cargo run --release --bin arch_check -- ...      # the same for Krea 2 / FLUX.2 klein / Anima (ref/ref_arch.py dumps)
+cargo run --release --bin arch_check -- sdxl ... # SDXL text encoders / UNet / VAE (ref/ref_sdxl.py dumps)
 ```
 
 ## Engine
@@ -364,6 +394,20 @@ Krea 2 is unusually sensitive: the bf16 reference against an fp32 run of itself 
 native output is exactly as close to that fp32 run as the reference is. VAEs: Qwen-Image decode 56.1 dB, encode cos
 0.99999; FLUX.2 (full decoder) decode 57.5 dB.
 
+### SDXL
+
+`ref/ref_sdxl.py` loads diffusers' `StableDiffusionXLPipeline.from_single_file` on the same checkpoint in fp32;
+`arch_check sdxl te|unet|vae DIR --ckpt FILE` compares.
+
+| stage | native vs reference |
+|---|---|
+| token ids (CLIP-L, bigG) | identical (diffusers' bigG tokenizer turns a word-final `!` into the pad id; the original SDXL code and ComfyUI do not, nor does loki-dream) |
+| context, CLIP-L / bigG penultimate states | cos 0.99996 / 0.99986 |
+| pooled (bigG projection) | cos 0.99997 |
+| one UNet forward, 1024x768, t = 500 | cos 0.999996, relL2 0.0027 |
+| VAE decode / encode | 47.6 dB / cos 0.9917 (diffusers' own VAE in bf16: 0.9914) |
+| whole image, 768², euler + normal, 20 steps, CFG 6 | 22.5 dB (bf16 vs the fp32 reference; same composition) |
+
 Whole images at a fixed seed, PSNR vs the official pipeline's image:
 
 | run | native |
@@ -384,6 +428,7 @@ Whole images at a fixed seed, PSNR vs the official pipeline's image:
 | FLUX.2 klein base 4B (fp8 file, int8), 50 steps, CFG 4 | 13.0 s | 16.5 s | |
 | FLUX.2 klein 9B (fp8 file, int8), 4 steps | 1.0 s | 5.2 s | |
 | Anima base (bf16), 30 steps, CFG 4 | 8.6 s | 11.1 s | |
+| SDXL (fp16 file, bf16), 30 steps, CFG 6 | 5.8 s (0.09 s per UNet pass) | 16.7 s (checkpoint read cold) | |
 
 Fixed costs per run: text encoder 2.7-2.9 s (14 GB of bf16 weights streamed), DiT upload 1.1 s (int8) / 2.0 s (bf16),
 LoRA prep 0.4 s, VAE decode 0.2 s. `--count N` and several prompts pay them once. At 1024² the int8 GEMMs run at 320-360

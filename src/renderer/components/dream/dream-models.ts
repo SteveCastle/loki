@@ -17,7 +17,7 @@ export interface DreamModel {
   /** The file name a job sends as `model`. */
   file: string;
   label: string;
-  /** moss | krea2 | flux2 | anima */
+  /** moss | krea2 | flux2 | anima | sdxl */
   arch: string;
   archName: string;
   /** Few steps without guidance. */
@@ -157,6 +157,8 @@ export function variantLabel(m: DreamModel): string {
 //   prompt says rather than by a negative, so that one stays minimal (and its distilled checkpoints ignore it).
 // - Anima: the card's own prefix and negative: lowercase Danbooru tags with spaces (score tags keep underscores),
 //   optionally followed by a natural-language sentence. Illustration only; it does not do photorealism.
+// - SDXL: comma-separated phrases, the subject first, then style, light and quality words; CLIP reads about 75 tokens
+//   per chunk and takes (word:1.2) weights. Checkpoints differ a lot, so the sample stays general.
 
 export interface DreamPromptGuide {
   prompt: string;
@@ -189,6 +191,12 @@ export const DREAM_PROMPT_GUIDES: Record<string, DreamPromptGuide> = {
       'masterpiece, best quality, score_7, safe, 1girl, solo, silver hair, long hair, blue eyes, white hoodie, holding umbrella, rain, city street, night, neon lights, reflections. She looks up at the glowing shop signs.',
     negative: 'worst quality, low quality, score_1, score_2, score_3, artist name',
     tip: 'Start with "masterpiece, best quality, score_7, safe," then lowercase tags with spaces (not underscores), optionally a sentence after. Anime and illustration only: it does not do photorealism.',
+  },
+  sdxl: {
+    prompt:
+      'a lighthouse on a rocky cliff at sunset, crashing waves, dramatic clouds, warm golden light, highly detailed, sharp focus, cinematic composition',
+    negative: 'lowres, blurry, worst quality, low quality, jpeg artifacts, watermark, signature, text, deformed',
+    tip: 'Short comma-separated phrases, the subject first, then style, light and quality words. (word:1.2) makes a phrase count more. Fine-tuned checkpoints often expect their own tags: check the model card.',
   },
 };
 

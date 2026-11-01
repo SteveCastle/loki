@@ -45,6 +45,7 @@ pub fn is_distilled(a: Arch, path: &Path) -> bool {
         Arch::Krea2 => !(n.contains("raw") || n.contains("base")),
         Arch::Anima => ["turbo", "distill", "lightning"].iter().any(|k| n.contains(k)),
         Arch::Flux2 => !n.contains("base"),
+        Arch::Sdxl => crate::sdxl::is_distilled(path),
     }
 }
 
@@ -57,6 +58,8 @@ pub fn defaults(a: Arch, distilled: bool) -> (usize, f32) {
         (Arch::Flux2, true) => (4, 1.0),
         (Arch::Anima, false) => (30, 4.0),
         (Arch::Anima, true) => (10, 1.0),
+        (Arch::Sdxl, false) => (30, 6.0),
+        (Arch::Sdxl, true) => (8, 1.0),
         (Arch::Moss, _) => (50, 3.0),
     }
 }
@@ -69,6 +72,8 @@ pub fn show_prompt(a: Arch, p: &str) -> Vec<String> {
         // Qwen3-0.6B and the adapter's T5 query tokens both read the raw text
         Arch::Anima => vec![p.to_string()],
         Arch::Moss => vec![crate::text_encoder::template(p)],
+        // what CLIP reads, by weight: each segment on its own line with its weight
+        Arch::Sdxl => vec![crate::clip::weighted_segments(p).into_iter().map(|(t, w)| if w == 1.0 { t } else { format!("[{t}]x{w}") }).collect()],
     }
 }
 
@@ -86,14 +91,17 @@ pub(crate) fn te_spec(a: Arch, dit: &Path) -> Result<&'static Spec> {
             }
         }
         Arch::Moss => &models::TEXT_ENCODER,
+        Arch::Sdxl => bail!("an SDXL checkpoint carries its own text encoders"),
     })
 }
 
-pub(crate) fn vae_spec(a: Arch) -> &'static Spec {
+/// The VAE an architecture downloads (None: SDXL's is inside the checkpoint).
+pub(crate) fn vae_spec(a: Arch) -> Option<&'static Spec> {
     match a {
-        Arch::Krea2 | Arch::Anima => &models::QWEN_IMAGE_VAE,
-        Arch::Flux2 => &models::FLUX2_VAE,
-        Arch::Moss => &models::VAE,
+        Arch::Krea2 | Arch::Anima => Some(&models::QWEN_IMAGE_VAE),
+        Arch::Flux2 => Some(&models::FLUX2_VAE),
+        Arch::Moss => Some(&models::VAE),
+        Arch::Sdxl => None,
     }
 }
 
@@ -157,7 +165,7 @@ fn load_engine(dev: &Arc<Device>, a: Arch, dit: &Path, int8: bool) -> Result<Rc<
             Arch::Krea2 => Engine::Krea2(Krea2::load(dev.clone(), dit, int8)?),
             Arch::Flux2 => Engine::Flux2(Flux2::load(dev.clone(), dit, int8)?),
             Arch::Anima => Engine::Anima(Anima::load(dev.clone(), dit, int8)?),
-            Arch::Moss => bail!("MOSS-Image runs through the MOSS path"),
+            Arch::Moss | Arch::Sdxl => bail!("{} runs through its own path", a.name()),
         })
     })
 }
@@ -179,8 +187,11 @@ fn init_kernels(dev: &Device) -> Result<()> {
 
 /// Worker warm-up: fetch the architecture's files and load its DiT and VAE.
 pub(crate) fn warm(cli: &Cli, a: Arch, dit: &Path) -> Result<()> {
+    if a == Arch::Sdxl {
+        return crate::sdxl::warm(cli, dit);
+    }
     models::resolve(cli.text_encoder.clone(), te_spec(a, dit)?)?;
-    let vae = models::resolve(cli.vae.clone(), vae_spec(a))?;
+    let vae = models::resolve(cli.vae.clone(), vae_spec(a).context("VAE")?)?;
     let dev = crate::worker::device()?;
     init_kernels(&dev)?;
     load_any_vae(&dev, a, &vae)?;
@@ -253,7 +264,7 @@ pub fn encode_texts(dev: &Arc<Device>, a: Arch, te_path: &Path, texts: &[String]
                 t5_ids.push(q);
             }
         }
-        Arch::Moss => unreachable!(),
+        Arch::Moss | Arch::Sdxl => unreachable!(),
     }
     let taps: Vec<usize> = match a {
         Arch::Krea2 => crate::krea2::TAPS.to_vec(),
@@ -358,7 +369,7 @@ pub(crate) fn run(cli: &Cli, plan: &Plan, distilled: bool) -> Result<()> {
     let ((gw, gh), (ow, oh)) = (plan.gen, plan.out);
     let (steps, cfg) = (plan.steps, plan.cfg);
     let te_path = models::resolve(cli.text_encoder.clone(), te_spec(a, &plan.dit)?)?;
-    let vae_path = models::resolve(cli.vae.clone(), vae_spec(a))?;
+    let vae_path = models::resolve(cli.vae.clone(), vae_spec(a).context("VAE")?)?;
     crate::info!("{prog}: {} {}{}, {} image(s), {}x{}{}, {} steps, CFG {}", a.name(), cli::file_stem(&plan.dit), if distilled { " (distilled)" } else { "" }, plan.jobs.len(), ow, oh, if (gw, gh) != (ow, oh) { format!(" (generated at {gw}x{gh})") } else { String::new() }, steps, cfg);
     crate::info!("  dit: {}\n  text encoder: {}\n  vae: {}", plan.dit.display(), te_path.display(), vae_path.display());
     let t_dev = std::time::Instant::now();

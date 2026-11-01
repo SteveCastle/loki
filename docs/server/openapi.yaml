@@ -3168,9 +3168,10 @@ components:
             - krea2
             - flux2
             - anima
+            - sdxl
         architecture_name:
           type: string
-          description: The architecture for people (MOSS-Image, Krea 2, FLUX.2 klein, Anima).
+          description: The architecture for people (MOSS-Image, Krea 2, FLUX.2 klein, Anima, SDXL).
         distilled:
           type: boolean
           description: A step-distilled checkpoint (few steps, CFG 1, no negative prompt).
@@ -14170,7 +14171,7 @@ paths:
       description: |
         Asks the engine (`loki-dream --list-models --json`, on this machine or a
         worker of the dream pool): every checkpoint in its model folders whose
-        architecture it runs (MOSS-Image, Krea 2, FLUX.2 klein, Anima), with the
+        architecture it runs (MOSS-Image, Krea 2, FLUX.2 klein, Anima, SDXL), with the
         settings it runs with and whether its text encoder and VAE are present
         or would be downloaded, plus each architecture's default model as a
         download when it is not there. A dream job (and `POST /api/scene-dream`)

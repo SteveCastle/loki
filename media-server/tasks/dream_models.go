@@ -4,7 +4,7 @@ package tasks
 // flow's Generate / Reimagine and the Scene editor's "new scene from a
 // prompt". The engine is the authority: `loki-dream --list-models --json`
 // scans its model folders (LOKI_MODELS included), detects each checkpoint's
-// architecture (MOSS-Image, Krea 2, FLUX.2 klein, Anima) and says what it
+// architecture (MOSS-Image, Krea 2, FLUX.2 klein, Anima, SDXL) and says what it
 // runs with and what a first run would download. The answer is cached for a
 // while; a refresh asks again.
 
@@ -38,7 +38,7 @@ type DreamModel struct {
 	// File is the bare file name a job names in `model`.
 	File  string `json:"file"`
 	Label string `json:"label"`
-	// Architecture: moss | krea2 | flux2 | anima; ArchitectureName for people.
+	// Architecture: moss | krea2 | flux2 | anima | sdxl; ArchitectureName for people.
 	Architecture     string `json:"architecture"`
 	ArchitectureName string `json:"architecture_name"`
 	// Distilled checkpoints run few steps without guidance (no negative prompt).

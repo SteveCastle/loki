@@ -35,6 +35,9 @@ pub const KLEIN4B_TE: Spec = Spec { repo: "Comfy-Org/Flux-2-Klein-4B", what: "Qw
 pub const KLEIN9B_TE: Spec = Spec { repo: "Comfy-Org/Flux-2-Klein-9B", what: "Qwen3-8B text encoder", patterns: &["qwen_3_8b.", "qwen_3_8b", "qwen3-8b", "qwen3_8b"], hf_path: "split_files/text_encoders/qwen_3_8b.safetensors", size_gb: 16.4 };
 pub const FLUX2_VAE: Spec = Spec { repo: "Comfy-Org/Flux-2-Klein-4B", what: "FLUX.2 VAE", patterns: &["flux2-vae.safetensors", "flux2_vae.safetensors"], hf_path: "split_files/vae/flux2-vae.safetensors", size_gb: 0.34 };
 
+// ---- SDXL (stabilityai/stable-diffusion-xl-base-1.0: one file with the UNet, both text encoders and the VAE)
+pub const SDXL_BASE: Spec = Spec { repo: "stabilityai/stable-diffusion-xl-base-1.0", what: "SDXL base 1.0 checkpoint", patterns: &["sd_xl_base_1.0", "sd_xl_base", "sdxl_base"], hf_path: "sd_xl_base_1.0.safetensors", size_gb: 6.9 };
+
 // ---- Anima (circlestone-labs/Anima)
 pub const ANIMA_DIT: Spec = Spec { repo: "circlestone-labs/Anima", what: "Anima diffusion model", patterns: &["anima-base", "anima_base"], hf_path: "split_files/diffusion_models/anima-base-v1.0.safetensors", size_gb: 4.2 };
 /// the distilled 10-step Anima, downloaded only when named (`--model anima-turbo-v1.1`)

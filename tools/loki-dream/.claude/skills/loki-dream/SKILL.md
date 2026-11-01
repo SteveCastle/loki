@@ -1,14 +1,14 @@
 ---
 name: loki-dream
-description: Generate images from text with the local loki-dream CLI (Kromoss / MOSS-Image by default, or a Krea 2, FLUX.2 klein or Anima checkpoint via --model; Rust/CUDA, no Python/ComfyUI). Use when the user wants a new image from a prompt, several variations, a fast 8-step draft (--turbo), an img2img variation of an existing picture, inpainting a masked region, a LoRA applied, or a structured layout prompt (text and objects placed in boxes). Composes with loki-retouch / loki-segment / loki-reshoot through stdin/stdout.
+description: Generate images from text with the local loki-dream CLI (Kromoss / MOSS-Image by default, or a Krea 2, FLUX.2 klein, Anima or SDXL checkpoint via --model; Rust/CUDA, no Python/ComfyUI). Use when the user wants a new image from a prompt, several variations, a fast 8-step draft (--turbo), an img2img variation of an existing picture, inpainting a masked region, a LoRA applied, or a structured layout prompt (text and objects placed in boxes). Composes with loki-retouch / loki-segment / loki-reshoot through stdin/stdout.
 ---
 
 # loki-dream: prompt in, image out
 
 `loki-dream` runs Kromoss (lodestones' full fine-tune of OpenMOSS MOSS-Image, 5B DiT) with the Qwen3.5-9B text encoder and
 the FLUX.2 small VAE, locally on the NVIDIA GPU (RTX 4090 class, 24 GB) in a standalone engine. `--model FILE` (alias `--dit`, a
-path or a bare file name in the model folders) swaps in any Krea 2, FLUX.2 klein (4B/9B) or Anima checkpoint instead: the
-architecture is detected from the file and its own text encoder, VAE, schedule and defaults follow (`--arch krea2|flux2|anima`
+path or a bare file name in the model folders) swaps in any Krea 2, FLUX.2 klein (4B/9B), Anima or SDXL-architecture checkpoint instead: the
+architecture is detected from the file and its own text encoder, VAE, schedule and defaults follow (`--arch krea2|flux2|anima|sdxl`
 picks an architecture's default model). Other architectures (FLUX.1, SDXL, Qwen-Image, ...) are refused with their name. It is one of the `loki-`
 toolkit's small composable tools: `loki-retouch` edits images, `loki-segment` makes masks, `loki-reshoot` animates them.
 
@@ -31,7 +31,7 @@ toolkit's small composable tools: `loki-retouch` edits images, `loki-segment` ma
 | Intent | Command |
 |---|---|
 | one image | `loki-dream -p "a tabby cat holding a sign that says HELLO" -o cat.png` |
-| another model | `loki-dream --model krea2_turbo_fp8_scaled -p "..."` (Krea 2: photoreal), `--model flux-2-klein-4b` (FLUX.2 klein: fast, 4 steps), `--model anima-base-v1.0` (anime/illustration; tags like `masterpiece, best quality, safe, 1girl, ...`) |
+| another model | `loki-dream --model krea2_turbo_fp8_scaled -p "..."` (Krea 2: photoreal), `--model flux-2-klein-4b` (FLUX.2 klein: fast, 4 steps), `--model anima-base-v1.0` (anime/illustration; tags like `masterpiece, best quality, safe, 1girl, ...`), any SDXL checkpoint by file (`--sampler`, `--scheduler`, `(word:1.2)` weighting) |
 | fast drafts (8 steps, ~10x faster) | `loki-dream --turbo --count 4 -o drafts/ -p "..."` |
 | best quality | default: 50 steps, CFG 3 (official settings) |
 | widescreen / portrait | `--aspect 16:9` or `--size 1344x768` (about 1 MP is the sweet spot; multiples of 16) |

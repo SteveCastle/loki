@@ -17,7 +17,7 @@ export interface ModelPickerProps {
   label?: string;
 }
 
-const ARCH_ORDER = ['moss', 'krea2', 'flux2', 'anima'];
+const ARCH_ORDER = ['moss', 'krea2', 'flux2', 'anima', 'sdxl'];
 
 function archRank(a: string): number {
   const i = ARCH_ORDER.indexOf(a);

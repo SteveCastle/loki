@@ -73,6 +73,12 @@ impl SafeTensors {
 }
 
 impl SafeTensors {
+    /// The same file seen under other tensor names: `f` maps each name to its new one, or drops it (None).
+    pub fn renamed(self, f: impl Fn(&str) -> Option<String>) -> SafeTensors {
+        let tensors = self.tensors.iter().filter_map(|(k, v)| f(k).map(|n| (n, v.clone()))).collect();
+        SafeTensors { tensors, ..self }
+    }
+
     /// Unmap on a background thread: unmapping a large, fully touched mapping takes seconds on Windows.
     pub fn drop_in_background(self) {
         std::thread::spawn(move || drop(self));

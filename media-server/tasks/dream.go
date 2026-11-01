@@ -41,7 +41,7 @@ var dreamOptions = []TaskOption{
 	{Name: "turbo", Label: "Turbo", Type: "bool", Default: false, Description: "8 steps with the distilled turbo LoRA: several times faster, a little less detail"},
 	{Name: "seed", Label: "Seed", Type: "number", Default: -1.0, Description: "Noise seed; -1 = random (logged)"},
 	{Name: "count", Label: "Count", Type: "number", Default: 1.0, Description: "Images to make (1-8; consecutive seeds, one model load)"},
-	{Name: "model", Label: "Model", Type: "string", Default: "", Description: "The diffusion model, by file name (one of GET /api/dream/models: Kromoss, a MOSS-Image fine-tune, Krea 2, FLUX.2 klein or Anima); empty = the server's dreamModel setting, else Kromoss"},
+	{Name: "model", Label: "Model", Type: "string", Default: "", Description: "The diffusion model, by file name (one of GET /api/dream/models: Kromoss, a MOSS-Image fine-tune, Krea 2, FLUX.2 klein, Anima or an SDXL checkpoint); empty = the server's dreamModel setting, else Kromoss"},
 	{Name: "loras", Label: "LoRAs", Type: "string", Default: "", Description: "LoRA files, one per line, each optionally path:scale"},
 	{Name: "strength", Label: "Strength", Type: "number", Default: 0.8, Description: "With an input image: how much is redrawn (0 = nothing, 1 = everything; the composition survives up to about 0.9)"},
 	{Name: "mask", Label: "Mask", Type: "string", Default: "", Description: "With an input image: a mask image (white = regenerate) for inpainting"},
