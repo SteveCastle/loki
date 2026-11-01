@@ -18,7 +18,8 @@ import (
 // --- dream (loki-dream) ---
 //
 // Wraps the standalone `loki-dream` CLI (Kromoss, a MOSS-Image fine-tune:
-// text -> image). Three modes, by what the job is given:
+// text -> image; Config.DreamModel can swap in a Krea 2, FLUX.2 klein or
+// Anima checkpoint instead). Three modes, by what the job is given:
 //
 //   - no input: a new image from the prompt, written to the generations
 //     folder (dreamDir) and added to the library;
@@ -40,6 +41,7 @@ var dreamOptions = []TaskOption{
 	{Name: "turbo", Label: "Turbo", Type: "bool", Default: false, Description: "8 steps with the distilled turbo LoRA: several times faster, a little less detail"},
 	{Name: "seed", Label: "Seed", Type: "number", Default: -1.0, Description: "Noise seed; -1 = random (logged)"},
 	{Name: "count", Label: "Count", Type: "number", Default: 1.0, Description: "Images to make (1-8; consecutive seeds, one model load)"},
+	{Name: "model", Label: "Model", Type: "string", Default: "", Description: "The diffusion model, by file name (one of GET /api/dream/models: Kromoss, a MOSS-Image fine-tune, Krea 2, FLUX.2 klein or Anima); empty = the server's dreamModel setting, else Kromoss"},
 	{Name: "loras", Label: "LoRAs", Type: "string", Default: "", Description: "LoRA files, one per line, each optionally path:scale"},
 	{Name: "strength", Label: "Strength", Type: "number", Default: 0.8, Description: "With an input image: how much is redrawn (0 = nothing, 1 = everything; the composition survives up to about 0.9)"},
 	{Name: "mask", Label: "Mask", Type: "string", Default: "", Description: "With an input image: a mask image (white = regenerate) for inpainting"},
@@ -61,7 +63,8 @@ type dreamParams struct {
 	OutDir                 string
 	Meta, MetaFile         string
 	NoLibrary              bool
-	// Model is the --dit swap (Config.DreamModel); empty = the engine's default.
+	// Model is the --dit swap: the job's `model`, else Config.DreamModel;
+	// empty = the engine's default.
 	Model string
 }
 
@@ -81,6 +84,7 @@ func dreamParamsFromOptions(opts map[string]any) dreamParams {
 		OutDir:    strings.TrimSpace(optString(opts, "outdir")),
 		Meta:      strings.TrimSpace(optString(opts, "meta")),
 		NoLibrary: optBool(opts, "nolibrary"),
+		Model:     strings.TrimSpace(optString(opts, "model")),
 	}
 	if _, ok := opts["strength"]; !ok {
 		p.Strength = 0.8
@@ -177,10 +181,21 @@ func dreamTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 	if p.Prompt == "" {
 		return fail("needs a prompt", nil)
 	}
-	if p.Model = strings.TrimSpace(appconfig.Get().DreamModel); p.Model != "" {
-		q.PushJobStdout(j.ID, tag+": model "+p.Model)
+	if p.Model == "" {
+		p.Model = strings.TrimSpace(appconfig.Get().DreamModel)
+	} else if !validDreamModelName(p.Model) {
+		return fail(fmt.Sprintf("model %q must be a model file's name (see /api/dream/models), not a path", p.Model), nil)
 	}
-	tool, err := resolveAITool(ctx, q, j.ID, tag, dreamTool)
+	spec := dreamTool
+	if p.Model != "" {
+		q.PushJobStdout(j.ID, tag+": model "+p.Model)
+		if dreamModelArch(p.Model) == "" {
+			// learn the model's architecture (its dependencies differ) from the engine's list
+			DreamModels(ctx, false)
+		}
+		spec = dreamSpecFor(p.Model)
+	}
+	tool, err := resolveAITool(ctx, q, j.ID, tag, spec)
 	if err != nil {
 		return fail(err.Error(), err)
 	}

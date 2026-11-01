@@ -124,6 +124,9 @@ type DreamRequest struct {
 	Size     string `json:"size,omitempty"`
 	Turbo    bool   `json:"turbo,omitempty"`
 	Seed     int64  `json:"seed,omitempty"`
+	// Steps: 0 = the model's own; Model: a file from DreamModels, "" = the default.
+	Steps int    `json:"steps,omitempty"`
+	Model string `json:"model,omitempty"`
 }
 
 // DreamStatus is how that picture is coming along.
@@ -157,6 +160,15 @@ func QueueSceneDream(q *jobqueue.Queue, in DreamRequest) (*DreamStatus, error) {
 	}
 	if in.Seed > 0 {
 		args = append(args, "--seed="+strconv.FormatInt(in.Seed, 10))
+	}
+	if in.Steps > 0 {
+		args = append(args, "--steps="+strconv.Itoa(clampInt(in.Steps, 1, 100)))
+	}
+	if m := strings.TrimSpace(in.Model); m != "" {
+		if !validDreamModelName(m) {
+			return nil, fmt.Errorf("model %q must be a model file's name, not a path", m)
+		}
+		args = append(args, "--model="+m)
 	}
 	ids, err := q.AddWorkflow(jobqueue.Workflow{Tasks: []jobqueue.WorkflowTask{{ID: uuid.NewString(), Command: "dream", Arguments: args}}})
 	if err != nil || len(ids) == 0 {

@@ -3133,6 +3133,89 @@ components:
         - file
         - label
         - recipe
+    DreamModelNeed:
+      type: object
+      description: A file a dream model needs beside its checkpoint (its text encoder or VAE).
+      properties:
+        file:
+          type: string
+        present:
+          type: boolean
+          description: Found in the engine's model folders; false = the first run downloads it.
+        download_gb:
+          type: number
+          description: Download size when not present.
+        from:
+          type: string
+          description: Hugging Face repo it is downloaded from.
+      required:
+        - file
+        - present
+    DreamModel:
+      type: object
+      description: One diffusion model loki-dream can run (from the engine's `--list-models`).
+      properties:
+        file:
+          type: string
+          description: Model file name; pass it as the dream job's `model` option.
+        label:
+          type: string
+          description: Display name (from a civitai.info next to the file, else the file name).
+        architecture:
+          type: string
+          enum:
+            - moss
+            - krea2
+            - flux2
+            - anima
+        architecture_name:
+          type: string
+          description: The architecture for people (MOSS-Image, Krea 2, FLUX.2 klein, Anima).
+        distilled:
+          type: boolean
+          description: A step-distilled checkpoint (few steps, CFG 1, no negative prompt).
+        steps:
+          type: integer
+          description: The steps it runs with by default.
+        cfg:
+          type: number
+          description: The guidance it runs with by default (1 = no negative branch).
+        turbo:
+          type: boolean
+          description: The job's `turbo` option applies a distillation LoRA to this model (MOSS-Image).
+        loras:
+          type: boolean
+          description: The job's `loras` option works with this model.
+        local:
+          type: boolean
+          description: The checkpoint is in the engine's model folders; false = a run downloads `download_gb` first.
+        format:
+          type: string
+          description: How the big weights are stored (int8, fp8, nvfp4, bf16, fp16, fp32).
+        size_gb:
+          type: number
+        download_gb:
+          type: number
+        from:
+          type: string
+        base_model:
+          type: string
+          description: The base model a civitai.info names.
+        text_encoder:
+          $ref: '#/components/schemas/DreamModelNeed'
+        vae:
+          $ref: '#/components/schemas/DreamModelNeed'
+      required:
+        - file
+        - label
+        - architecture
+        - architecture_name
+        - distilled
+        - steps
+        - cfg
+        - turbo
+        - loras
+        - local
     DirectMLInstallResult:
       type: object
       properties:
@@ -4302,6 +4385,12 @@ components:
         seed:
           type: integer
           description: Used when > 0.
+        steps:
+          type: integer
+          description: Sampling steps; omitted or 0 = the model's own.
+        model:
+          type: string
+          description: A model file name from `GET /api/dream/models`; empty = the server's default.
       required:
         - prompt
     SceneDreamStatus:
@@ -14066,6 +14155,92 @@ paths:
                   - file: 10eros_beta7.safetensors
                     label: 10Eros beta7
                     recipe: fast
+        '405':
+          description: Method other than GET. Plain text.
+          content:
+            text/plain:
+              schema:
+                type: string
+  /api/dream/models:
+    get:
+      tags:
+        - Transform and Models
+      operationId: listDreamModels
+      summary: List the diffusion models loki-dream can run.
+      description: |
+        Asks the engine (`loki-dream --list-models --json`, on this machine or a
+        worker of the dream pool): every checkpoint in its model folders whose
+        architecture it runs (MOSS-Image, Krea 2, FLUX.2 klein, Anima), with the
+        settings it runs with and whether its text encoder and VAE are present
+        or would be downloaded, plus each architecture's default model as a
+        download when it is not there. A dream job (and `POST /api/scene-dream`)
+        picks one by file name in `model`. The answer is cached for two minutes;
+        `refresh=1` asks again. Without an engine (or with one too old to list)
+        `models` is empty and `note` says why. On a server built without image
+        generation the list is always empty.
+      x-access: admin
+      parameters:
+        - name: refresh
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - '1'
+          description: Ask the engine again instead of using the cached list.
+      responses:
+        '200':
+          description: The catalog.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  models:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/DreamModel'
+                  default:
+                    type: string
+                    description: The model a job without `model` runs (the `dreamModel` setting, else the engine's default).
+                  where:
+                    type: string
+                    description: Where the engine that answered runs.
+                  note:
+                    type: string
+                    description: Why the list is empty or partial.
+                  fetched:
+                    type: string
+                    format: date-time
+                required:
+                  - models
+                  - default
+                  - fetched
+              example:
+                models:
+                  - file: krea2_turbo_fp8_scaled.safetensors
+                    label: Krea 2 Turbo
+                    architecture: krea2
+                    architecture_name: Krea 2
+                    distilled: true
+                    steps: 8
+                    cfg: 1
+                    turbo: false
+                    loras: false
+                    local: true
+                    format: fp8
+                    size_gb: 13.1
+                    text_encoder:
+                      file: qwen3vl_4b_bf16.safetensors
+                      present: false
+                      download_gb: 8.9
+                      from: Comfy-Org/Krea-2
+                    vae:
+                      file: qwen_image_vae.safetensors
+                      present: true
+                default: kromoss_int8_convrot.safetensors
+                where: this machine
+                fetched: '2026-10-31T12:00:00Z'
         '405':
           description: Method other than GET. Plain text.
           content:

@@ -302,10 +302,12 @@ type Config struct {
 	TranscriptionHotwords      string `json:"transcriptionHotwords"`
 	TranscriptionVocalExtract  bool   `json:"transcriptionVocalExtract"`
 
-	// DreamModel swaps loki-dream's diffusion model for another file with the
-	// same (MOSS-Image) architecture, passed as --dit. Best given as a bare
-	// file name: each engine (this machine or a pool worker) finds it in its
-	// own models folder. Empty = the engine's default (Kromoss).
+	// DreamModel swaps loki-dream's diffusion model for another file, passed
+	// as --dit: a MOSS-Image fine-tune, or a Krea 2, FLUX.2 klein or Anima
+	// checkpoint (loki-dream detects the architecture and brings that model's
+	// text encoder, VAE and defaults). Best given as a bare file name: each
+	// engine (this machine or a pool worker) finds it in its own models
+	// folder. Empty = the engine's default (Kromoss).
 	DreamModel string `json:"dreamModel,omitempty"`
 
 	// ReshootModels are extra diffusion models for loki-reshoot (finetunes

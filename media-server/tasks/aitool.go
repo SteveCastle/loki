@@ -28,8 +28,12 @@ type aiToolSpec struct {
 	Extra []string
 }
 
-// modelIDs is every model dependency of the spec: Model first, then Extra.
+// modelIDs is every model dependency of the spec: Model first, then Extra
+// (a spec without a Model dependency has none of its own).
 func (s aiToolSpec) modelIDs() []string {
+	if s.Model == "" {
+		return append([]string{}, s.Extra...)
+	}
 	return append([]string{s.Model}, s.Extra...)
 }
 
