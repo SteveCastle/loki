@@ -185,8 +185,18 @@
       "category": "blur-bloom"
     },
     {
+      "name": "lens-blur",
+      "path": "shaders/blur-bloom/lens-blur/lens-blur.slangp",
+      "category": "blur-bloom"
+    },
+    {
       "name": "radial-blur",
       "path": "shaders/blur-bloom/radial-blur/radial-blur.slangp",
+      "category": "blur-bloom"
+    },
+    {
+      "name": "surface-blur",
+      "path": "shaders/blur-bloom/surface-blur/surface-blur.slangp",
       "category": "blur-bloom"
     },
     {

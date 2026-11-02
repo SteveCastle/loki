@@ -1,0 +1,35 @@
+shaders = 3
+
+# Pass 0 - linear light, highlight-weighted, premultiplied; mipmapped.
+shader0        = prep.slang
+filter_linear0 = true
+scale_type0    = source
+scale0         = 1.0
+wrap_mode0     = clamp_to_edge
+float_framebuffer0 = true
+
+# Pass 1 - aperture gather, premultiplied (float).
+shader1        = gather.slang
+filter_linear1 = true
+mipmap_input1  = true
+scale_type1    = source
+scale1         = 1.0
+wrap_mode1     = clamp_to_edge
+float_framebuffer1 = true
+
+# Pass 2 - post-filter + mix against the clean Original.
+shader2        = lens-blur.slang
+filter_linear2 = true
+scale_type2    = viewport
+scale2         = 1.0
+wrap_mode2     = clamp_to_edge
+
+parameters = "amount;radius;blades;rotation;squeeze;highlights;threshold;linlight"
+amount = 1.0
+radius = 12.0
+blades = 0.0
+rotation = 0.0
+squeeze = 0.0
+highlights = 0.25
+threshold = 0.75
+linlight = 1.0

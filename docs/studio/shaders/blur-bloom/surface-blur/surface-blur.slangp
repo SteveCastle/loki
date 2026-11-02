@@ -1,0 +1,21 @@
+shaders = 2
+
+# Pass 0 - horizontal bilateral, float so the smoothed ramp never bands.
+shader0        = surface_h.slang
+filter_linear0 = true
+scale_type0    = source
+scale0         = 1.0
+wrap_mode0     = clamp_to_edge
+float_framebuffer0 = true
+
+# Pass 1 - vertical bilateral + mix against the clean Original.
+shader1        = surface-blur.slang
+filter_linear1 = true
+scale_type1    = viewport
+scale1         = 1.0
+wrap_mode1     = clamp_to_edge
+
+parameters = "amount;radius;threshold"
+amount = 1.0
+radius = 8.0
+threshold = 0.12

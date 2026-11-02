@@ -1,8 +1,8 @@
 #version 450
 
-// tilt-shift pass 2 — selective focus. Keeps a sharp horizontal band (the
-// clean Original) around `focus`, fading into the blurred Source above and
-// below it, like a tilt-shift lens that miniaturises a scene. A small extra
+// tilt-shift pass 3 — selective focus. The blur passes already keep a
+// sharp horizontal band around `focus` and blur progressively away from
+// it, like a tilt-shift lens that miniaturises a scene. A small extra
 // saturation in the focus band sells the toy look. amount = 0 is a clean
 // passthrough of the Original.
 
@@ -36,7 +36,7 @@ void main() { gl_Position = global.MVP * Position; vTexCoord = TexCoord; }
 #pragma stage fragment
 layout(location = 0) in vec2 vTexCoord;
 layout(location = 0) out vec4 FragColor;
-layout(set = 0, binding = 2) uniform sampler2D Source;     // blurred
+layout(set = 0, binding = 2) uniform sampler2D Source;     // progressively blurred (float)
 layout(set = 0, binding = 3) uniform sampler2D Original;   // sharp
 
 float luma(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }
@@ -44,14 +44,12 @@ float luma(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }
 void main()
 {
     vec2 uv = vTexCoord;
-    vec3 sharp = texture(Original, uv).rgb;
-    vec3 blur  = texture(Source, uv).rgb;
+    vec3 sharp = textureLod(Original, uv, 0.0).rgb;
+    vec3 col   = textureLod(Source, uv, 0.0).rgb;
 
     // 0 inside the band, ramping to 1 (full blur) away from focus.
     float d = abs(uv.y - params.focus);
     float m = smoothstep(params.band, params.band + params.softness, d);
-
-    vec3 col = mix(sharp, blur, m);
 
     // Saturation pop weighted toward the in-focus band.
     float l = luma(col);

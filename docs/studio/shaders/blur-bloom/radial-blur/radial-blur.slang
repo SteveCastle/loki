@@ -1,8 +1,10 @@
 #version 450
 
-// radial-blur — zoom streak toward/away from a movable focal point. Each
-// pixel averages samples along the ray to the center; strength sets how
-// far along that ray the smear reaches. amount = 0 is a clean passthrough.
+// radial-blur pass 1 — zoom streak toward a movable focal point. Each
+// pixel averages along the ray to the center; strength sets how far along
+// that ray the smear reaches. 24 taps a whole 1/24 of the (log-scale)
+// smear apart over pass 0's fine smear (see zoom_fine.slang). amount = 0
+// is a clean passthrough.
 
 layout(push_constant) uniform Push
 {
@@ -34,26 +36,38 @@ void main() { gl_Position = global.MVP * Position; vTexCoord = TexCoord; }
 #pragma stage fragment
 layout(location = 0) in vec2 vTexCoord;
 layout(location = 0) out vec4 FragColor;
-layout(set = 0, binding = 2) uniform sampler2D Source;
+layout(set = 0, binding = 2) uniform sampler2D Source;     // fine smear (float)
+layout(set = 0, binding = 3) uniform sampler2D Original;   // clean input
+
+float hash3(vec3 p)
+{
+    p = fract(p * vec3(123.34, 345.45, 678.56));
+    p += dot(p, p.yzx + 34.345);
+    return fract((p.x + p.y) * p.z);
+}
+
+const int N = 24;
 
 void main()
 {
     vec2 uv = vTexCoord;
-    vec3 base = texture(Source, uv).rgb;
-
     vec2 center = vec2(params.center_x, params.center_y);
-    vec2 toward = center - uv;
-
     // Optionally keep a sharp core near the focal point.
-    float dist = length(toward);
-    float local = params.strength * mix(1.0, smoothstep(0.0, 0.5, dist), params.falloff);
+    float local = params.strength * mix(1.0, smoothstep(0.0, 0.5, length(center - uv)), params.falloff);
+    float span = -log(1.0 - 0.5 * local);
 
     vec3 sum = vec3(0.0);
-    for (int i = 0; i < 24; ++i) {
-        float t = (float(i) + 0.5) / 24.0;          // 0..1 along the ray
-        sum += texture(Source, uv + toward * (local * 0.5) * t).rgb;
+    for (int i = 0; i < N; ++i) {
+        float t = float(i) / float(N);
+        sum += textureLod(Source, center + (uv - center) * exp(-span * t), 0.0).rgb;
     }
-    vec3 c = sum / 24.0;
+    vec3 c = sum / float(N);
 
-    FragColor = vec4(mix(base, c, params.amount), 1.0);
+    // TPDF dither (see gaussian-blur): long smears are smooth ramps.
+    vec2 px = uv * params.OutputSize.xy;
+    float fr = float(params.FrameCount % 1024u);
+    c += (hash3(vec3(px, fr)) + hash3(vec3(px + 917.0, fr)) - 1.0) * (1.0 / 255.0);
+
+    vec3 base = textureLod(Original, uv, 0.0).rgb;
+    FragColor = vec4(mix(base, clamp(c, 0.0, 1.0), params.amount), 1.0);
 }

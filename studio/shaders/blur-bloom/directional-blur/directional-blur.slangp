@@ -1,12 +1,19 @@
-shaders = 1
+shaders = 2
 
-shader0        = directional-blur.slang
+# Pass 0 - fine smear over one 1/24 slice of the streak (float: the final
+# pass averages 24 of these and an 8-bit hop would band the result).
+shader0        = streak_fine.slang
 filter_linear0 = true
-scale_type0    = viewport
+scale_type0    = source
 scale0         = 1.0
 wrap_mode0     = clamp_to_edge
+float_framebuffer0 = true
+
+# Pass 1 - 24 coarse taps across the full streak + mix against Original.
+shader1        = directional-blur.slang
+filter_linear1 = true
+scale_type1    = viewport
+scale1         = 1.0
+wrap_mode1     = clamp_to_edge
 
 parameters = "amount;angle;dist"
-amount = 1.0
-angle  = 0.0
-dist   = 24.0

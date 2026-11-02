@@ -1,14 +1,19 @@
-shaders = 1
+shaders = 2
 
-shader0        = radial-blur.slang
+# Pass 0 - fine zoom smear over the first 1/24 of the range (float, so the
+# final average of 24 of these doesn't band).
+shader0        = zoom_fine.slang
 filter_linear0 = true
-scale_type0    = viewport
+scale_type0    = source
 scale0         = 1.0
 wrap_mode0     = clamp_to_edge
+float_framebuffer0 = true
+
+# Pass 1 - 24 coarse zoom taps + mix against the clean Original.
+shader1        = radial-blur.slang
+filter_linear1 = true
+scale_type1    = viewport
+scale1         = 1.0
+wrap_mode1     = clamp_to_edge
 
 parameters = "amount;strength;center_x;center_y;falloff"
-amount   = 1.0
-strength = 0.25
-center_x = 0.5
-center_y = 0.5
-falloff  = 0.0
