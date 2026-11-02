@@ -9,7 +9,7 @@ description: Generate images from text with the local loki-dream CLI (Kromoss / 
 the FLUX.2 small VAE, locally on the NVIDIA GPU (RTX 4090 class, 24 GB) in a standalone engine. `--model FILE` (alias `--dit`, a
 path or a bare file name in the model folders) swaps in any Krea 2, FLUX.2 klein (4B/9B), Anima or SDXL-architecture checkpoint instead: the
 architecture is detected from the file and its own text encoder, VAE, schedule and defaults follow (`--arch krea2|flux2|anima|sdxl`
-picks an architecture's default model). Other architectures (FLUX.1, SDXL, Qwen-Image, ...) are refused with their name. It is one of the `loki-`
+picks an architecture's default model). Other architectures (FLUX.1, SD 1.x/2.x, SDXL refiners, Qwen-Image, ...) are refused with their name. It is one of the `loki-`
 toolkit's small composable tools: `loki-retouch` edits images, `loki-segment` makes masks, `loki-reshoot` animates them.
 
 ## 0. Locate and sanity-check
