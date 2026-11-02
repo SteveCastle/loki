@@ -92,6 +92,7 @@ export async function compileSlang(source, { path = '<inline>', readFile, glslan
     samplers: pre.samplers, // [{name, texSet, texBinding, smpBinding}]
     params,       // [{name, desc, default, min, max, step}]
     formatPragma: pre.formatPragma,
+    maskControl: pre.maskControl,   // #pragma mask_control: reads Mask as a control map
   };
 }
 

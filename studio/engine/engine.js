@@ -853,9 +853,15 @@ export class SlangFx {
         }
       }
 
-      // One mask blend for the whole group, against the group's input.
+      // One mask blend for the whole group, against the group's input —
+      // unless a member consumes the mask itself (`#pragma mask_control`,
+      // e.g. depth blur reading it as a per-pixel radius): then the mask is
+      // that effect's control map, and blending through it again would
+      // apply it twice.
       const tail = group.tail;
-      if (maskState && tail) {
+      group.control = live.slice(i, j + 1)
+        .some((l) => l.runtime?.passes.some((ps) => ps.mod?.maskControl));
+      if (maskState && tail && !group.control) {
         tail.blendTex = this.device.createTexture({
           label: 'slangfx masked out',
           size: [this.inputW, this.inputH],

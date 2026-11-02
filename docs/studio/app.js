@@ -45,7 +45,7 @@ import {
   isAudioEffect, visualEffectsOf, audioEffectsOf,
   clipRate, clipReversed, clipLoopSpan, clipLoopPhase, clipPingPong, clipPlayingBackward, srcTime, clipSourceSpan, retimeClip, loopSrc, wrappedSrcTime,
   clipTimeRemap, enableTimeRemap, disableTimeRemap, freezeClipAt, clipSpeedAt, TIME_PROP,
-  newTrackClip, resolveOverlaps, SPLAT_PROPS, isSplatClip,
+  newTrackClip, resolveOverlaps, SPLAT_PROPS, isSplatClip, DEPTH_PROPS, isDepthClip,
 } from './comp.js';
 import {
   SPLAT_EXTS, parseSplatFile, uploadScene, SplatRenderer, frameCamera, sceneBounds,
@@ -72,6 +72,7 @@ import { Timeline, fmtTimecode, fmtSpeed, showMenu } from './timeline.js';
 import { makeShaderEditor, CHEAT_HTML } from './shader-editor.js';
 import * as roto from './roto.js';
 import * as rotoSam from './roto-sam.js';
+import * as depth from './depth.js';
 import * as server from './server.js';
 import { MotionBlur, shutterTimes } from './motion-blur.js';
 
@@ -361,6 +362,7 @@ async function boot() {
     // Roto is network + model driven — the console handle is how tests
     // drive it without clicking through the picker.
     clipMasks, analyzeRotoNode, startRotoEdit, stopRotoEdit,
+    makeDepthLayer, analyzeDepthClip, addDepthBlur, depthRenderers, depthAtComp,
     rotoJobState: () => rotoJob,
   };
   requestAnimationFrame(tick);
@@ -371,7 +373,7 @@ async function applyCompSize() {
   canvas.height = comp.height;
   // A splat renders at the comp's size, so its "source" is the frame.
   for (const a of assets.values())
-    if (a.kind === 'splat') { a.w = comp.width; a.h = comp.height; }
+    if (a.kind === 'splat' || a.kind === 'depth') { a.w = comp.width; a.h = comp.height; }
   await fx.setSourceSize(comp.width, comp.height);
   chainDirty = true;
   rescaleMasks();
@@ -481,6 +483,7 @@ function tick() {
   const activeAudio = activeClips(comp, t, 'audio');
   syncMedia(t, activeMedia, activeAudio);
   renderSplats(t, activeMedia);   // before anything samples a splat clip's texture
+  renderDepths(t, activeMedia);   // …or a depth layer's (after syncMedia: the source frame guides it)
   prepareMotionBlur(t, activeMedia.filter(({ track }) => !track.hidden));
   prepareMasks(t);       // media masks must compose before compositeFrame samples them
   prepareMediaFx(t, activeMedia.filter(({ track }) => !track.hidden));
@@ -1173,6 +1176,12 @@ function drawForClip(clip, t) {
     view = splatRenderers.get(clip.id)?.view;
     if (!view) return null;
   }
+  // A depth layer shows its own render (see renderDepths); none = no picture.
+  if (asset.kind === 'depth') {
+    const r = depthRenderers.get(clip.id);
+    if (!r?.active) return null;
+    view = r.compView;
+  }
   return {
     clipId: clip.id,
     view,
@@ -1828,6 +1837,7 @@ function propDefs(clip) {
     const video = assets.get(clip.assetId)?.kind === 'video';
     for (const d of mediaPropDefs()) if (video || d.key !== 'volume') defs.push(d);
     if (isSplatClip(clip)) defs.push(...splatPropDefs(clip));
+    if (isDepthClip(clip)) defs.push(...depthPropDefs(clip));
   } else if (clip.kind === 'track') {
     // A null has no picture: no opacity, no volume — just the transform.
     defs.push(...mediaPropDefs().filter((d) => d.key !== 'opacity' && d.key !== 'volume'));
@@ -1986,10 +1996,12 @@ function onModelChange({ structural = false, transient = false, propKey = null }
   gcAudioChains();           // …and their audio graphs
   gcMediaInstances();        // …and copies of a file their extra decoders
   gcSplatRenderers();        // deleted splat clips release their sort buffers
+  gcDepthRenderers();        // …and depth layers their targets
   gcMotionBlur();            // …and clips that turned motion blur off, its targets
   gcClipMasks();             // deleted clips park their masks (GPU freed); undone ones return
   gcCompositorItems();       // …and release their compositor uniforms
   reconcileShapeAssets();    // duplicated/split shape clips get their own asset
+  reconcileDepthAssets();    // …and so do depth layers
   syncAudioDrive();          // no-op unless audio drivers exist + audio changed
   if (comp.grid && !findClip(comp, comp.grid.clipId)) delete comp.grid;   // snap track deleted
   refreshDropHint();
@@ -2027,11 +2039,13 @@ function afterModelReplace(what) {
   stopRotoEdit();
   syncCustomSources();
   reconcileShapeAssets();   // undo/redo may restore stale shape settings
+  reconcileDepthAssets();
   gcEffectState();
   gcMediaChains();
   gcAudioChains();
   gcMediaInstances();
   gcSplatRenderers();
+  gcDepthRenderers();
   gcMotionBlur();
   gcClipMasks();
   gcCompositorItems();
@@ -2104,6 +2118,7 @@ const timelineHost = {
   timeRemap: (clip, what) => timeRemapAction(clip, what),
   resetProps: (clips) => resetClipProps(clips),
   findLoop: (clip) => openLoopFinder(clip),
+  makeDepthLayer: (clip) => makeDepthLayer(clip),
   setSnapTrack: (clip) => setSnapTrack(clip),
   clearSnapTrack,
   undo: appUndo,
@@ -2294,14 +2309,16 @@ function payloadRefs(data, refs) {
     for (const clip of track.clips ?? []) {
       if (clip.assetId) refs.assets.add(clip.assetId);
       for (const node of clip.mask?.nodes ?? []) refs.nodes.add(node.id);
+      if (clip.depth?.store) refs.depth.add(clip.depth.store);
     }
 }
 
 async function sweepStorage() {
   try {
     await saveProject();   // the autosave must reflect this session first
-    const refs = { assets: new Set(), nodes: new Set() };
+    const refs = { assets: new Set(), nodes: new Set(), depth: new Set() };
     payloadRefs(await readAutosave(), refs);
+    payloadRefs({ comp }, refs);
     // Live state too, in case a write is still landing.
     for (const a of assets.values()) refs.assets.add(a.id);
     for (const st of [...clipMasks.values(), ...parkedMasks.values()])
@@ -2322,7 +2339,8 @@ async function sweepStorage() {
       const id = rest[rest.length - 1];
       const dead = (kind === 'asset' && !refs.assets.has(id))
         || (kind === 'proxy' && !refs.assets.has(id))
-        || (kind === 'roto' && !refs.nodes.has(id));
+        || (kind === 'roto' && !refs.nodes.has(id))
+        || (kind === 'depth' && !refs.depth.has(id));
       if (dead) { await idbDelete(key); freed++; }
     }
     const index = (await idbGet(ASSET_INDEX_KEY)) ?? {};
@@ -2346,7 +2364,7 @@ async function sweepStorage() {
 
 function findExistingAsset(file) {
   for (const a of assets.values())
-    if (a.kind !== 'shape' && a.name === file.name && a.file?.size === file.size)
+    if (a.kind !== 'shape' && a.kind !== 'depth' && a.name === file.name && a.file?.size === file.size)
       return a;
   return null;
 }
@@ -2513,7 +2531,7 @@ const binEl = $('media-bin');
 const binListEl = $('media-bin-list');
 const binBtn = $('btn-media-bin');
 
-const binAssets = () => [...assets.values()].filter((a) => a.kind !== 'shape');
+const binAssets = () => [...assets.values()].filter((a) => a.kind !== 'shape' && a.kind !== 'depth');
 
 function assetUseCount(assetId) {
   let n = 0;
@@ -4074,7 +4092,7 @@ function rehydrateMissingAssets() {
   for (const track of comp.tracks)
     for (const clip of track.clips) {
       const id = clip.assetId;
-      if (!id || assets.has(id) || rehydrateTried.has(id) || String(id).startsWith('shape:')) continue;
+      if (!id || assets.has(id) || rehydrateTried.has(id) || /^(shape|depth):/.test(String(id))) continue;
       rehydrateTried.add(id);
       idbGet(`asset:${id}`)
         .then((file) => (file ? createAsset(file, id) : null))
@@ -4174,6 +4192,8 @@ async function applyProjectDataInner(data) {
   stopSplatNav();
   for (const r of splatRenderers.values()) r.destroy();
   splatRenderers.clear();
+  for (const id of [...depthRenderers.keys()]) destroyDepthRenderer(id);
+  depthStores.clear();
   stopMaskEdit();
   stopRotoEdit();
   if (rotoJob) rotoJob.cancel = true;   // the clips it reads are going away
@@ -4202,13 +4222,14 @@ async function applyProjectDataInner(data) {
 
   // Shape clips regenerate their textures from the model — no stored blobs.
   reconcileShapeAssets();
+  reconcileDepthAssets();
 
   // Restore assets in parallel; a missing or unloadable one must not block
   // the app — its clips simply render as offline until re-imported. Every
   // asset the project carries comes back, clips or not: the media bin
   // holds imports that haven't been placed yet.
   await Promise.allSettled((data.assets ?? [])
-    .filter((meta) => meta.kind !== 'shape')
+    .filter((meta) => meta.kind !== 'shape' && meta.kind !== 'depth')
     .map(async (meta) => {
       try {
         const file = await idbGet(`asset:${meta.id}`);
@@ -4826,6 +4847,12 @@ function matteSourceClips(t) {
       const hit = findClip(comp, node.sourceClipId);
       if (hit && t >= hit.clip.start && t < clipEnd(hit.clip)) out.push({ clip: hit.clip });
     }
+  // Depth layers read their source clip's frame (the refine guide and the
+  // transform): it must be seeked and uploaded even when hidden.
+  for (const { clip } of depthClipsAt(t)) {
+    const src = clip.depth.sourceClipId ? findClip(comp, clip.depth.sourceClipId)?.clip : null;
+    if (src && t >= src.start && t < clipEnd(src)) out.push({ clip: src });
+  }
   return out;
 }
 
@@ -8197,6 +8224,823 @@ function splatPropDefs(clip) {
   ];
 }
 
+/* =====================================================================
+ * Depth layers — an AI depth map of another clip, as a layer of its own.
+ *
+ * "Generate depth map layer" (clip menu, or the Depth section of a media
+ * clip) runs Video Depth Anything (depth.js) over the clip and adds a
+ * media clip with `clip.depth` on a track above it. That layer is a MATTE
+ * generator: it renders the analyzed depth through the source clip's live
+ * transform, shaped by its own keyframable controls — Ramp (near→far
+ * gradient between a white and a black point), Slice (white between two
+ * cuts, soft edges) or Focus (distance from a focal plane: a circle-of-
+ * confusion map) — then gamma, invert, output levels, an edge-aware
+ * refine against the source picture, and expand / feather. Anything that
+ * takes a layer matte can use it (mask → ＋Layer, luma); ＋Depth blur wires
+ * the common case in one click: an adjustment layer whose depth-blur
+ * effect reads the map as a per-pixel blur radius.
+ *
+ * Storage mirrors roto: frames live in SOURCE space keyed by SOURCE time
+ * (seq.src0 / srcStep), 16-bit, in IndexedDB `depth:<store>`. Each analysis
+ * writes a NEW store id (recorded through history), so undo of a
+ * re-analysis brings the previous frames back; the boot sweep frees
+ * stores nothing references. Normalization is GLOBAL — seq.lo / seq.hi are
+ * percentiles over the whole clip, never per frame (a per-frame stretch
+ * would make the matte pump as objects enter and leave).
+ *
+ * Per frame (renderDepths, after syncMedia — it reads the source frame as
+ * the refine guide): stored frame → grade pass (source space, capped
+ * DEPTH_WORK_LONG) → optional MaskComposer expand/feather (sizes are comp
+ * px, converted through the source's scale) → composite into a comp-sized
+ * texture with the source clip's transform. drawForClip hands that texture
+ * out like any picture, so mattes, effects and the export all see it.
+ * =================================================================== */
+
+const DEPTH_WORK_LONG = 1920;   // graded working resolution cap (long side)
+const DEPTH_CACHE_MAX = 40;     // decoded frames kept per store
+const DEPTH_PREFETCH = 8;       // decode-ahead during playback
+const DEPTH_HIST_BINS = 64;     // the inspector's distribution strip
+const DEPTH_HEADROOM = 1.5;     // quantization range over the first window's max
+const DEPTH_SRC_KINDS = ['video', 'image', 'gif'];
+
+let depthGrader = null;
+const depthRenderers = new Map();   // clipId -> { gpu, compTex, compView, post, active }
+const depthStores = new Map();      // store id -> { blobs, load, cache, pending }
+
+const depthStoreKey = (store) => `depth:${store}`;
+
+function depthStore(store) {
+  let s = depthStores.get(store);
+  if (!s) {
+    s = { blobs: null, load: null, cache: new Map(), pending: new Map() };
+    depthStores.set(store, s);
+  }
+  return s;
+}
+
+async function depthBlobsFor(store) {
+  const s = depthStore(store);
+  if (s.blobs) return s.blobs;
+  s.load ??= idbGet(depthStoreKey(store))
+    .then((rec) => (s.blobs = rec?.blobs ?? null))
+    .catch(() => null);
+  return s.load;
+}
+
+async function ensureDepthFrame(store, seq, idx) {
+  const s = depthStore(store);
+  if (s.cache.has(idx)) return s.cache.get(idx);
+  if (s.pending.has(idx)) return s.pending.get(idx);
+  const p = (async () => {
+    const blob = (await depthBlobsFor(store))?.[idx];
+    if (!blob) return null;
+    const u16 = await depth.decodeDepthFrame(blob, seq.w, seq.h);
+    s.cache.set(idx, u16);
+    noteActivity();   // a depth frame landed: render it
+    while (s.cache.size > DEPTH_CACHE_MAX) s.cache.delete(s.cache.keys().next().value);
+    return u16;
+  })().finally(() => s.pending.delete(idx));
+  s.pending.set(idx, p);
+  return p;
+}
+
+/** Cache-only lookup; a miss kicks async decode (+ read-ahead) and returns
+ * null — the layer keeps its last uploaded frame for a beat. */
+function depthFrameSync(store, seq, idx) {
+  const s = depthStore(store);
+  const hit = s.cache.get(idx);
+  if (hit) {
+    s.cache.delete(idx);
+    s.cache.set(idx, hit);
+    return hit;
+  }
+  ensureDepthFrame(store, seq, idx).catch(() => {});
+  for (let k = 1; k <= DEPTH_PREFETCH; k++)
+    if (idx + k < seq.count) ensureDepthFrame(store, seq, idx + k).catch(() => {});
+  return null;
+}
+
+/** The source clip a depth layer reads, when it's there and loaded. */
+function depthSource(clip) {
+  const src = clip.depth?.sourceClipId ? findClip(comp, clip.depth.sourceClipId)?.clip : null;
+  const asset = src && assets.get(src.assetId);
+  return src && asset?.ready ? { src, asset } : null;
+}
+
+/** Give a depth clip its synthetic asset (keyed by clip id, comp-sized —
+ * the layer renders at the comp's size, like a splat). */
+function ensureDepthAsset(clip) {
+  const id = `depth:${clip.id}`;
+  clip.assetId = id;
+  let asset = assets.get(id);
+  if (!asset) {
+    asset = { id, kind: 'depth', name: '', ready: true, w: comp.width, h: comp.height, duration: null, el: null };
+    assets.set(id, asset);
+  }
+  asset.w = comp.width;
+  asset.h = comp.height;
+  const src = clip.depth.sourceClipId ? findClip(comp, clip.depth.sourceClipId)?.clip : null;
+  asset.name = src ? `${src.name} · depth` : 'depth (source missing)';
+  return asset;
+}
+
+/* Duplicates / splits / undo can leave depth clips pointing at another
+ * clip's asset — re-key each to its own, and free what nothing uses. */
+function reconcileDepthAssets() {
+  if (!fx?.device) return;
+  const live = new Set();
+  for (const track of comp.tracks)
+    for (const clip of track.clips)
+      if (isDepthClip(clip)) { ensureDepthAsset(clip); live.add(clip.assetId); }
+  for (const a of [...assets.values()])
+    if (a.kind === 'depth' && !live.has(a.id)) assets.delete(a.id);
+}
+
+function depthRendererFor(clip) {
+  let r = depthRenderers.get(clip.id);
+  if (!r) {
+    depthGrader ??= new depth.DepthGrader(fx.device);
+    r = { gpu: new depth.DepthLayerGpu(depthGrader), compTex: null, compView: null, post: null, active: false };
+    depthRenderers.set(clip.id, r);
+  }
+  if (!r.compTex || r.compTex.width !== comp.width || r.compTex.height !== comp.height) {
+    r.compTex?.destroy();
+    r.compTex = fx.device.createTexture({
+      label: `depth layer ${clip.id}`,
+      size: [comp.width, comp.height],
+      format: 'rgba8unorm',
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT,
+    });
+    r.compView = r.compTex.createView();
+  }
+  return r;
+}
+
+/** Expand / feather reuse MaskComposer's post passes: a one-node stack
+ * that reads the graded map, rendering into a source-space target. */
+function depthPostTarget(r, w, h, srcView) {
+  let p = r.post;
+  if (p && (p.w !== w || p.h !== h)) { destroyDepthPost(p); p = r.post = null; }
+  if (!p) {
+    const tex = fx.device.createTexture({
+      label: 'depth layer post',
+      size: [w, h],
+      format: 'rgba8unorm',
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT,
+    });
+    const node = {
+      kind: 'layer', channel: 'r', blend: 'add', strength: 1, invert: false, enabled: true, active: true,
+      _optsBuf: fx.device.createBuffer({ size: 48, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST }),
+    };
+    p = r.post = { w, h, tex, view: tex.createView(), node, state: { nodes: [node], expand: 0, feather: 0 }, srcView: null };
+  }
+  if (p.srcView !== srcView) {
+    p.node._bindGroup = fx.maskComposer.bindGroup(srcView, fx.inputSampler, p.node._optsBuf);
+    p.srcView = srcView;
+  }
+  return p;
+}
+
+function destroyDepthPost(p) {
+  p.tex.destroy();
+  p.node._optsBuf.destroy();
+  fx.maskComposer.destroyPost(p.state);
+}
+
+function destroyDepthRenderer(clipId) {
+  const r = depthRenderers.get(clipId);
+  if (!r) return;
+  r.gpu.destroy();
+  r.compTex?.destroy();
+  if (r.post) destroyDepthPost(r.post);
+  depthRenderers.delete(clipId);
+}
+
+function gcDepthRenderers() {
+  for (const clipId of [...depthRenderers.keys()])
+    if (!isDepthClip(findClip(comp, clipId)?.clip)) destroyDepthRenderer(clipId);
+}
+
+/** Every grading control of a depth layer at comp time t, normalized. */
+function depthParamsAt(clip, t) {
+  const tc = t - clip.start;
+  const v = (k) => drivenEval(clip.props[k], tc, t);
+  const seq = clip.depth.seq;
+  return {
+    mode: clip.depth.mode ?? 'ramp',
+    invert: !!clip.depth.invert,
+    lo: seq?.lo ?? 0,
+    hi: seq?.hi ?? 1,
+    near: v('depthNear') / 100,
+    far: v('depthFar') / 100,
+    soft: Math.max(0, v('depthSoft')) / 100,
+    focus: v('depthFocus') / 100,
+    band: Math.max(0, v('depthBand')) / 100,
+    range: Math.max(0.001, v('depthRange') / 100),
+    gamma: clamp(v('depthGamma'), 0.05, 10),
+    outLo: v('depthBlack') / 100,
+    outHi: v('depthWhite') / 100,
+    refine: clamp(v('depthRefine') / 100, 0, 1),
+    expand: v('depthExpand'),
+    feather: Math.max(0, v('depthFeather')),
+  };
+}
+
+/** Render every live depth layer into its comp-sized texture. Runs after
+ * syncMedia (the source frame is the refine guide) and before masks /
+ * the isolate pass, in both the preview tick and the exporter. A layer
+ * whose source isn't under the playhead (or isn't analyzed) is inactive:
+ * drawForClip returns null for it, like a clip with no picture. */
+function renderDepths(t, entries) {
+  let encoder = null;
+  const seen = new Set();
+  for (const { clip } of entries) {
+    if (!isDepthClip(clip) || seen.has(clip.id)) continue;
+    seen.add(clip.id);
+    const r = depthRendererFor(clip);
+    r.active = false;
+    const seq = clip.depth.seq;
+    const s = depthSource(clip);
+    if (!seq?.count || !clip.depth.store || !s || t < s.src.start || t >= clipEnd(s.src)) continue;
+    // The presented-frame index during playback (see rotoFrameIndexLive):
+    // the matte must sit on the pixels actually on screen.
+    const idx = rotoFrameIndexLive({ seq }, s.src, s.asset, t);
+    const key = `${clip.depth.store}:${idx}`;
+    if (r.gpu.frameKey !== key) {
+      const u16 = depthFrameSync(clip.depth.store, seq, idx);
+      if (u16) r.gpu.setFrame(u16, seq.w, seq.h, key);
+    }
+    if (r.gpu.frameKey == null || !String(r.gpu.frameKey).startsWith(`${clip.depth.store}:`)) continue;
+    const d = drawForClip(s.src, t);
+    if (!d) continue;
+    const p = depthParamsAt(clip, t);
+    const k = Math.min(1, DEPTH_WORK_LONG / Math.max(s.asset.w, s.asset.h));
+    const ww = Math.max(1, Math.round(s.asset.w * k));
+    const wh = Math.max(1, Math.round(s.asset.h * k));
+    encoder ??= fx.device.createCommandEncoder({ label: 'depth layers' });
+    let view = r.gpu.encode(encoder, d.view, ww, wh, p);
+    // Expand / feather are comp pixels; the passes run in working pixels.
+    const pxScale = k / Math.max(1e-3, (Math.abs(d.scaleX) + Math.abs(d.scaleY)) / 2);
+    const expand = Math.round(p.expand * pxScale);
+    const feather = Math.round(p.feather * pxScale);
+    if (expand || feather) {
+      const post = depthPostTarget(r, ww, wh, view);
+      post.state.expand = expand;
+      post.state.feather = feather;
+      fx.maskComposer.encode(encoder, { maskState: post.state, maskView: post.view, maskW: ww, maskH: wh });
+      view = post.view;
+    }
+    // Geometry only: the source's opacity, blend and mask don't shape it.
+    compositor.composite(encoder, r.compView, comp.width, comp.height, [{
+      clipId: clip.id + ':depth',
+      view,
+      w: s.asset.w, h: s.asset.h,
+      x: d.x, y: d.y, scaleX: d.scaleX, scaleY: d.scaleY, rot: d.rot,
+      opacity: 1, blend: 'normal', maskView: null,
+    }], { transparent: true });
+    r.active = true;
+    if (depthHistUi?.clipId === clip.id) drawDepthHist(clip, p);
+  }
+  if (encoder) fx.device.queue.submit([encoder.finish()]);
+}
+
+/** Every depth layer live at t, on any track (hidden ones drive mattes). */
+function depthClipsAt(t) {
+  const out = [];
+  for (const track of comp.tracks)
+    for (const clip of track.clips)
+      if (isDepthClip(clip) && t >= clip.start && t < clipEnd(clip)) out.push({ track, clip });
+  return out;
+}
+
+/** Offline-export helper: decode each live depth layer's EXACT frame
+ * before rendering (the preview tolerates a stale one; the render must
+ * not). */
+async function prepareDepthFramesExact(t) {
+  const jobs = [];
+  for (const { clip } of depthClipsAt(t)) {
+    const seq = clip.depth.seq;
+    const s = depthSource(clip);
+    if (!seq?.count || !clip.depth.store || !s) continue;
+    const idx = rotoFrameIndex({ seq }, s.src, t);
+    if (idx >= 0 && !depthStore(clip.depth.store).cache.has(idx))
+      jobs.push(ensureDepthFrame(clip.depth.store, seq, idx));
+  }
+  if (jobs.length) await Promise.all(jobs);
+}
+
+function depthPropDefs(clip) {
+  const mode = clip.depth?.mode ?? 'ramp';
+  const pct = (key, label, def, extra = {}) => ({ key, label, min: 0, max: 100, step: 0.1, unit: '%', def, ...extra });
+  return [
+    pct('depthNear', mode === 'slice' ? 'Near cut' : 'White point (near)', 100),
+    pct('depthFar', mode === 'slice' ? 'Far cut' : 'Black point (far)', 0),
+    pct('depthSoft', 'Softness', 3, { max: 50 }),
+    pct('depthFocus', 'Focus distance', 60),
+    pct('depthBand', 'In-focus band', 6),
+    pct('depthRange', 'Falloff', 35, { min: 0.5 }),
+    { key: 'depthGamma', label: 'Gamma', min: 0.1, max: 5, step: 0.01, unit: '', def: 1, scale: 'cubic' },
+    pct('depthBlack', 'Black level', 0),
+    pct('depthWhite', 'White level', 100),
+    pct('depthRefine', 'Edge refine', 60),
+    { key: 'depthExpand', label: 'Expand', min: -64, max: 64, step: 1, unit: 'px', def: 0 },
+    { key: 'depthFeather', label: 'Feather', min: 0, max: 250, step: 1, unit: 'px', def: 0 },
+  ];
+}
+
+/** Which controls a mode uses (the rest stay keyframable, just hidden). */
+const DEPTH_MODE_KEYS = {
+  ramp: ['depthNear', 'depthFar', 'depthGamma'],
+  slice: ['depthNear', 'depthFar', 'depthSoft'],
+  focus: ['depthFocus', 'depthBand', 'depthRange', 'depthGamma'],
+};
+const DEPTH_COMMON_KEYS = ['depthBlack', 'depthWhite', 'depthRefine', 'depthExpand', 'depthFeather'];
+
+/* ---- making a depth layer -------------------------------------------- */
+
+/** Add a depth layer over `src` (a new track right above it) and analyze. */
+function makeDepthLayer(src) {
+  const asset = assets.get(src.assetId);
+  if (src.kind !== 'media' || isDepthClip(src) || !asset?.ready || !DEPTH_SRC_KINDS.includes(asset.kind)) {
+    setStatus('depth: pick a video, image or gif layer');
+    return null;
+  }
+  const clip = newMediaClip(comp, { id: '', name: `${src.name} depth` }, src.start, src.dur);
+  clip.depth = { sourceClipId: src.id, store: null, mode: 'ramp', invert: false, seq: null };
+  for (const [key, , def] of DEPTH_PROPS) clip.props[key] = newProp(def(comp));
+  history.record(comp, () => {
+    const track = newTrack(clip.name);
+    track.clips.push(clip);
+    const i = comp.tracks.indexOf(trackOf(comp, src));
+    comp.tracks.splice(Math.max(0, i), 0, track);   // index 0 is the top
+    ensureDepthAsset(clip);
+  });
+  timeline.selectClip(clip.id);
+  onModelChange({ structural: true });
+  analyzeDepthClip(clip);
+  return clip;
+}
+
+/**
+ * Analyze: walk the source's frames (the roto grid — one slot per source
+ * frame the clip shows), stream them through Video Depth Anything, and
+ * store the aligned, globally-normalized 16-bit sequence. Shares rotoJob
+ * with roto analysis: one model job at a time, and the tick stays parked
+ * while it owns the source's media element. Cancel discards the walk —
+ * a temporal model's partial pass isn't worth keeping — and leaves the
+ * previous analysis in place.
+ */
+async function analyzeDepthClip(clip) {
+  if (rotoJob?.depthClipId === clip.id) { rotoJob.cancel = true; return; }
+  if (rotoJob || offlineJob || loopJob) { setStatus('another job is running — finish or cancel it first'); return; }
+  const s = depthSource(clip);
+  if (!s || !DEPTH_SRC_KINDS.includes(s.asset.kind)) { setStatus('depth: the source layer is missing or not a video / image'); return; }
+  const { src, asset } = s;
+  pause();
+  stopRotoEdit();
+  const tRestore = tCur;
+  const job = (rotoJob = { cancel: false, nodeId: null, depthClipId: clip.id });
+  renderInspector();
+  document.body.classList.add('roto-analyzing');   // the monitor overlay
+  setStatus('depth: starting…', 0);
+  try {
+    const rt = await depth.loadDepth(setStatus);
+    const plan = rotoWalkPlan(src, asset);
+    const { still, total, src0, srcStep } = plan;
+    const n = plan.frames.length;
+    const layout = depth.depthInputLayout(asset.w, asset.h);
+    const W = depth.VDA_W;
+    const H = depth.VDA_H;
+    const cnv = new OffscreenCanvas(W, H);
+    const ctx2 = cnv.getContext('2d', { willReadFrequently: true });
+    const sw = layout.w;
+    const sh = layout.h;
+    const blobs = new Array(total).fill(null);
+    const hist = new Float64Array(4096);
+    let qmax = 0;
+    let lastDepth = null;
+    const stream = new depth.DepthStream(rt);
+    const t0 = performance.now();
+
+    const getInput = async (i) => {
+      const { t } = plan.frames[i];
+      tCur = t;
+      timeline.updatePlayhead();
+      if (!still) await rotoSeekSource(asset, src, t);
+      ctx2.clearRect(0, 0, W, H);
+      depth.drawDepthInput(ctx2, rotoSourceHandle(asset, src, t), asset.w, asset.h, layout);
+      drawDepthMonitor(asset, src, t, lastDepth);
+      await nextTask();   // let the monitor paint (never setTimeout)
+      return depth.toEncoderInput(ctx2.getImageData(0, 0, W, H));
+    };
+    const onDepth = async (i, d) => {
+      // The clip's scale is set by the first window (VDA aligns every later
+      // window to it); headroom absorbs nearer objects arriving later.
+      if (!qmax) qmax = Math.max(1e-6, stream.refMax * DEPTH_HEADROOM);
+      const u16 = new Uint16Array(sw * sh);
+      const kq = 65535 / qmax;
+      for (let y = 0; y < sh; y++) {
+        const row = (layout.y + y) * W + layout.x;
+        for (let x = 0; x < sw; x++) {
+          const q = Math.min(65535, Math.max(0, Math.round(d[row + x] * kq)));
+          u16[y * sw + x] = q;
+          if (((x | y) & 3) === 0) hist[q >> 4]++;
+        }
+      }
+      blobs[plan.frames[i].fi] = await depth.encodeDepthFrame(u16, sw, sh);
+      lastDepth = { u16, w: sw, h: sh };
+    };
+    const emitted = await stream.run(n, getInput, onDepth, {
+      gate: rotoRun,
+      cancelled: () => job.cancel,
+      onProgress: (frac) => {
+        const sec = (performance.now() - t0) / 1000;
+        const eta = frac > 0.05 ? ` · ~${Math.max(1, Math.round(sec / frac - sec))}s left` : '';
+        setStatus(`depth: analyzing ${Math.round(frac * n)}/${n} frames${eta}`, frac);
+      },
+    });
+    if (job.cancel || emitted < n) {
+      setStatus('depth: cancelled — the previous analysis (if any) is kept');
+      return;
+    }
+    // Slots the walk never reached (a time-remap burst skips source
+    // frames) borrow their nearest earlier neighbour.
+    for (let i = 1; i < blobs.length; i++) blobs[i] ??= blobs[i - 1];
+    for (let i = blobs.length - 2; i >= 0; i--) blobs[i] ??= blobs[i + 1];
+    // Global normalization: robust percentiles over the whole clip.
+    const sum = hist.reduce((a, b) => a + b, 0);
+    const pctl = (p) => {
+      let acc = 0;
+      for (let b = 0; b < hist.length; b++) {
+        acc += hist[b];
+        if (acc >= p * sum) return (b + 0.5) * 16 / 65535;
+      }
+      return 1;
+    };
+    const lo = pctl(0.005);
+    const hi = Math.max(lo + 1e-4, pctl(0.995));
+    const bins = new Array(DEPTH_HIST_BINS).fill(0);
+    for (let b = 0; b < hist.length; b++) {
+      const v = ((b + 0.5) * 16 / 65535 - lo) / (hi - lo);
+      if (v >= 0 && v <= 1) bins[Math.min(DEPTH_HIST_BINS - 1, Math.floor(v * DEPTH_HIST_BINS))] += hist[b];
+    }
+    const peak = Math.max(...bins, 1);
+    const seq = {
+      src0, srcStep: still ? 0 : srcStep, count: total, w: sw, h: sh,
+      lo, hi, hist: bins.map((b) => Math.round((b / peak) * 1000) / 1000),
+    };
+    const store = uid('dep');
+    await idbSet(depthStoreKey(store), { v: 1, ...seq, blobs });
+    depthStore(store).blobs = blobs;
+    history.record(comp, () => {
+      clip.depth.store = store;
+      clip.depth.seq = seq;
+    });
+    onModelChange({ structural: false });
+    const secs = ((performance.now() - t0) / 1000).toFixed(1);
+    setStatus(`depth: done — ${n} frame${n === 1 ? '' : 's'} in ${secs}s (${rt.ep}${rt.gpu ? ', GPU features' : ''})`);
+  } catch (e) {
+    console.error('depth analysis failed:', e);
+    setStatus(`depth: failed — ${e.message}`);
+  } finally {
+    rotoJob = null;
+    document.body.classList.remove('roto-analyzing');
+    maskOverlay.getContext('2d').clearRect(0, 0, maskOverlay.width, maskOverlay.height);
+    if (!job.cancel) setTime(tRestore);
+    else timeline.updatePlayhead();
+    renderInspector();
+  }
+}
+
+/** The analysis monitor: the frame being read beside the newest finished
+ * depth frame (depth lags the read head by up to one 32-frame window). */
+function drawDepthMonitor(asset, src, t, last) {
+  maskOverlay.width = comp.width;
+  maskOverlay.height = comp.height;
+  const octx = maskOverlay.getContext('2d');
+  octx.fillStyle = '#000';
+  octx.fillRect(0, 0, comp.width, comp.height);
+  const half = comp.width / 2;
+  const k = Math.min(half / asset.w, comp.height / asset.h);
+  const dw = asset.w * k;
+  const dh = asset.h * k;
+  const dy = (comp.height - dh) / 2;
+  octx.drawImage(rotoSourceHandle(asset, src, t), (half - dw) / 2, dy, dw, dh);
+  if (last) {
+    const img = new ImageData(last.w, last.h);
+    let lo = 65535;
+    let hi = 0;
+    for (const v of last.u16) { if (v < lo) lo = v; if (v > hi) hi = v; }
+    const kk = 255 / Math.max(1, hi - lo);
+    for (let i = 0; i < last.u16.length; i++) {
+      const g = (last.u16[i] - lo) * kk;
+      img.data[i * 4] = img.data[i * 4 + 1] = img.data[i * 4 + 2] = g;
+      img.data[i * 4 + 3] = 255;
+    }
+    const c = new OffscreenCanvas(last.w, last.h);
+    c.getContext('2d').putImageData(img, 0, 0);
+    octx.drawImage(c, half + (half - dw) / 2, dy, dw, dh);
+  }
+}
+
+/* ---- ＋Depth blur: the depth-of-field rig in one click ------------------
+ * An adjustment layer right above the source, spanning it, whose effect
+ * is depth-blur and whose mask is a layer matte of the depth layer (luma).
+ * depth-blur declares `#pragma mask_control`, so the mask is read as a
+ * per-pixel blur radius rather than mixed through. The depth layer goes to
+ * Focus mode (if it was a plain ramp) and its track is hidden — a matte
+ * layer drives masks from a hidden track, like any matte. */
+function addDepthBlur(depthClip) {
+  const s = depthSource(depthClip);
+  const spec = { fxKind: 'preset', path: 'shaders/blur-bloom/depth-blur/depth-blur.slangp', label: 'depth-blur' };
+  const fxClip = newFxClip(spec, depthClip.start, depthClip.dur);
+  fxClip.name = 'depth of field';
+  fxClip.effects[0].params = defaultParams(fxClip.effects[0]);
+  history.record(comp, () => {
+    const depthTrack = trackOf(comp, depthClip);
+    const srcTrack = s ? trackOf(comp, s.src) : null;
+    const idx = Math.min(...[depthTrack, srcTrack].filter(Boolean).map((tr) => comp.tracks.indexOf(tr)));
+    const track = newTrack(fxClip.name);
+    track.clips.push(fxClip);
+    comp.tracks.splice(Math.max(0, idx), 0, track);
+    if (depthTrack) depthTrack.hidden = true;
+    if ((depthClip.depth.mode ?? 'ramp') === 'ramp') depthClip.depth.mode = 'focus';
+    ensureDur(comp);
+  });
+  const node = { ...newMaskNode('layer'), sourceClipId: depthClip.id, channel: 'luma' };
+  prepareMaskNode(node);
+  clipMasks.set(fxClip.id, { opacity: 1, invert: false, nodes: [node] });
+  markChainDirty();
+  timeline.selectClip(fxClip.id);
+  onModelChange({ structural: true });
+  setStatus('depth of field added — set Focus distance on the depth layer (⌖ Pick focus), blur size on depth-blur');
+}
+
+/* ---- ⌖ Pick focus: click the preview, focus lands on that depth ------- */
+
+let depthPick = null;   // { clipId } while waiting for a preview click
+
+function startDepthPick(clip) {
+  depthPick = { clipId: clip.id };
+  canvasStack.style.cursor = 'crosshair';
+  setStatus('click what should be in focus (Esc cancels)');
+}
+
+function endDepthPick() {
+  depthPick = null;
+  canvasStack.style.cursor = '';
+}
+
+/** Normalized depth (0 far … 1 near) under comp point (cx, cy), or null. */
+async function depthAtComp(clip, t, cx, cy) {
+  const s = depthSource(clip);
+  const seq = clip.depth.seq;
+  if (!s || !seq?.count) return null;
+  const [sx, sy] = compToSource(s.src, t, cx, cy);
+  if (sx < 0 || sy < 0 || sx >= s.asset.w || sy >= s.asset.h) return null;
+  const idx = rotoFrameIndex({ seq }, s.src, t);
+  const u16 = await ensureDepthFrame(clip.depth.store, seq, idx);
+  if (!u16) return null;
+  // Median of a small neighbourhood: one stray texel shouldn't set focus.
+  const px = Math.floor(sx / s.asset.w * seq.w);
+  const py = Math.floor(sy / s.asset.h * seq.h);
+  const vals = [];
+  for (let y = py - 2; y <= py + 2; y++)
+    for (let x = px - 2; x <= px + 2; x++)
+      vals.push(u16[clamp(y, 0, seq.h - 1) * seq.w + clamp(x, 0, seq.w - 1)]);
+  vals.sort((a, b) => a - b);
+  const raw = vals[vals.length >> 1] / 65535;
+  return clamp((raw - seq.lo) / Math.max(1e-6, seq.hi - seq.lo), 0, 1);
+}
+
+canvasStack.addEventListener('pointerdown', async (e) => {
+  if (!depthPick || e.button !== 0) return;
+  e.stopPropagation();
+  e.preventDefault();
+  const clip = findClip(comp, depthPick.clipId)?.clip;
+  endDepthPick();
+  if (!clip) return;
+  const rect = canvas.getBoundingClientRect();
+  const cx = (e.clientX - rect.left) / rect.width * comp.width;
+  const cy = (e.clientY - rect.top) / rect.height * comp.height;
+  const v = await depthAtComp(clip, tCur, cx, cy);
+  if (v == null) { setStatus('depth: that point is outside the analyzed layer'); return; }
+  const mode = clip.depth.mode ?? 'ramp';
+  history.record(comp, () => {
+    if (mode === 'slice') {
+      // Centre the slice on the picked depth, keeping its width.
+      const w = Math.abs(evalProp(clip.props.depthNear, tCur - clip.start) - evalProp(clip.props.depthFar, tCur - clip.start)) || 10;
+      setPropValueLive(clip, 'depthNear', clamp(v * 100 + w / 2, 0, 100));
+      setPropValueLive(clip, 'depthFar', clamp(v * 100 - w / 2, 0, 100));
+    } else {
+      if (mode === 'ramp') clip.depth.mode = 'focus';
+      setPropValueLive(clip, 'depthFocus', Math.round(v * 1000) / 10);
+    }
+  });
+  onModelChange({ structural: false });
+  setStatus(`focus set to ${(v * 100).toFixed(1)}% depth${mode === 'slice' ? ' (slice centred there)' : ''}`);
+}, true);
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && depthPick) endDepthPick();
+});
+
+/* ---- inspector ---------------------------------------------------------- */
+
+let depthHistUi = null;   // { clipId, canvas, key } of the open distribution strip
+
+/** The clip's depth distribution with the current mode's cut points over
+ * it — what the controls are carving up. Redrawn by renderDepths when a
+ * value changes (sliders, keys, drivers). */
+function drawDepthHist(clip, p) {
+  const ui = depthHistUi;
+  const hist = clip.depth.seq?.hist;
+  if (!ui?.canvas.isConnected || !hist) return;
+  const key = JSON.stringify([p.mode, p.near, p.far, p.soft, p.focus, p.band, p.range, p.gamma, p.invert, p.outLo, p.outHi]);
+  if (ui.key === key) return;
+  ui.key = key;
+  const c = ui.canvas;
+  const dpr = devicePixelRatio || 1;
+  const W = Math.max(1, Math.round(c.clientWidth * dpr));
+  const H = Math.max(1, Math.round(c.clientHeight * dpr));
+  if (c.width !== W || c.height !== H) { c.width = W; c.height = H; }
+  const g = c.getContext('2d');
+  g.clearRect(0, 0, W, H);
+  // Response curve as a backdrop: what grey each depth becomes.
+  const curve = (d) => {
+    let v;
+    if (p.mode === 'slice') {
+      const lo = Math.min(p.near, p.far), hi = Math.max(p.near, p.far), s = Math.max(p.soft, 5e-4);
+      const ss = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
+      v = ss(lo - s, lo + s, d) * (1 - ss(hi - s, hi + s, d));
+    } else if (p.mode === 'focus') {
+      v = (Math.abs(d - p.focus) - p.band / 2) / p.range;
+    } else {
+      const span = p.near - p.far;
+      v = Math.abs(span) > 1e-5 ? (d - p.far) / span : (d >= p.far ? 1 : 0);
+    }
+    v = clamp(v, 0, 1) ** (1 / p.gamma);
+    if (p.invert) v = 1 - v;
+    return p.outLo + (p.outHi - p.outLo) * v;
+  };
+  // x axis: far (0) on the left, near (100) on the right.
+  for (let x = 0; x < W; x++) {
+    const v = Math.round(clamp(curve(x / (W - 1)), 0, 1) * 255);
+    g.fillStyle = `rgb(${v},${v},${v})`;
+    g.fillRect(x, 0, 1, H);
+  }
+  g.fillStyle = 'rgba(80, 170, 255, 0.75)';
+  const bw = W / hist.length;
+  hist.forEach((h, i) => {
+    const bh = Math.max(h > 0 ? 1 : 0, h * (H - 2));
+    g.fillRect(i * bw, H - bh, Math.max(1, bw - (dpr > 1 ? 1 : 0)), bh);
+  });
+  g.strokeStyle = '#ffb347';
+  g.lineWidth = dpr;
+  const mark = (v) => { const x = clamp(v, 0, 1) * (W - 1) + 0.5; g.beginPath(); g.moveTo(x, 0); g.lineTo(x, H); g.stroke(); };
+  if (p.mode === 'focus') mark(p.focus);
+  else { mark(p.near); mark(p.far); }
+}
+
+function depthStatusText(clip) {
+  if (rotoJob?.depthClipId === clip.id) return 'analyzing…';
+  const seq = clip.depth.seq;
+  const s = depthSource(clip);
+  if (!s) return 'source layer missing — choose one below';
+  if (!seq?.count) return 'not analyzed yet — hit Analyze';
+  return `${seq.count} frame${seq.count === 1 ? '' : 's'} · ${seq.w}×${seq.h} · Video Depth Anything`;
+}
+
+function renderDepthSection(clip) {
+  const running = rotoJob?.depthClipId === clip.id;
+  const analyzed = !!clip.depth.seq?.count;
+  const actions = [
+    secBtn(running ? '■ Cancel' : analyzed ? '↻' : '▶ Analyze',
+      running ? 'stop the analysis (the previous one is kept)'
+        : `${analyzed ? 're-analyze: ' : ''}estimate depth for every frame of the source (temporally stable video model)`,
+      () => analyzeDepthClip(clip)),
+  ];
+  if (analyzed && !running) {
+    actions.push(secBtn('⌖ Focus', 'pick focus: click the preview: focus (or the slice) moves to that depth', () => startDepthPick(clip)));
+    actions.push(secBtn('＋Depth blur', 'add a depth-of-field adjustment layer driven by this map', () => addDepthBlur(clip)));
+  }
+  const { sec, body, collapsed } = inspSection('depth', 'Depth map', { actions });
+  if (collapsed) { inspectorEl.appendChild(sec); return; }
+
+  const status = document.createElement('div');
+  status.className = 'insp-hint';
+  status.textContent = depthStatusText(clip);
+  body.appendChild(status);
+
+  const setSetting = (fn, structural = false) => {
+    history.record(comp, fn);
+    onModelChange({ structural });
+  };
+  const row = (label, title, control) => {
+    const r = document.createElement('div');
+    r.className = 'param-row sel';
+    const l = document.createElement('label');
+    l.textContent = label;
+    l.title = title;
+    r.append(l, control);
+    body.appendChild(r);
+    return r;
+  };
+  const select = (options, value, onChange) => {
+    const sel = document.createElement('select');
+    for (const [v, text] of options) {
+      const o = document.createElement('option');
+      o.value = v;
+      o.textContent = text;
+      sel.appendChild(o);
+    }
+    sel.value = value;
+    sel.onchange = () => onChange(sel.value);
+    return sel;
+  };
+
+  const srcOpts = [];
+  for (const tr of comp.tracks)
+    for (const c of tr.clips) {
+      const a = assets.get(c.assetId);
+      if (c.kind === 'media' && !isDepthClip(c) && DEPTH_SRC_KINDS.includes(a?.kind)) srcOpts.push([c.id, c.name]);
+    }
+  if (!depthSource(clip)) srcOpts.unshift(['', '(choose a layer)']);
+  row('Source', 'the layer whose depth this is — changing it needs a re-analysis',
+    select(srcOpts, clip.depth.sourceClipId ?? '', (v) => setSetting(() => {
+      clip.depth.sourceClipId = v || null;
+      clip.depth.seq = null;
+      clip.depth.store = null;
+      ensureDepthAsset(clip);
+    }, true)));
+
+  row('Mode', 'how depth becomes the matte',
+    select([
+      ['ramp', 'Ramp — near white, far black'],
+      ['slice', 'Slice — keep a depth band'],
+      ['focus', 'Focus — distance from a focal plane'],
+    ], clip.depth.mode ?? 'ramp', (v) => setSetting(() => { clip.depth.mode = v; }, true)));
+
+  const inv = document.createElement('input');
+  inv.type = 'checkbox';
+  inv.checked = !!clip.depth.invert;
+  inv.onchange = () => setSetting(() => { clip.depth.invert = inv.checked; });
+  row('Invert', 'swap black and white', inv);
+
+  if (analyzed) {
+    const hc = document.createElement('canvas');
+    hc.className = 'depth-hist';
+    hc.title = 'the clip’s depth distribution (far ← → near) over the matte it makes; orange = cut points';
+    body.appendChild(hc);
+    depthHistUi = { clipId: clip.id, canvas: hc, key: null };
+    requestAnimationFrame(() => drawDepthHist(clip, depthParamsAt(clip, tCur)));
+  }
+
+  const mode = clip.depth.mode ?? 'ramp';
+  const keys = new Set([...(DEPTH_MODE_KEYS[mode] ?? []), ...DEPTH_COMMON_KEYS]);
+  for (const def of depthPropDefs(clip))
+    if (keys.has(def.key) || clip.props[def.key]?.anim) addParamRow(body, clip, def);
+
+  const hint = document.createElement('div');
+  hint.className = 'insp-hint';
+  hint.textContent = {
+    ramp: 'a gradient by distance — use as a luma matte (Mask → ＋Layer) to fade any effect with depth',
+    slice: 'white between the cuts — isolate a depth band (subject, background, foreground)',
+    focus: 'black at the focus distance, whiter with distance — the map ＋Depth blur reads as blur size',
+  }[mode];
+  body.appendChild(hint);
+  inspectorEl.appendChild(sec);
+}
+
+/** Media clips: the way in — make a depth layer, or jump to existing ones. */
+function renderDepthSourceSection(clip) {
+  const asset = assets.get(clip.assetId);
+  if (!DEPTH_SRC_KINDS.includes(asset?.kind)) return;
+  const made = [];
+  for (const tr of comp.tracks)
+    for (const c of tr.clips) if (c.depth?.sourceClipId === clip.id) made.push(c);
+  const { sec, body, collapsed } = inspSection('depthsrc', 'Depth', {
+    count: made.length || null,
+    actions: [secBtn('＋Depth layer', 'AI depth map of this clip as a matte layer (Video Depth Anything — stable on video)',
+      () => makeDepthLayer(clip))],
+  });
+  if (collapsed) { inspectorEl.appendChild(sec); return; }
+  if (!made.length) {
+    const note = document.createElement('div');
+    note.className = 'insp-note';
+    note.textContent = 'no depth layer — ＋Depth layer estimates depth for every frame and adds it as a matte layer above this one';
+    body.appendChild(note);
+  }
+  for (const c of made) {
+    const b = document.createElement('button');
+    b.className = 'btn depth-jump';
+    b.textContent = `◐ ${c.name} — ${c.depth.seq?.count ? `${c.depth.seq.count} frames` : 'not analyzed'}`;
+    b.onclick = () => { timeline.selectClip(c.id); renderInspector(); };
+    body.appendChild(b);
+  }
+  inspectorEl.appendChild(sec);
+}
+
 /* ---- camera navigation in the viewport --------------------------------
  * 🎥 Navigate hands the preview to the camera (gizmo off):
  *   drag            orbit around the point orbitDist ahead
@@ -10074,6 +10918,9 @@ function renderInspector() {
     meta.textContent = `shape layer · ${clip.shapes.length} shape${clip.shapes.length > 1 ? 's' : ''}`;
   } else if (isSplatClip(clip) && asset?.kind === 'splat') {
     meta.textContent = `${asset.name} · gaussian splat · ${asset.splatCount.toLocaleString()} splats`;
+  } else if (isDepthClip(clip)) {
+    const src = clip.depth.sourceClipId ? findClip(comp, clip.depth.sourceClipId)?.clip : null;
+    meta.textContent = `depth layer · ${src ? `of ${src.name}` : 'source missing'} · use as a matte (luma)`;
   } else if (hasSource(clip)) {
     meta.textContent = asset
       ? [asset.name,
@@ -10101,6 +10948,9 @@ function renderInspector() {
   /* -- splat camera: the 3D move through the scene -- */
   if (isSplatClip(clip)) renderSplatSection(clip);
 
+  /* -- depth layer: analysis + how depth becomes a matte -- */
+  if (isDepthClip(clip)) renderDepthSection(clip);
+
   /* -- transform: where the layer sits and how it merges down -- */
   if (clip.kind === 'media') {
     const { sec, body } = inspSection('transform', 'Transform', { hint: '⏱ animates' });
@@ -10118,7 +10968,10 @@ function renderInspector() {
   }
 
   /* -- motion tracking: its own workflow, independent of masking -- */
-  if (clip.kind === 'media') renderTrackSection(clip);
+  if (clip.kind === 'media' && !isDepthClip(clip)) renderTrackSection(clip);
+
+  /* -- depth: make a depth-map layer of this clip -- */
+  if (clip.kind === 'media' && !isDepthClip(clip) && !isShapeClip(clip) && !isSplatClip(clip)) renderDepthSourceSection(clip);
 
   /* -- mask (fx: gates the whole stack; media: cuts the clip's alpha) -- */
   if (clip.kind !== 'audio' && clip.kind !== 'track') renderMaskSection(clip);
@@ -12237,9 +13090,14 @@ function maskSourceSelect(clip, ctx, node, { allowInput }) {
   sel.value = node.sourceClipId ?? '';
   sel.onchange = () => {
     node.sourceClipId = sel.value || null;
+    // A depth layer is a greyscale map, opaque over its source: its matte
+    // is its luma, never its alpha.
+    const depthSrc = node.kind === 'layer' && isDepthClip(findClip(comp, node.sourceClipId)?.clip);
+    if (depthSrc) node.channel = 'luma';
     prepareMaskNode(node);
     ctx.structure();
     scheduleSave();
+    if (depthSrc) renderInspector();
   };
   return sel;
 }
@@ -12309,7 +13167,7 @@ function exportBaseName() {
   for (const clip of allClipsBottomUp(comp, 'media')) {
     const asset = assets.get(clip.assetId);
     // Shape layers carry a synthetic asset with no real filename.
-    if (!asset || asset.kind === 'shape') continue;
+    if (!asset || asset.kind === 'shape' || asset.kind === 'depth') continue;
     const base = safeFileBase(asset.name);
     if (base) return base;
   }
@@ -13122,8 +13980,10 @@ async function renderCompOffline(job, formatId = 'webm') {
     const activeMedia = activeClips(comp, t, 'media').filter(({ track }) => !track.hidden);
     await seekMediaExact(t, [...activeMedia, ...matteSourceClips(t)]);
     await prepareRotoFramesExact(t);   // exact roto mask frames (preview tolerates staleness; this must not)
+    await prepareDepthFramesExact(t);  // …and depth layer frames
     uploadMediaFrames(t, [...activeMedia, ...matteSourceClips(t)]);
     renderSplats(t, [...activeMedia, ...matteSourceClips(t)]);
+    renderDepths(t, [...activeMedia, ...matteSourceClips(t)]);
     prepareMotionBlur(t, activeMedia);
     prepareMasks(t);   // media masks must compose before compositeFrame samples them
     await prepareMediaFxSettled(t, activeMedia);

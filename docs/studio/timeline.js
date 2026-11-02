@@ -1352,6 +1352,13 @@ export class Timeline {
         detail: clipPingPong(clip) ? 'forward & backward' : clipLoopSpan(clip) ? `cycling ${clipLoopSpan(clip).toFixed(2)}s` : null,
         action: () => this.host.findLoop?.(clip),
       }] : []),
+      // A depth layer: Video Depth Anything over this clip, as a matte
+      // layer any effect or mask can use (depth-of-field, fog, slicing).
+      ...(clip.kind === 'media' && !clip.depth && ['video', 'image', 'gif'].includes(asset?.kind) ? [{
+        label: 'Generate depth map layer',
+        detail: 'AI depth · for depth masks',
+        action: () => this.host.makeDepthLayer?.(clip),
+      }] : []),
       ...(clipLoopSpan(clip) ? [{
         label: 'Clear loop',
         action: () => {

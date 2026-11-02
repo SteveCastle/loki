@@ -59,6 +59,12 @@ export const LAYER_ICONS = {
     <rect x="2" y="2.2" width="8" height="8" rx="1.4"/>
     <circle cx="10.4" cy="10.2" r="3.6"/>`),
 
+  /* Depth map: three receding planes, nearest solid — distance as layers. */
+  depth: svg(`
+    <path d="M2 12.6 H14" stroke-width="1.9"/>
+    <path d="M3.6 8.6 H12.4"/>
+    <path d="M5.4 4.6 H10.6" stroke-width="1.1"/>`),
+
   /* Tracker null: a crosshair — the motion-track anchor. */
   track: svg(`
     <circle cx="8" cy="8" r="4.2"/>
@@ -78,6 +84,7 @@ export function clipIcon(clip, asset) {
   if (clip.kind === 'audio') return LAYER_ICONS.audio;
   if (Array.isArray(clip.shapes) && clip.shapes.length) return LAYER_ICONS.shape;
   if (clip.splat || asset?.kind === 'splat') return LAYER_ICONS.splat;
+  if (clip.depth || asset?.kind === 'depth') return LAYER_ICONS.depth;
   if (asset?.kind === 'audio') return LAYER_ICONS.audio;
   return asset?.kind === 'image' || asset?.kind === 'gif'
     ? LAYER_ICONS.image

@@ -44,6 +44,7 @@ position. Both are called out where they appear.
 | `shader-editor.js` | 155 | Zero-dependency slang code editor (textarea over a highlighted `<pre>`). |
 | `roto.js` | 250 | AI rotoscoping, auto engine: BiRefNet (dichotomous segmentation / matting) via onnxruntime-web, loaded from CDN on demand and cached. Stateless per call; the temporal story lives in app.js. |
 | `roto-sam.js` | 530 | AI rotoscoping, prompt engine: MobileSAM encoder/decoder + OWL-ViT text detection via onnxruntime-web / transformers.js, for cutting out a SPECIFIC object with clicks, strokes, or a text query. Same on-demand CDN + Cache API story. |
+| `depth.js` | 630 | AI depth maps: Video Depth Anything Small (encoder + 32-frame temporal head) via onnxruntime-web, the windowed keyframe-aligned walk that keeps long clips flicker-free, 16-bit delta+deflate frame storage, and the GPU grade pass (edge-aware upsample + ramp / slice / focus curves). |
 | `splat.js` | 1.0k | Gaussian splat layers: `.ply` / `.splat` / `.spz` parsing, scene framing, and the WebGPU renderer (compute projection + SH colour, bitonic depth sort, indirect instanced draw, straight-alpha resolve). UI-free; app.js owns the clips and the camera UI. |
 | `motion-blur.js` | 250 | Per-layer motion blur: N sub-frame draws across the shutter, averaged in float, resolved to straight alpha. |
 | `server.js` | 130 | The Lowkey Media Server client: connection settings (URL + API key in localStorage), header-auth fetches, uploads with progress, job polling, file download. Used for work a tab can't do — splat training. |
@@ -631,6 +632,55 @@ alpha at composite time** instead of gating a group — that's what makes a
 chroma key on a media clip behave like a real green-screen cut.
 
 ---
+
+### Depth layers
+
+A **depth layer** is a media clip with `clip.depth` and a synthetic
+`depth:<clipId>` asset (comp-sized, like a splat). It shows an analyzed
+depth map of ANOTHER clip, drawn through that clip's live transform, and
+exists to be a matte: Mask → ＋Layer (luma) on any clip or adjustment layer.
+
+* **Model** (`depth.js`): Video Depth Anything Small, Apache-2.0, fp16, run
+  as two graphs split at the ViT tokens (encoder `[1,3,518,910]` → 4 ×
+  `[1,2405,384]`; temporal head 4 × `[32,2405,384]` → `[32,1,518,910]`
+  disparity, near = bigger). Picked because it is a VIDEO model: the head
+  sees 32 frames at once, so depth doesn't flicker, which is what a matte
+  needs. `DepthStream` follows the reference `infer_video_depth`: windows
+  advance 22 frames, the first 10 slots of each are keyframes carried from
+  the previous window (slot 0 = frame 0, the global anchor; slot 12; the
+  last 8), each window is least-squares scale/shift-aligned to the last
+  through the two keyframe slots, and the 8 overlap frames cross-fade. The
+  window's features stay on the GPU (encoder outputs `copyBufferToBuffer`
+  into the head's input buffers on ORT's device); `gpuFeatures: false` in
+  `localStorage['lowkey-studio.depth-config']` round-trips through JS
+  instead. Model calls go through `rotoRun`, and the job holds `rotoJob`, so
+  roto and depth never run concurrently.
+* **Storage**: like roto, SOURCE space keyed by SOURCE time (the
+  `rotoWalkPlan` grid), in IndexedDB `depth:<store>`. Frames are 16-bit (8
+  bits steps visibly once a tight slice stretches the range), delta-coded
+  per row and deflated. Normalization is **global** (`seq.lo/hi` =
+  0.5/99.5 percentiles over the whole clip). A per-frame stretch would make
+  the matte pump. Each analysis writes a new store id through history, so
+  undo of a re-analysis brings the old frames back, and the boot sweep frees
+  stores nothing references.
+* **Per frame** (`renderDepths`, right after `renderSplats`, in the tick and
+  the exporter): stored frame (r16uint) → grade pass in source space (joint
+  bilateral upsample guided by the source frame = *Edge refine*; mode curve:
+  Ramp / Slice / Focus; gamma, invert, output levels) → optional expand /
+  feather via `MaskComposer`'s post passes (comp px converted through the
+  source's scale) → composite into the layer's comp-sized texture with the
+  source's transform. Playback keys off the presented frame
+  (`rotoFrameIndexLive`), and the exporter awaits `prepareDepthFramesExact`.
+  `matteSourceClips` adds each depth layer's source so a hidden source is
+  still seeked.
+* **Depth of field**: ＋Depth blur adds an adjustment layer with
+  `depth-blur` whose mask is the depth layer, switches the depth layer to
+  Focus (a circle-of-confusion map) and hides its track. depth-blur declares
+  `#pragma mask_control`: the engine then skips that group's MaskBlender mix
+  (`group.control`), because the shader reads `Mask` as a per-pixel blur
+  radius (gather-as-scatter: a sample counts only if its own circle reaches
+  the pixel, so sharp subjects neither smear outward nor get background
+  gathered over them). Mixing through the mask again would apply it twice.
 
 ## 6. The trick worth understanding: isolated media effects
 

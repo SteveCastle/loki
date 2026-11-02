@@ -54,7 +54,7 @@ function rotoConfig() {
  * main process's disk cache (studio-window.ts /dep-cache): renderer storage
  * on custom-scheme origins is best-effort — Chromium evicts it, which is why
  * the model kept re-downloading in the app. Same origin, so no CORS. */
-function appCached(url) {
+export function appCached(url) {
   return globalThis.location?.protocol === 'studio:'
     ? `/dep-cache?url=${encodeURIComponent(url)}`
     : url;
@@ -62,18 +62,18 @@ function appCached(url) {
 
 /** Fetch `url` as an ArrayBuffer through the Cache API, reporting download
  * progress (the model is >100 MB — the first use must not look hung). */
-async function cachedFetch(url, onProgress) {
+export async function cachedFetch(url, onProgress, cacheName = CACHE_NAME) {
   let cache = null;
   try {
     // Best-effort eviction protection for the browser case; ignored where
     // unsupported. Chrome grants it silently for installed/engaged sites.
     navigator.storage?.persist?.().catch(() => {});
-    cache = await caches.open(CACHE_NAME);
+    cache = await caches.open(cacheName);
     const hit = await cache.match(url);
     if (hit) return await hit.arrayBuffer();
   } catch { /* Cache API unavailable (private mode) — plain fetch below */ }
   const res = await fetch(appCached(url));
-  if (!res.ok) throw new Error(`roto: ${res.status} fetching ${url}`);
+  if (!res.ok) throw new Error(`${res.status} fetching ${url}`);
   const total = parseInt(res.headers.get('Content-Length') ?? '0', 10);
   if (!res.body || !total) {
     const buf = await res.arrayBuffer();

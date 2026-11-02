@@ -175,6 +175,11 @@
       "category": "blur-bloom"
     },
     {
+      "name": "depth-blur",
+      "path": "shaders/blur-bloom/depth-blur/depth-blur.slangp",
+      "category": "blur-bloom"
+    },
+    {
       "name": "directional-blur",
       "path": "shaders/blur-bloom/directional-blur/directional-blur.slangp",
       "category": "blur-bloom"

@@ -240,6 +240,7 @@ export function preprocessSlang(flatSrc) {
   const params = [];
   const matteIgnore = new Set();
   let formatPragma = null;
+  let maskControl = false;
 
   for (const line of text.split('\n')) {
     const m = line.match(/^\s*#pragma\s+(\S+)\s*(.*?)\s*$/);
@@ -279,6 +280,14 @@ export function preprocessSlang(flatSrc) {
         target.push('');
         continue;
       }
+      if (kind === 'mask_control') {
+        // The shader reads `Mask` itself as a control map (e.g. a per-pixel
+        // blur radius), so its group must NOT also mix the result over the
+        // input through that mask — that would apply it twice.
+        maskControl = true;
+        target.push('');
+        continue;
+      }
       if (kind === 'name') { target.push(''); continue; }
       // Unknown pragma: keep (GLSL ignores unknown pragmas).
     }
@@ -295,6 +304,7 @@ export function preprocessSlang(flatSrc) {
     fragmentGlsl: frag.join('\n'),
     params,
     formatPragma,
+    maskControl,
     samplers,
   };
 }

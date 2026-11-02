@@ -257,6 +257,29 @@ export const SPLAT_PROPS = [
 
 export const isSplatClip = (clip) => clip?.kind === 'media' && !!clip.splat;
 
+/** A depth layer (a media clip with `clip.depth`) shows an analyzed depth
+ * map of ANOTHER clip, drawn through that clip's live transform. These
+ * shape the map into a matte; all are percentages of the clip's depth
+ * range (0 = farthest, 100 = nearest) except gamma and the pixel sizes.
+ *   clip.depth = { sourceClipId, store, mode: 'ramp'|'slice'|'focus',
+ *                  invert, seq: { src0, srcStep, count, w, h, lo, hi, hist } } */
+export const DEPTH_PROPS = [
+  ['depthNear', 'Near', () => 100, '%'],
+  ['depthFar', 'Far', () => 0, '%'],
+  ['depthSoft', 'Softness', () => 3, '%'],
+  ['depthFocus', 'Focus', () => 60, '%'],
+  ['depthBand', 'In-focus band', () => 6, '%'],
+  ['depthRange', 'Falloff', () => 35, '%'],
+  ['depthGamma', 'Gamma', () => 1, ''],
+  ['depthBlack', 'Black level', () => 0, '%'],
+  ['depthWhite', 'White level', () => 100, '%'],
+  ['depthRefine', 'Edge refine', () => 60, '%'],
+  ['depthExpand', 'Expand', () => 0, 'px'],
+  ['depthFeather', 'Feather', () => 0, 'px'],
+];
+
+export const isDepthClip = (clip) => clip?.kind === 'media' && !!clip.depth;
+
 /** Clips that own a source file on the timeline (and therefore a trim
  * offset), as opposed to adjustment layers. */
 export const hasSource = (clip) => clip.kind === 'media' || clip.kind === 'audio';
@@ -536,6 +559,8 @@ export function migrateComp(comp) {
       for (const [key, , def] of MEDIA_PROPS) clip.props[key] ??= newProp(def(comp));
       if (clip.splat)
         for (const [key, , def] of SPLAT_PROPS) clip.props[key] ??= newProp(def(comp));
+      if (clip.depth)
+        for (const [key, , def] of DEPTH_PROPS) clip.props[key] ??= newProp(def(comp));
     }
   return comp;
 }
