@@ -94,6 +94,19 @@ const INVOKE_TIMEOUT_MS: Record<string, number> = {
 // In-flight visual query (Electron path): newest query aborts the previous
 // one so re-runs can't stack sockets against the media-server origin.
 let visualQueryAbortRef: AbortController | null = null;
+// In-flight library query (web path): same latest-wins contract.
+let webQueryAbortRef: AbortController | null = null;
+
+// A library query that was superseded by a newer one or cancelled by the user.
+// Not a failure: the machine has already moved on, so callers must not toast.
+export class QueryCancelledError extends Error {
+  constructor() {
+    super('Search cancelled');
+    this.name = 'QueryCancelledError';
+  }
+}
+export const isQueryCancelled = (err: unknown): boolean =>
+  (err as { name?: string })?.name === 'QueryCancelledError';
 
 function invokeTimeout<T>(channel: string, promise: Promise<T>): Promise<T> {
   const ms = INVOKE_TIMEOUT_MS[channel];
@@ -534,6 +547,10 @@ export let loadMediaByQuery: (
   authToken?: string | null
 ) => Promise<any>;
 
+// Stop the in-flight library query (both the SQL scan and a visual request).
+// Safe to call when nothing is running.
+export let cancelMediaQuery: () => void;
+
 export let fetchMediaPreview: (
   path: string,
   cache: ImageCache,
@@ -620,8 +637,12 @@ if (isElectron) {
         p.value !== ''
     );
     if (!hasVisual) {
-      // Normal queries stay on the fast local SQLite path.
-      return electronLoadMediaByQuery(predicates, mode);
+      // Normal queries stay on the fast local SQLite path. Main runs them on
+      // an interruptible per-window lane and answers a superseded/cancelled
+      // request with { cancelled: true } (media-query-lanes.ts).
+      const res = await electronLoadMediaByQuery(predicates, mode);
+      if (res?.cancelled) throw new QueryCancelledError();
+      return res;
     }
     // Visual similarity needs the embedding backend, which only the media
     // server has. Electron and the server share the same SQLite DB, so we
@@ -654,11 +675,12 @@ if (isElectron) {
       });
     } catch (err) {
       if (controller.signal.aborted) {
-        throw new Error(
-          visualQueryAbortRef === controller
-            ? 'Visual search timed out after 2 minutes.'
-            : 'Visual search superseded by a newer query.'
-        );
+        // Still the current controller → our own timeout fired; otherwise a
+        // newer query or cancelMediaQuery() took the slot and aborted us.
+        if (visualQueryAbortRef === controller) {
+          throw new Error('Visual search timed out after 2 minutes.');
+        }
+        throw new QueryCancelledError();
       }
       throw err;
     } finally {
@@ -672,6 +694,12 @@ if (isElectron) {
     }
     const library = await res.json();
     return { library: library || [], cursor: 0 };
+  };
+  cancelMediaQuery = () => {
+    const visual = visualQueryAbortRef;
+    visualQueryAbortRef = null; // released first: the abort reads as a cancel
+    visual?.abort();
+    invoke('cancel-media-query', []).catch(() => undefined);
   };
   // Three args only: an AbortSignal can't cross IPC.
   fetchMediaPreview = (path, cache, timeStamp) =>
@@ -922,8 +950,31 @@ if (isElectron) {
   };
 
   loadMediaByQuery = async (predicates, mode = 'AND', _authToken) => {
-    const library = await jsonPost('/api/media/query', { predicates, mode });
-    return { library: library || [], cursor: 0 };
+    // Latest-wins: a re-run aborts the request it supersedes instead of
+    // stacking sockets (the server's visual search honours the request
+    // context, so it stops working on it too).
+    webQueryAbortRef?.abort();
+    const controller = new AbortController();
+    webQueryAbortRef = controller;
+    try {
+      const library = await jsonPost(
+        '/api/media/query',
+        { predicates, mode },
+        controller.signal
+      );
+      return { library: library || [], cursor: 0 };
+    } catch (err) {
+      if (controller.signal.aborted) throw new QueryCancelledError();
+      throw err;
+    } finally {
+      if (webQueryAbortRef === controller) webQueryAbortRef = null;
+    }
+  };
+
+  cancelMediaQuery = () => {
+    const controller = webQueryAbortRef;
+    webQueryAbortRef = null;
+    controller?.abort();
   };
 
   fetchMediaPreview = (path, cache, timeStamp, signal) =>

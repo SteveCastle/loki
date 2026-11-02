@@ -22,6 +22,8 @@ import { useFilterHistory } from '../../hooks/useFilterHistory';
 import { useMeaningMode } from '../../hooks/useMeaningMode';
 import useVisualSearchAvailable from '../../hooks/useVisualSearchAvailable';
 import { useAfterPaint } from '../../hooks/useAfterPaint';
+import { useSearchActivity } from '../../hooks/useSearchActivity';
+import SearchStatus from './search-status';
 import QueryInput from '../query-input/QueryInput';
 import CommandPaletteResults from './command-palette-results';
 import type { SuggestionItem } from '../taxonomy/suggestion-sections';
@@ -59,6 +61,11 @@ export default function CommandPaletteSearch({
   );
 
   const currentPath = currentItem?.path;
+
+  // The library search in flight (if any): drives the input's busy state and
+  // the status row under it. Cheap selectors — fine for the open-latency
+  // contract above.
+  const search = useSearchActivity(libraryService);
 
   // Session filter-state history + base row, rendered as a section of the
   // results surface below (QueryHistorySection inside CommandPaletteResults).
@@ -251,12 +258,18 @@ export default function CommandPaletteSearch({
               }
             : undefined
         }
+        busy={search.busy}
+        busyKind={search.description?.kind}
+        pendingKeys={search.pendingKeys}
+        onCancelBusy={search.cancel}
         resultNavCount={navItems.length}
         onResultNavMove={moveHighlight}
         onResultNavSubmit={() => {
           if (safeIndex >= 0) commitItem(navItems[safeIndex]);
         }}
       />
+
+      {search.busy && <SearchStatus activity={search} />}
 
       {meaningMode && visualSearchAvailable && (
         <div className="commandPaletteMeaningHint">

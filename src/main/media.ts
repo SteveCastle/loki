@@ -9,6 +9,7 @@ import { IpcMainInvokeEvent, shell } from 'electron';
 import fs from 'fs';
 import { isNetworkPath } from './network-drive-cache';
 import { buildMediaQuery, FilteringMode } from './query-sql';
+import { runMediaQuery } from './media-query-lanes';
 import type { Predicate } from '../renderer/query/types';
 
 const MAX_CONCURRENT_LOCAL = 12;
@@ -349,12 +350,15 @@ const loadMediaByDescriptionSearch =
   };
 
 const loadMediaByQuery =
-  (db: Database) => async (_: IpcMainInvokeEvent, args: any[]) => {
+  (db: Database) => async (event: IpcMainInvokeEvent, args: any[]) => {
     const predicates = (args[0] || []) as Predicate[];
     const mode = (args[1] || 'AND') as FilteringMode;
     const { sql, params } = buildMediaQuery(predicates, mode);
     try {
-      const mediaRows = await db.all(sql, params, 'loadMediaByQuery');
+      // The window's own interruptible lane (latest-wins), not the shared
+      // connection — see media-query-lanes.ts.
+      const mediaRows = await runMediaQuery(event.sender, db, sql, params);
+      if (!Array.isArray(mediaRows)) return mediaRows; // QUERY_CANCELLED
       const library = mediaRows.map((m: any) => ({
         path: m.path,
         elo: m.elo,

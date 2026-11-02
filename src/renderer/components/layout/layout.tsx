@@ -22,6 +22,7 @@ import ContextPalette from '../controls/context-palette';
 import TransformFlow from '../transform/transform-flow';
 import EngineSetupDialog from '../transform/engine-setup-dialog';
 import RegionSelect from '../controls/region-select';
+import SearchOverlay from './search-overlay';
 
 // Persisted panel layout, read through an in-memory cache.
 //
@@ -307,8 +308,12 @@ const Layout = () => {
             imperativeRef={listRef}
             renderId={renderID}
           >
-            <div className="panel" onDoubleClick={handleListClick}>
+            <div
+              className="panel search-overlay-host"
+              onDoubleClick={handleListClick}
+            >
               <List />
+              <SearchOverlay />
             </div>
           </CollapsiblePanel>
           <VerticalHandle />
@@ -320,13 +325,14 @@ const Layout = () => {
             renderId={renderID}
           >
             <div
-              className="panel"
+              className="panel search-overlay-host"
               onDoubleClick={
                 controlMode === 'mouse' ? handleDetailClick : undefined
               }
             >
               <Detail />
               {comicMode || battleMode ? <Detail offset={1} /> : null}
+              <SearchOverlay minimal />
             </div>
           </CollapsiblePanel>
           <VerticalHandle />

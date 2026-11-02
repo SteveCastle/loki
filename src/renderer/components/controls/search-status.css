@@ -1,0 +1,207 @@
+/* SearchStatus: the in-flight library search readout. The accent follows the
+   search kind — blue for indexed filters, teal for full scans (path /
+   description / hash), the ✨ purple for embedding (meaning / similarity). */
+.search-status {
+  --search-accent: #5aa9ff;
+  --search-accent-2: #9fd0ff;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  min-width: 0;
+  font-size: 12px;
+  color: #d6dde6;
+  /* Hidden for the first beat: a search that lands quickly never flashes. */
+  opacity: 0;
+  animation: search-status-in 180ms ease-out 160ms forwards;
+}
+
+.search-status--scan {
+  --search-accent: #3fd6c0;
+  --search-accent-2: #b4fff2;
+}
+
+.search-status--vector {
+  --search-accent: #8f7bff;
+  --search-accent-2: #5fd4ff;
+}
+
+.search-status--inline {
+  padding: 2px 0.75rem 6px;
+}
+
+.search-status--floating {
+  padding: 7px 10px 7px 12px;
+  border-radius: 999px;
+  background: rgba(24, 26, 31, 0.86);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45),
+    0 0 0 1px color-mix(in srgb, var(--search-accent) 25%, transparent);
+  backdrop-filter: blur(8px);
+  max-width: min(560px, calc(100% - 24px));
+}
+
+.search-status--floating:has(.search-status-hint) {
+  border-radius: 14px;
+}
+
+@keyframes search-status-in {
+  from {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* The orb: a spinning arc for filters, a radar sweep for scans, and a
+   two-tone swirl for embedding search. */
+.search-status-orb {
+  position: relative;
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: conic-gradient(
+    from 0deg,
+    transparent 0 55%,
+    var(--search-accent) 85%,
+    var(--search-accent-2) 100%
+  );
+  -webkit-mask: radial-gradient(circle, transparent 4px, #000 4.5px);
+  mask: radial-gradient(circle, transparent 4px, #000 4.5px);
+  animation: search-status-spin 0.9s linear infinite;
+}
+
+.search-status--scan .search-status-orb {
+  -webkit-mask: none;
+  mask: none;
+  background: conic-gradient(
+      from 0deg,
+      transparent 0 70%,
+      color-mix(in srgb, var(--search-accent) 70%, transparent) 99%,
+      var(--search-accent-2) 100%
+    ),
+    radial-gradient(
+      circle,
+      color-mix(in srgb, var(--search-accent) 18%, transparent) 60%,
+      color-mix(in srgb, var(--search-accent) 55%, transparent) 62%,
+      transparent 66%
+    );
+  animation-duration: 1.4s;
+}
+
+.search-status--vector .search-status-orb {
+  -webkit-mask: none;
+  mask: none;
+  background: conic-gradient(
+    from 0deg,
+    var(--search-accent),
+    var(--search-accent-2),
+    #ff7ad9,
+    var(--search-accent)
+  );
+  filter: blur(0.4px);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--search-accent) 60%, transparent);
+  animation: search-status-spin 1.6s linear infinite,
+    search-status-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes search-status-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes search-status-pulse {
+  50% {
+    transform: rotate(180deg) scale(0.82);
+  }
+}
+
+.search-status-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.search-status-subject {
+  color: #fff;
+  font-weight: 500;
+}
+
+/* Animated trailing ellipsis. */
+.search-status-ellipsis::after {
+  content: '';
+  display: inline-block;
+  width: 1.2em;
+  text-align: left;
+  animation: search-status-dots 1.2s steps(4, end) infinite;
+}
+
+@keyframes search-status-dots {
+  0% {
+    content: '';
+  }
+  25% {
+    content: '.';
+  }
+  50% {
+    content: '..';
+  }
+  75%,
+  100% {
+    content: '...';
+  }
+}
+
+.search-status-elapsed {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+  color: var(--search-accent-2);
+  opacity: 0.85;
+}
+
+.search-status-cancel {
+  flex: 0 0 auto;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.05);
+  color: #d6dde6;
+  font-size: 11px;
+  line-height: 1;
+  padding: 4px 9px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.search-status-cancel:hover {
+  background: rgba(255, 90, 90, 0.16);
+  border-color: rgba(255, 110, 110, 0.5);
+  color: #fff;
+}
+
+.search-status-hint {
+  flex: 1 0 100%;
+  padding-left: 22px;
+  color: #9aa4b1;
+  font-size: 11px;
+  animation: search-status-in 240ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .search-status,
+  .search-status-orb,
+  .search-status-ellipsis::after,
+  .search-status-hint {
+    animation-duration: 0.01ms;
+    animation-iteration-count: 1;
+  }
+  .search-status {
+    opacity: 1;
+  }
+}

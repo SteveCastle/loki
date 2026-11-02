@@ -1,0 +1,110 @@
+.search-overlay-host {
+  position: relative;
+}
+
+.search-overlay {
+  --search-accent: #5aa9ff;
+  --search-accent-2: #9fd0ff;
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.search-overlay--scan {
+  --search-accent: #3fd6c0;
+  --search-accent-2: #b4fff2;
+}
+
+.search-overlay--vector {
+  --search-accent: #8f7bff;
+  --search-accent-2: #5fd4ff;
+}
+
+/* Stale results dim — but only once the search is clearly not instant. */
+.search-overlay-veil {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+      ellipse at 50% 0%,
+      color-mix(in srgb, var(--search-accent) 10%, transparent),
+      transparent 60%
+    ),
+    rgba(3, 3, 3, 0.5);
+  opacity: 0;
+  animation: search-overlay-in 400ms ease-out 350ms forwards;
+}
+
+/* Indeterminate sweep along the top edge. */
+.search-overlay-bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  opacity: 0;
+  animation: search-overlay-in 200ms ease-out 120ms forwards;
+}
+
+.search-overlay-bar::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 35%;
+  left: -35%;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--search-accent) 40%,
+    var(--search-accent-2) 60%,
+    transparent
+  );
+  box-shadow: 0 0 10px var(--search-accent), 0 0 2px var(--search-accent-2);
+  animation: search-overlay-sweep 1.25s cubic-bezier(0.45, 0, 0.25, 1) infinite;
+}
+
+.search-overlay--vector .search-overlay-bar::before {
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--search-accent) 30%,
+    #ff7ad9 50%,
+    var(--search-accent-2) 70%,
+    transparent
+  );
+  animation-duration: 1.7s;
+}
+
+.search-overlay-pill {
+  position: absolute;
+  top: 14px;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: center;
+  padding: 0 12px;
+}
+
+.search-overlay-pill .search-status {
+  pointer-events: auto;
+}
+
+@keyframes search-overlay-in {
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes search-overlay-sweep {
+  to {
+    left: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .search-overlay-bar::before {
+    animation-duration: 3s;
+  }
+}

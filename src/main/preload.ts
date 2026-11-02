@@ -22,6 +22,7 @@ export type Channels =
   | 'load-files-batch'
   | 'load-files-done'
   | 'cancel-load-files'
+  | 'cancel-media-query'
   | 'refresh-library'
   | 'select-new-path'
   | 'select-db'

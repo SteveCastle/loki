@@ -650,6 +650,13 @@ ipcMain.handle('load-db', async (event, args) => {
     mediaModule.loadMediaByDescriptionSearch(db)
   );
   ipcMain.handle('load-media-by-query', mediaModule.loadMediaByQuery(db));
+  // Library queries run on per-window interruptible lanes against this DB.
+  const queryLanes = await import('./media-query-lanes');
+  queryLanes.setMediaQueryDbPath(dbPath);
+  ipcMain.removeHandler('cancel-media-query');
+  ipcMain.handle('cancel-media-query', (event) =>
+    queryLanes.cancelMediaQuery(event.sender)
+  );
   ipcMain.handle('record-battle', mediaModule.recordBattle(db));
   ipcMain.handle('update-description', mediaModule.updateDescription(db));
   ipcMain.handle(
@@ -1247,6 +1254,12 @@ app.on('ready', async () => {
 });
 
 app.on('before-quit', async () => {
+  try {
+    const { closeAllMediaQueryLanes } = await import('./media-query-lanes');
+    await closeAllMediaQueryLanes();
+  } catch (err) {
+    console.error('Error closing media query lanes on quit:', err);
+  }
   if (db) {
     try {
       await db.close();

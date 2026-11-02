@@ -5,6 +5,7 @@ import deleteIcon from '../../../../assets/delete.svg';
 import editPencil from '../../../../assets/edit-pencil.svg';
 import checkCircle from '../../../../assets/check-circle.svg';
 import { GlobalStateContext } from '../../state';
+import { isTagPending } from '../../search-activity';
 import { useDrag, useDrop, DropTargetMonitor } from 'react-dnd';
 import ConfirmDeleteTag from './confirm-delete-tag';
 import './taxonomy.css';
@@ -55,6 +56,11 @@ export default function Tag({
   group,
 }: Props) {
   const { libraryService } = useContext(GlobalStateContext);
+  // Selected, but its results are still loading: spinner instead of the check.
+  const pending = useSelector(
+    libraryService,
+    (state) => active && isTagPending(state, tag.label)
+  );
   const showTagCount = useSelector(
     libraryService,
     (state) => state.context.settings.showTagCount
@@ -171,6 +177,7 @@ export default function Tag({
       className={[
         'tag',
         active ? 'active' : '',
+        pending ? 'pending' : '',
         isDragging ? 'dragging' : '',
         collectedProps.isOver && !collectedProps.isSelf ? 'hovered' : '',
         collectedProps.isOver && isLeft ? 'left' : '',
@@ -221,7 +228,12 @@ export default function Tag({
         )
       ) : null}
       <div className="label">{displayTagLabel(tag.label)}</div>
-      {active && <img className="check" src={checkCircle} />}
+      {active &&
+        (pending ? (
+          <span className="check tag-pending-spinner" aria-label="Loading" />
+        ) : (
+          <img className="check" src={checkCircle} />
+        ))}
       <div className="actions">
         {showTagCount ? <TagCount tag={tag} /> : null}
         {canWrite && (

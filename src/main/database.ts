@@ -183,6 +183,14 @@ export class Database {
     }
   }
 
+  // Abort whatever this connection is running: the statement fails with
+  // SQLITE_INTERRUPT. Connection-wide, so only call it on a connection whose
+  // in-flight work you own (see media-query-lanes.ts). Statements STARTED
+  // before that work has unwound are interrupted too — await it first.
+  interrupt(): void {
+    this.db.interrupt();
+  }
+
   close(): Promise<void> {
     return new Promise((resolve, reject) => {
       this.db.close((err: Error | null) => {

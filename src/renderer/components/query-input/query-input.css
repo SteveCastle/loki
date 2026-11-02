@@ -767,3 +767,152 @@
   color: #888;
   font-size: 12px;
 }
+
+/* ---- Search in flight (busy) ------------------------------------------------
+   Accent per search kind, shared with SearchStatus: blue = indexed filter,
+   teal = full scan (path / description / hash), purple = embedding search. */
+.query-input--busy {
+  --search-accent: #5aa9ff;
+  --search-accent-2: #9fd0ff;
+}
+
+.query-input--busy-scan {
+  --search-accent: #3fd6c0;
+  --search-accent-2: #b4fff2;
+}
+
+.query-input--busy-vector {
+  --search-accent: #8f7bff;
+  --search-accent-2: #5fd4ff;
+}
+
+/* Indeterminate sweep along the bottom edge of the text field (the input has
+   a 0.5rem margin, so this hugs its bottom border). Fades in after a beat so
+   fast searches don't flash it. */
+.query-input-progress {
+  position: absolute;
+  left: 0.5rem;
+  right: 0.5rem;
+  bottom: 0.5rem;
+  height: 2px;
+  overflow: hidden;
+  border-radius: 0 0 2px 2px;
+  pointer-events: none;
+  opacity: 0;
+  animation: query-input-fade-in 200ms ease-out 140ms forwards;
+}
+
+.query-input-progress::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 40%;
+  left: -40%;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--search-accent) 40%,
+    var(--search-accent-2) 60%,
+    transparent
+  );
+  box-shadow: 0 0 8px var(--search-accent);
+  animation: query-input-sweep 1.15s cubic-bezier(0.45, 0, 0.25, 1) infinite;
+}
+
+.query-input--busy-vector .query-input-progress::before {
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--search-accent) 30%,
+    #ff7ad9 50%,
+    var(--search-accent-2) 70%,
+    transparent
+  );
+  animation-duration: 1.6s;
+}
+
+@keyframes query-input-sweep {
+  to {
+    left: 100%;
+  }
+}
+
+@keyframes query-input-fade-in {
+  to {
+    opacity: 1;
+  }
+}
+
+/* Chips the results on screen don't reflect yet: a light shimmer passes over
+   them until the search lands. */
+.query-chip.pending {
+  border-color: var(--search-accent, #5aa9ff);
+  background-image: linear-gradient(
+    100deg,
+    transparent 30%,
+    rgba(255, 255, 255, 0.2) 50%,
+    transparent 70%
+  );
+  background-size: 250% 100%;
+  background-repeat: no-repeat;
+  animation: query-chip-shimmer 1.3s linear infinite;
+}
+
+@keyframes query-chip-shimmer {
+  from {
+    background-position: 130% 0;
+  }
+  to {
+    background-position: -30% 0;
+  }
+}
+
+/* Submit button while searching: a spinner that turns into a cancel ✕ on
+   hover. */
+.query-input-submit--busy {
+  opacity: 1 !important;
+}
+
+.query-input-spinner {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.18);
+  border-top-color: var(--search-accent, #5aa9ff);
+  border-right-color: var(--search-accent-2, #9fd0ff);
+  animation: query-input-spin 0.75s linear infinite;
+}
+
+.query-input-cancel-x {
+  display: none;
+  font-size: 14px;
+  line-height: 1;
+  color: #fff;
+}
+
+.query-input-submit--busy:hover {
+  background: #a33a3a !important;
+}
+
+.query-input-submit--busy:hover .query-input-spinner {
+  display: none;
+}
+
+.query-input-submit--busy:hover .query-input-cancel-x {
+  display: block;
+}
+
+@keyframes query-input-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .query-input-progress::before,
+  .query-chip.pending,
+  .query-input-spinner {
+    animation-duration: 3s;
+  }
+}

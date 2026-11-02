@@ -12,6 +12,7 @@ import {
 import {
   invoke, send, on, store, appArgs, capabilities, isElectron, mediaServerBase,
   loadMediaByQuery as platformLoadMediaByQuery,
+  cancelMediaQuery as platformCancelMediaQuery,
 } from './platform';
 import { getAccess, initAccess } from './access';
 import type { Query, Predicate } from './query/types';
@@ -108,6 +109,14 @@ type LibraryState = {
   // MAX_QUERY_HISTORY. Recorded on every successful query load; re-applied
   // via APPLY_QUERY_STATE (which re-runs the query). In-memory only.
   queryHistory: QueryHistoryEntry[];
+  // The query whose results are on screen: the last one that LOADED (empty
+  // for a folder view). It differs from `query` only while a search is in
+  // flight — the UI marks the chips the results don't reflect yet, and a
+  // cancelled or failed search reverts `query` to it.
+  settledQuery: Query;
+  // When the in-flight search started (entry of runningQuery/loadingFromDB).
+  // Only meaningful while one is running.
+  queryStartedAt: number;
   activeCategory: string;
   storedCategories: {
     [key: string]: string;
@@ -244,9 +253,15 @@ const applySimilaritySort = assign<LibraryState, AnyEventObject>({
   },
 });
 
+// A superseded/cancelled search rejects with QueryCancelledError (platform.ts):
+// not a failure, so it must never toast.
+const isQueryCancelled = (err: unknown) =>
+  (err as { name?: string })?.name === 'QueryCancelledError';
+
 const addQueryErrorToast = assign<LibraryState, AnyEventObject>({
   toasts: (context, event) => {
     const err = event.data;
+    if (isQueryCancelled(err)) return context.toasts;
     const message =
       'Query failed: ' +
       (err?.message ?? (typeof err === 'string' ? err : 'unknown error'));
@@ -607,21 +622,6 @@ const hasPersistedFilter = (_context: LibraryState): boolean => {
   return checkHasPersistedTags() || checkHasPersistedQuery();
 };
 
-const willHaveTag = (context: LibraryState, event: AnyEventObject) => {
-  // Detect if the result of toggling a tag is not an empty tag list.
-  // If so return true.
-  const tag = event.data.tag;
-  const tagList = context.dbQuery.tags;
-  const index = tagList.indexOf(tag);
-  console.log(tag, tagList);
-  const newTagList = [...tagList];
-  if (index > -1) {
-    newTagList.splice(index, 1);
-  } else {
-    newTagList.push(tag);
-  }
-  return newTagList.length !== 0;
-};
 
 const isEmpty = (context: LibraryState, event: AnyEventObject) => {
   return event.data.textFilter.length === 0;
@@ -631,20 +631,6 @@ const notEmpty = (context: LibraryState, event: AnyEventObject) => {
   return event.data.textFilter.length > 0;
 };
 
-const willHaveNoTag = (context: LibraryState, event: AnyEventObject) => {
-  // Detect if the result of toggling a tag is an empty tag list.
-  // If so return true.
-  const tag = event.data.tag;
-  const tagList = context.dbQuery.tags;
-  const index = tagList.indexOf(tag);
-  const newTagList = [...tagList];
-  if (index > -1) {
-    newTagList.splice(index, 1);
-  } else {
-    newTagList.push(tag);
-  }
-  return newTagList.length === 0;
-};
 
 // Memoize context initialization to prevent unnecessary re-computations
 const getInitialContext = (): LibraryState => {
@@ -771,6 +757,8 @@ const getInitialContext = (): LibraryState => {
     currentStateType: 'fs' as LibraryStateType,
     previousInitialFile: '',
     queryHistory: [],
+    settledQuery: { predicates: [] },
+    queryStartedAt: 0,
     scrollPosition: 0,
     previousScrollPosition: 0,
     availableAudioTracks: [],
@@ -1122,6 +1110,92 @@ const queryMutationOn = {
     // No actions: loadingFromPreviousLibrary's entry restores the FS base
     // (mirrors CLEAR_QUERY_TAG and removing the last predicate).
     target: 'loadingFromPreviousLibrary',
+  },
+};
+
+// Tag click (taxonomy sidebar, metadata panel) over an existing query or a
+// search in flight: toggle the tag in the query and re-run, latest-wins.
+// Routing on the WHOLE resulting query (not just its tags) matters: toggling
+// off the last tag of `path:x AND tag:y` must keep the path filter, not drop
+// back to the folder view.
+const setQueryTagOn = {
+  SET_QUERY_TAG: [
+    {
+      target: 'loadingFromPreviousLibrary',
+      cond: (context: LibraryState, event: AnyEventObject) =>
+        applyTagClick(
+          context.query,
+          event.data.tag,
+          context.settings.filteringMode
+        ).predicates.length === 0,
+    },
+    {
+      target: 'runningQuery',
+      actions: [
+        captureFsBase,
+        persistFsBase,
+        assign<LibraryState, AnyEventObject>((context, event) => {
+          const q = applyTagClick(
+            context.query,
+            event.data.tag,
+            context.settings.filteringMode
+          );
+          return { query: q, dbQuery: { tags: tagsFromQuery(q) } };
+        }),
+        (context: LibraryState) => {
+          updatePersistedState(context);
+          // The persisted library no longer matches the persisted query.
+          clearSessionKeys(['library', 'cursor']);
+        },
+      ],
+    },
+  ],
+};
+
+// Leaving a search without a result (CANCEL_QUERY, or it failed). setLibrary
+// only runs on success, so the library on screen still belongs to
+// settledQuery: put the query back to match it. A folder view (settled query
+// empty) returns to loadedFromFS, whose entry clears the query; a DB view —
+// including the web build's full-library base, whose settled query is also
+// empty — stays loadedFromDB.
+const revertToSettledQuery = (extraActions: any[] = []) => [
+  {
+    target: 'loadedFromDB',
+    cond: (context: LibraryState) =>
+      context.settledQuery.predicates.length > 0 ||
+      context.currentStateType === 'db',
+    actions: [
+      ...extraActions,
+      assign<LibraryState, AnyEventObject>((context) => ({
+        query: context.settledQuery,
+        dbQuery: { tags: tagsFromQuery(context.settledQuery) },
+        pinnedPath: null,
+      })),
+    ],
+  },
+  { target: 'loadedFromFS', actions: extraActions },
+];
+
+// Shared by the two search-in-flight states (runningQuery, loadingFromDB).
+const searchInFlight = {
+  entry: assign<LibraryState, AnyEventObject>({
+    queryStartedAt: () => Date.now(),
+  }),
+  // Every way out except the result arriving (done / error) abandons the
+  // search: tell the platform to stop it, so a superseded path scan doesn't
+  // keep the DB busy and a visual request doesn't hold a socket. A re-run
+  // re-enters the state, so this also covers latest-wins.
+  exit: (_context: LibraryState, event: AnyEventObject) => {
+    const type = String(event.type);
+    if (type.startsWith('done.invoke') || type.startsWith('error.platform')) {
+      return;
+    }
+    platformCancelMediaQuery?.();
+  },
+  on: {
+    ...queryMutationOn,
+    ...setQueryTagOn,
+    CANCEL_QUERY: revertToSettledQuery(),
   },
 };
 
@@ -2234,6 +2308,7 @@ export const libraryMachine = createMachine(
             },
           },
           loadingFromDB: {
+            ...searchInFlight,
             invoke: {
               src: (context) =>
                 platformLoadMediaByQuery(
@@ -2247,17 +2322,14 @@ export const libraryMachine = createMachine(
                 // loaded/restored visual query also auto-sorts by similarity.
                 actions: ['setLibrary', 'applySimilaritySort'],
               },
-              onError: {
-                target: 'loadedFromFS',
-                actions: ['addQueryErrorToast'],
-              },
+              onError: revertToSettledQuery(['addQueryErrorToast']),
             },
-            on: { ...queryMutationOn },
           },
           // Unified query loader. Runs the structured `query` predicate list
           // through a single platform service. New query events (ADD_PREDICATE,
           // REMOVE_PREDICATE, TOGGLE_EXCLUDE, SET_QUERY) target this state.
           runningQuery: {
+            ...searchInFlight,
             invoke: {
               src: (context) =>
                 platformLoadMediaByQuery(
@@ -2269,12 +2341,11 @@ export const libraryMachine = createMachine(
                 target: 'loadedFromDB',
                 actions: ['setLibrary', 'applySimilaritySort'],
               },
-              onError: {
-                target: 'loadedFromFS',
-                actions: ['addQueryErrorToast'],
-              },
+              // Failed: keep the results on screen and their query (this used
+              // to land in loadedFromFS, whose entry wiped the chips while the
+              // previous DB results stayed up, mislabelled as a folder view).
+              onError: revertToSettledQuery(['addQueryErrorToast']),
             },
-            on: { ...queryMutationOn },
           },
           loadingFromPersisted: {
             entry: assign<LibraryState, AnyEventObject>({
@@ -2413,6 +2484,7 @@ export const libraryMachine = createMachine(
                 textFilter: () => '',
                 dbQuery: () => ({ tags: [] }),
                 query: () => ({ predicates: [] }),
+                settledQuery: () => ({ predicates: [] }),
               }),
               // Mirror the cleared invariant to session storage so a folder
               // load can never leave session.query holding stale tags. Without
@@ -2862,6 +2934,9 @@ export const libraryMachine = createMachine(
               assign<LibraryState, AnyEventObject>({
                 currentStateType: () => 'db' as LibraryStateType,
                 textFilter: () => '',
+                // These results are now the query's: what a cancelled or
+                // failed next search reverts to.
+                settledQuery: (context) => context.query,
                 // Record the committed filter state in the session history.
                 // Doing it here (not at event time) means only queries that
                 // actually LOADED are recorded — a failed query never becomes
@@ -3159,93 +3234,7 @@ export const libraryMachine = createMachine(
                   }),
                 ],
               },
-              SET_QUERY_TAG: [
-                {
-                  target: 'runningQuery',
-                  cond: willHaveTag,
-                  actions: [
-                    assign<LibraryState, AnyEventObject>({
-                      dbQuery: (context, event) => {
-                        // Get active tags and index by tag.
-                        const activeTags = context.dbQuery.tags.reduce(
-                          (acc, tag) => {
-                            acc[tag] = true;
-                            return acc;
-                          },
-                          {} as { [key: string]: boolean }
-                        );
-                        // eslint-disable-next-line no-constant-condition
-                        if (true) {
-                          // DELETE ALL KEYS THAT DONT MATCH THE EVENT TAG
-                          Object.keys(activeTags).forEach((tag) => {
-                            if (
-                              tag !== event.data.tag &&
-                              context.settings.filteringMode === 'EXCLUSIVE'
-                            ) {
-                              delete activeTags[tag];
-                            }
-                          });
-                        }
-                        // If the tag is already active, remove it.
-                        if (activeTags[event.data.tag]) {
-                          delete activeTags[event.data.tag];
-                        } else {
-                          // Otherwise, add it.
-                          activeTags[event.data.tag] = true;
-                        }
-                        return { tags: Object.keys(activeTags) };
-                      },
-                      // Mirror the tag click into the unified query model.
-                      query: (context, event) =>
-                        applyTagClick(
-                          context.query,
-                          event.data.tag,
-                          context.settings.filteringMode
-                        ),
-                    }),
-                    (context, event) => {
-                      // Calculate the new tags for persistence
-                      const activeTags = context.dbQuery.tags.reduce(
-                        (acc, tag) => {
-                          acc[tag] = true;
-                          return acc;
-                        },
-                        {} as { [key: string]: boolean }
-                      );
-                      if (context.settings.filteringMode === 'EXCLUSIVE') {
-                        Object.keys(activeTags).forEach((tag) => {
-                          if (tag !== event.data.tag) {
-                            delete activeTags[tag];
-                          }
-                        });
-                      }
-                      if (activeTags[event.data.tag]) {
-                        delete activeTags[event.data.tag];
-                      } else {
-                        activeTags[event.data.tag] = true;
-                      }
-                      updatePersistedState({
-                        ...context,
-                        dbQuery: { tags: Object.keys(activeTags) },
-                        query: applyTagClick(
-                          context.query,
-                          event.data.tag,
-                          context.settings.filteringMode
-                        ),
-                      });
-                      // Invalidate persisted library snapshot to avoid query/library mismatch
-                      // Invalidate persisted library snapshot using session store
-                      clearSessionKeys(['library', 'cursor']);
-                    },
-                  ],
-                },
-                {
-                  // Toggling off the last tag — let
-                  // loadingFromPreviousLibrary restore previous state.
-                  target: 'loadingFromPreviousLibrary',
-                  cond: willHaveNoTag,
-                },
-              ],
+              ...setQueryTagOn,
               DELETED_ASSIGNMENT: {
                 // Removing a tag from an image refreshes the current view; it
                 // doesn't navigate. Capture the current libraryLoadId so the

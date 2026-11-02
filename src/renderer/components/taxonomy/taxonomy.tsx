@@ -49,6 +49,8 @@ import {
 import { useMeaningMode } from '../../hooks/useMeaningMode';
 import useVisualSearchAvailable from '../../hooks/useVisualSearchAvailable';
 import { useFilterHistory } from '../../hooks/useFilterHistory';
+import { useSearchActivity } from '../../hooks/useSearchActivity';
+import SearchStatus from '../controls/search-status';
 import { SUGGESTED_CATEGORY } from '../../search/tag-scopes';
 
 const VIRTUALIZE_THRESHOLD = 300;
@@ -147,6 +149,8 @@ export default function Taxonomy() {
 
   // The unified query (chips) shown in QueryInput.
   const query = useSelector(libraryService, (state) => state.context.query);
+  // The library search in flight: busy input + status row under it.
+  const search = useSearchActivity(libraryService);
   // Session filter-state history + base row, rendered as one more section of
   // the suggestions pane while searching (QueryHistorySection).
   const filterHistory = useFilterHistory(libraryService);
@@ -569,7 +573,12 @@ export default function Taxonomy() {
               setEditingTag(null);
             }}
             disabled={isDisabled}
+            busy={search.busy}
+            busyKind={search.description?.kind}
+            pendingKeys={search.pendingKeys}
+            onCancelBusy={search.cancel}
           />
+          {search.busy && <SearchStatus activity={search} />}
         </div>
         {/* Body row: fills the height left under the search bar so the inner
             scroll areas size against that remaining height (not the whole

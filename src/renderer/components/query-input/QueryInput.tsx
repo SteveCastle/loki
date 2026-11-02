@@ -68,6 +68,14 @@ interface QueryInputProps {
   // The toggle state itself is shared via useMeaningMode — parents that need
   // to react (e.g. hide tag suggestions) read the same hook.
   onSubmitVisual?: (text: string) => void;
+  // A library search is in flight (see hooks/useSearchActivity). The field
+  // shows a progress sweep tinted by `busyKind`, chips in `pendingKeys` (not
+  // yet reflected by the results on screen) shimmer, and — while nothing new
+  // is typed — the submit button becomes a spinner that cancels on click.
+  busy?: boolean;
+  busyKind?: 'vector' | 'scan' | 'filter';
+  pendingKeys?: ReadonlySet<string>;
+  onCancelBusy?: () => void;
 }
 // NOTE: the session filter-state history used to render as a dropdown under
 // this input. It overlapped the live results beneath, so it now lives in
@@ -113,6 +121,10 @@ export default function QueryInput({
   filteringMode,
   onCycleFilterMode,
   onSubmitVisual,
+  busy = false,
+  busyKind = 'filter',
+  pendingKeys,
+  onCancelBusy,
 }: QueryInputProps) {
   // "Search by meaning" mode: typed text commits as a visual: predicate.
   // Shared + sticky: stays on across palette open/close until toggled off.
@@ -283,7 +295,13 @@ export default function QueryInput({
   }, [query.predicates.length, onClearAll, onClearText]);
 
   return (
-    <div className="query-input" ref={containerRef}>
+    <div
+      className={`query-input${
+        busy ? ` query-input--busy query-input--busy-${busyKind}` : ''
+      }`}
+      ref={containerRef}
+      aria-busy={busy || undefined}
+    >
       {query.predicates.length > 0 && (
         <div className="query-chips">
           {query.predicates.map((p, index) => {
@@ -302,7 +320,7 @@ export default function QueryInput({
               p.type === 'category' ? ' category' : ''
             }${isVisual ? ' visual' : ''}${
               isSimilar || isClip || isFace ? ' similar' : ''
-            }`;
+            }${busy && pendingKeys?.has(key) ? ' pending' : ''}`;
             const baseName =
               isSimilar || (isFace && !isFaceClip)
                 ? p.value.split(/[/\\]/).pop() || p.value
@@ -700,17 +718,37 @@ export default function QueryInput({
             ✨
           </button>
         )}
-        <button
-          className="query-input-submit"
-          onClick={handleSubmit}
-          disabled={!textValue.trim() || disabled}
-          title="Search"
-        >
-          &rarr;
-        </button>
+        {busy && onCancelBusy && !textValue.trim() ? (
+          // Nothing typed to submit: the button reports the search in flight
+          // and stops it on click. Typing turns it back into submit — a new
+          // search simply supersedes the running one.
+          <button
+            type="button"
+            className="query-input-submit query-input-submit--busy"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={onCancelBusy}
+            title="Searching… click to cancel"
+            aria-label="Cancel search"
+          >
+            <span className="query-input-spinner" aria-hidden="true" />
+            <span className="query-input-cancel-x" aria-hidden="true">
+              &times;
+            </span>
+          </button>
+        ) : (
+          <button
+            className="query-input-submit"
+            onClick={handleSubmit}
+            disabled={!textValue.trim() || disabled}
+            title="Search"
+          >
+            &rarr;
+          </button>
+        )}
         <button className="query-input-clear" onClick={handleClear}>
           <img src={clear} />
         </button>
+        {busy && <span className="query-input-progress" aria-hidden="true" />}
       </div>
     </div>
   );

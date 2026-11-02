@@ -5,6 +5,7 @@ import { useSelector } from '@xstate/react';
 import deleteIcon from '../../../../assets/delete.svg';
 import editPencil from '../../../../assets/edit-pencil.svg';
 import { GlobalStateContext } from '../../state';
+import { isTagPending } from '../../search-activity';
 import ConfirmDeleteTag from './confirm-delete-tag';
 import TagCount from './tag-count';
 import { invoke } from '../../platform';
@@ -40,6 +41,11 @@ function TagListRow({
   group,
 }: Props) {
   const { libraryService } = useContext(GlobalStateContext);
+  // Selected, but its results are still loading.
+  const pending = useSelector(
+    libraryService,
+    (state) => active && isTagPending(state, tag.label)
+  );
   const showTagCount = useSelector(
     libraryService,
     (state) => state.context.settings.showTagCount
@@ -131,6 +137,7 @@ function TagListRow({
       className={[
         'tag-list-row',
         active ? 'active' : '',
+        pending ? 'pending' : '',
         isDragging ? 'dragging' : '',
         collectedProps.isOver && !collectedProps.isSelf ? 'hovered' : '',
         collectedProps.isOver && isAbove ? 'above' : '',

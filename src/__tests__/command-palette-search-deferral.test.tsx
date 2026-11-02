@@ -16,8 +16,12 @@ const mockInvoke = jest.fn(async (..._args: any[]) => [] as unknown[]);
 jest.mock('@xstate/react', () => ({
   useSelector: (_service: any, selector: any) =>
     selector({
+      // Idle machine: no search in flight (useSearchActivity).
+      matches: () => false,
       context: {
         query: { predicates: [], mode: 'AND' },
+        settledQuery: { predicates: [] },
+        queryStartedAt: 0,
         settings: { filteringMode: 'AND', applyTagPreview: false },
         initSessionId: 'session-123',
         // Filter-state history dropdown inputs (useFilterHistory).
