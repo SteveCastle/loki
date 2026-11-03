@@ -1,284 +1,398 @@
-import React, {
-  useCallback,
-  useContext,
-  useEffect,
-  useMemo,
-  useState,
-} from 'react';
-import { loadDuplicatesByPath, mergeDuplicatesByPath } from '../../platform';
-import { GlobalStateContext, Item } from '../../state';
-import { getFileType, FileTypes } from '../../../file-types';
-import { Image } from '../media-viewers/image';
-import { Video } from '../media-viewers/video';
-import { Audio } from '../media-viewers/audio';
+// Duplicates tab: does the CURRENT item have copies? It reads the same
+// vector-similarity duplicate groups as the taxonomy panel's Duplicates
+// category (find-duplicates, media-server/tasks/find_duplicates.go) and
+// renders the item's group with the panel's own GroupCard, so merge,
+// "not duplicates", and per-member exclusion work exactly as they do there.
+//
+// An item no scan has grouped yet still gets an answer: GET
+// /api/duplicates/check runs one nearest-neighbour query for it and returns
+// the group a scan would record (a preview, id 0). Nothing is written until
+// the user acts on it; the first action records the group (POST
+// /api/duplicates/check/record) and then applies to the recorded group.
+//
+// Cost is one small request per item (debounced while the cursor moves) and
+// at most MEMBER_PREVIEW_CAP thumbnails, however big the group is.
+import { useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useSelector } from '@xstate/react';
+import { GlobalStateContext } from '../../state';
+import { isElectron, mediaServerConfigured } from '../../platform';
+import { subscribeStream } from '../../stream-bus';
+import {
+  apiGet,
+  apiSend,
+  DuplicateGroup,
+  GroupCard,
+  ListStatus,
+  MergeResult,
+  MERGE_TIMEOUT_MS,
+  reportMerge,
+} from '../taxonomy/duplicates-grid';
+import '../taxonomy/people-grid.css';
+import '../taxonomy/duplicates-grid.css';
+import './duplicates.css';
 
 type Props = {
   basePath: string;
 };
 
-function MediaPreview({ path }: { path: string }) {
-  const type = getFileType(path);
-  if (type === FileTypes.Video) {
-    return (
-      <Video
-        path={path}
-        initialTimestamp={0.5}
-        scaleMode="cover"
-        orientation={'landscape'}
-        cache={'thumbnail_path_600'}
-        startTime={0}
-      />
-    );
+interface CheckResult {
+  group: DuplicateGroup | null;
+  recorded: boolean;
+  noEmbedding: boolean;
+}
+
+// Cursor moves faster than anyone reads this tab; only check where it rests.
+const CHECK_DEBOUNCE_MS = 250;
+// Shared with the taxonomy panel's scan threshold, so both agree on what
+// counts as a duplicate.
+const THRESHOLD_KEY = 'lowkey:dupes-threshold';
+
+function readThreshold(): number {
+  try {
+    const v = Number(window.localStorage.getItem(THRESHOLD_KEY));
+    return v >= 50 && v <= 100 ? v : 100;
+  } catch {
+    return 100;
   }
-  if (type === FileTypes.Audio) {
-    return (
-      <Audio
-        path={path}
-        initialTimestamp={0}
-        scaleMode="cover"
-        orientation={'landscape'}
-        cache={false}
-        startTime={0}
-      />
-    );
-  }
-  return (
-    <Image
-      path={path}
-      scaleMode="cover"
-      orientation={'landscape'}
-      cache={'thumbnail_path_600'}
-    />
-  );
+}
+
+function useDebounced<T>(value: T, ms: number): T {
+  const [v, setV] = useState(value);
+  useEffect(() => {
+    const t = window.setTimeout(() => setV(value), ms);
+    return () => window.clearTimeout(t);
+  }, [value, ms]);
+  return v;
 }
 
 export default function Duplicates({ basePath }: Props) {
   const { libraryService } = useContext(GlobalStateContext);
-  const [items, setItems] = useState<Item[]>([]);
-  const [loading, setLoading] = useState<boolean>(false);
+  const authToken = useSelector(libraryService, (s) => s.context.authToken);
+  const canWrite = useSelector(libraryService, (s) => s.context.canWrite);
+  const initSessionId = useSelector(
+    libraryService,
+    (s) => s.context.initSessionId
+  );
+  const filteringMode = useSelector(
+    libraryService,
+    (s) => s.context.settings.filteringMode
+  );
+  const predicates = useSelector(
+    libraryService,
+    (s) => s.context.query?.predicates ?? []
+  );
+  const queryClient = useQueryClient();
+  const [threshold, setThreshold] = useState<number>(readThreshold);
+  const [busy, setBusy] = useState(false);
+  const [embedQueued, setEmbedQueued] = useState<string | null>(null);
 
+  const path = useDebounced(basePath, CHECK_DEBOUNCE_MS);
+  const settled = path === basePath;
+
+  const checkKey = useMemo(
+    () => ['taxonomy', 'duplicates', 'check', initSessionId, path, threshold],
+    [initSessionId, path, threshold]
+  );
+  const { data, error, isLoading, refetch } = useQuery<CheckResult, Error>(
+    checkKey,
+    () =>
+      apiGet<CheckResult>(
+        authToken,
+        `/api/duplicates/check?path=${encodeURIComponent(
+          path
+        )}&threshold=${threshold}`
+      ),
+    { enabled: !!initSessionId && !!path, staleTime: 30_000, retry: 1 }
+  );
+
+  // Groups change under us (a scan, the panel, another window), and an embed
+  // job finishing makes an unembedded item checkable.
   useEffect(() => {
-    let cancelled = false;
-    async function load() {
-      try {
-        setLoading(true);
-        const results = await loadDuplicatesByPath(basePath);
-        if (cancelled) return;
-        const library = (results?.library || []) as { path: string }[];
-        const mapped: Item[] = library.map((r) => ({
-          path: r.path,
-          mtimeMs: 0,
-        }));
-        const withSelf: Item[] = [
-          { path: basePath, mtimeMs: 0 },
-          ...mapped.filter((m) => m.path !== basePath),
-        ];
-        setItems(withSelf);
-      } catch (e) {
-        console.error(e);
-      } finally {
-        if (!cancelled) setLoading(false);
+    let timer: number | null = null;
+    const refresh = () => {
+      if (timer !== null) window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        timer = null;
+        queryClient.invalidateQueries({
+          queryKey: ['taxonomy', 'duplicates', 'check'],
+        });
+      }, 600);
+    };
+    const unsubscribe = subscribeStream((type, event) => {
+      if (type === 'duplicates-updated') {
+        refresh();
+        return;
       }
-    }
-    if (basePath) {
-      load();
-    }
+      if (type === 'update') {
+        try {
+          const job = JSON.parse(event.data)?.job as
+            | { command?: string; state?: string }
+            | undefined;
+          if (job?.command === 'embed' && job.state === 'completed') {
+            setEmbedQueued(null);
+            refresh();
+          }
+        } catch {
+          /* malformed event */
+        }
+      }
+    });
     return () => {
-      cancelled = true;
+      if (timer !== null) window.clearTimeout(timer);
+      unsubscribe();
     };
-  }, [basePath]);
+  }, [queryClient]);
 
-  const handleDelete = useCallback(
-    async (p: string) => {
-      try {
-        libraryService.send('DELETE_FILE', { data: { path: p } });
-        setItems((prev) => prev.filter((i) => i.path !== p));
-      } catch (e) {
-        console.error(e);
-      }
-    },
-    [libraryService]
-  );
+  const activeGroupId = useMemo(() => {
+    const p = predicates.find(
+      (x) => x.type === 'dupe' && !x.exclude && /^\d+$/.test(x.value)
+    );
+    return p ? Number(p.value) : null;
+  }, [predicates]);
 
-  const gridTemplate = useMemo(() => {
-    const minSize = 220; // px, minimum card width
-    return {
-      display: 'grid',
-      gridTemplateColumns: `repeat(auto-fit, minmax(${minSize}px, 1fr))`,
-      justifyContent: 'stretch',
-      justifyItems: 'stretch',
-      alignContent: 'start',
-      gap: '12px',
-      width: '100%',
-      overflow: 'auto',
-      padding: '16px 24px',
-      boxSizing: 'border-box' as const,
-    };
-  }, []);
+  const toast = (
+    type: 'success' | 'error' | 'info',
+    title: string,
+    message?: string
+  ) =>
+    libraryService.send({
+      type: 'ADD_TOAST',
+      data: { type, title, message: message ?? '' },
+    });
 
-  const renderCard = (it: Item, isCurrent: boolean) => (
-    <div
-      key={it.path + (isCurrent ? '-current' : '')}
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        width: '100%',
-        borderRadius: 12,
-        overflow: 'hidden',
-        background:
-          'linear-gradient(180deg, rgba(255,255,255,0.04) 0%, rgba(255,255,255,0.02) 100%)',
-        border: '1px solid rgba(255,255,255,0.08)',
-        boxShadow:
-          '0 2px 6px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.04)',
-        transition: 'transform 120ms ease-out, box-shadow 120ms ease-out',
-      }}
+  const changed = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: ['taxonomy', 'duplicates'] });
+  }, [queryClient]);
+
+  // Every action needs a recorded group; a preview is recorded first.
+  const recordedId = async (g: DuplicateGroup): Promise<number> => {
+    if (g.id !== 0) return g.id;
+    const res = await apiSend<{ id: number }>(
+      authToken,
+      'POST',
+      '/api/duplicates/check/record',
+      { path, threshold }
+    );
+    return res.id;
+  };
+
+  const withBusy = async (label: string, fn: () => Promise<void>) => {
+    setBusy(true);
+    try {
+      await fn();
+    } catch (err) {
+      toast('error', label, String(err));
+      changed();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleView = (g: DuplicateGroup, pinPath?: string) => {
+    // A preview has no group to filter to yet; the click only picks the
+    // keeper (GroupCard does that itself).
+    if (g.id === 0) return;
+    libraryService.send({
+      type: 'ADD_PREDICATE',
+      data: {
+        predicate: {
+          type: 'dupe',
+          value: String(g.id),
+          exclude: false,
+          join: filteringMode === 'OR' ? 'OR' : 'AND',
+        },
+        pinnedPath: pinPath ?? basePath,
+      },
+    });
+  };
+
+  const handleMerge = (g: DuplicateGroup, keep: string) =>
+    withBusy('Merge failed', async () => {
+      const id = await recordedId(g);
+      // Merge exactly what the card showed: recording a join can add
+      // members the user has not looked at.
+      const sources = g.members
+        .filter((m) => !m.excluded && m.path !== keep)
+        .map((m) => m.path);
+      const res = await apiSend<{ merge: MergeResult }>(
+        authToken,
+        'POST',
+        `/api/duplicates/${id}/merge`,
+        { keep, sources },
+        MERGE_TIMEOUT_MS
+      );
+      reportMerge(libraryService, queryClient, res.merge);
+    });
+
+  const handleStatus = (g: DuplicateGroup, next: ListStatus) =>
+    withBusy('Could not update group', async () => {
+      const id = await recordedId(g);
+      await apiSend(
+        authToken,
+        'POST',
+        `/api/duplicates/${id}/${next === 'dismissed' ? 'dismiss' : 'restore'}`
+      );
+      changed();
+    });
+
+  const handleExclude = (g: DuplicateGroup, p: string, excluded: boolean) =>
+    withBusy('Could not update member', async () => {
+      const id = await recordedId(g);
+      await apiSend(authToken, 'POST', `/api/duplicates/${id}/exclude`, {
+        path: p,
+        excluded,
+      });
+      changed();
+    });
+
+  const handleForget = (g: DuplicateGroup) =>
+    withBusy('Could not forget group', async () => {
+      await apiSend(authToken, 'DELETE', `/api/duplicates/${g.id}`);
+      changed();
+    });
+
+  const handleEmbed = async () => {
+    try {
+      await apiSend(authToken, 'POST', '/create', {
+        input: `embed "${basePath}"`,
+      });
+      setEmbedQueued(basePath);
+    } catch (err) {
+      toast('error', 'Could not start the embedding job', String(err));
+    }
+  };
+
+  const thresholdControl = (
+    <label
+      className="dupes-threshold"
+      title="Similarity floor. 100% finds visually identical items (exact copies, re-encodes, resizes); lower it to catch crops and edits. Shared with the Duplicates panel's scans."
     >
-      <div
-        style={{
-          position: 'relative',
-          aspectRatio: '1 / 1',
-          background: '#0f0f0f',
+      ≥
+      <input
+        type="number"
+        min={50}
+        max={100}
+        step={0.5}
+        value={threshold}
+        onChange={(e) => {
+          const v = Number(e.target.value);
+          if (!Number.isFinite(v)) return;
+          const clamped = Math.max(50, Math.min(100, v));
+          setThreshold(clamped);
+          try {
+            window.localStorage.setItem(THRESHOLD_KEY, String(clamped));
+          } catch {
+            /* session only */
+          }
         }}
-      >
-        <div style={{ position: 'absolute', inset: 0 }}>
-          <MediaPreview path={it.path} />
-        </div>
-        {isCurrent ? (
-          <div
-            style={{
-              position: 'absolute',
-              top: 8,
-              left: 8,
-              padding: '2px 8px',
-              fontSize: 11,
-              borderRadius: 999,
-              background: 'rgba(0,0,0,0.5)',
-              border: '1px solid rgba(255,255,255,0.25)',
-            }}
-          >
-            Current
-          </div>
-        ) : null}
-      </div>
-      <div
-        style={{
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          gap: 8,
-          padding: '10px 12px',
-          background: 'rgba(0,0,0,0.25)',
-        }}
-      >
-        <div
-          title={it.path}
-          style={{
-            width: '100%',
-            textAlign: 'center' as const,
-            fontSize: 12,
-            lineHeight: 1.2,
-            whiteSpace: 'nowrap',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-          }}
-        >
-          {it.path}
-        </div>
-        <div
-          style={{
-            display: 'flex',
-            flexDirection: 'row',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: 8,
-            width: '100%',
-          }}
-        >
-          {isCurrent ? (
-            <button
-              onClick={async () => {
-                try {
-                  setLoading(true);
-                  const res = await mergeDuplicatesByPath(it.path);
-                  // Remove deleted items from the list
-                  setItems((prev) =>
-                    prev.filter((p) => !res.deleted.includes(p.path))
-                  );
-                } catch (e) {
-                  console.error(e);
-                } finally {
-                  setLoading(false);
-                }
-              }}
-              style={{
-                fontSize: 12,
-                padding: '6px 12px',
-                borderRadius: 999,
-                border: '1px solid rgba(77,155,255,0.45)',
-                background:
-                  'linear-gradient(180deg, rgba(77,155,255,0.15) 0%, rgba(77,155,255,0.08) 100%)',
-                color: '#b3d2ff',
-                cursor: 'pointer',
-                outline: 'none',
-              }}
-            >
-              Merge
-            </button>
-          ) : null}
-          <button
-            onClick={() => handleDelete(it.path)}
-            style={{
-              fontSize: 12,
-              padding: '6px 12px',
-              borderRadius: 999,
-              border: '1px solid rgba(255,77,77,0.45)',
-              background:
-                'linear-gradient(180deg, rgba(255,77,77,0.15) 0%, rgba(255,77,77,0.08) 100%)',
-              color: '#ffb3b3',
-              cursor: 'pointer',
-              outline: 'none',
-            }}
-          >
-            Delete
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-
-  const renderPlaceholderCard = (idx: number) => (
-    <div
-      key={`ph-${idx}`}
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        width: '100%',
-        borderRadius: 12,
-        overflow: 'hidden',
-        background: 'rgba(255,255,255,0.04)',
-        border: '1px solid rgba(255,255,255,0.08)',
-      }}
-    >
-      <div
-        style={{ aspectRatio: '1 / 1', background: 'rgba(255,255,255,0.06)' }}
       />
-      <div style={{ padding: '10px 12px', background: 'rgba(0,0,0,0.25)' }}>
-        <div
-          style={{
-            height: 14,
-            background: 'rgba(255,255,255,0.08)',
-            borderRadius: 6,
-          }}
-        />
-      </div>
-    </div>
+      %
+    </label>
   );
+
+  const group = settled ? data?.group ?? null : null;
+  let status: string;
+  if (!settled || isLoading) status = 'Checking for duplicates…';
+  else if (error) status = 'Duplicate check unavailable';
+  else if (data?.noEmbedding) status = 'No visual embedding yet';
+  else if (!group) status = 'No duplicates found';
+  else if (data?.recorded)
+    status =
+      group.status === 'dismissed'
+        ? 'Marked not duplicates'
+        : `In duplicate group #${group.id}`;
+  else
+    status = `${group.activeCount - 1} possible duplicate${
+      group.activeCount === 2 ? '' : 's'
+    }`;
+
+  let body: JSX.Element | null = null;
+  if (error && settled) {
+    const unauthorized = /HTTP 401/.test(error.message);
+    body = (
+      <div className="people-empty">
+        <div className="people-empty-title">
+          {unauthorized
+            ? 'Sign in to check for duplicates'
+            : isElectron && !mediaServerConfigured
+            ? 'Media server not installed'
+            : 'Media server isn’t responding'}
+        </div>
+        <p className="people-empty-body">
+          Duplicate detection compares visual embeddings on the Lowkey Media
+          Server.
+        </p>
+        {!unauthorized && (
+          <button
+            type="button"
+            className="people-empty-cta"
+            onClick={() => void refetch()}
+          >
+            Try again
+          </button>
+        )}
+      </div>
+    );
+  } else if (settled && data?.noEmbedding) {
+    body = (
+      <div className="people-empty">
+        <p className="people-empty-body">
+          Duplicates are found by comparing visual embeddings, and this item
+          doesn’t have one yet.
+        </p>
+        {canWrite && (
+          <button
+            type="button"
+            className="people-empty-cta"
+            onClick={() => void handleEmbed()}
+            disabled={embedQueued === basePath}
+          >
+            {embedQueued === basePath ? 'Embedding…' : 'Embed this item'}
+          </button>
+        )}
+      </div>
+    );
+  } else if (group) {
+    body = (
+      <GroupCard
+        key={`${group.id}:${group.anchorPath}`}
+        group={group}
+        canWrite={canWrite}
+        isDisabled={false}
+        isActive={group.id !== 0 && activeGroupId === group.id}
+        busy={busy}
+        cursorPath={basePath}
+        currentPath={basePath}
+        onView={handleView}
+        onMerge={handleMerge}
+        onStatus={handleStatus}
+        onExclude={handleExclude}
+        onForget={data?.recorded ? handleForget : undefined}
+      />
+    );
+  } else if (settled && !isLoading) {
+    body = (
+      <p className="dupes-tab-hint">
+        Nothing in the library is at least {threshold}% similar to this item.
+        {threshold === 100 && ' Lower the threshold to catch crops and edits.'}
+      </p>
+    );
+  }
 
   return (
-    <div style={gridTemplate}>
-      {loading
-        ? Array.from({ length: 8 }).map((_, i) => renderPlaceholderCard(i))
-        : items.map((it, i) => renderCard(it, i === 0))}
+    <div className="dupes-tab">
+      <div className="dupes-tab-toolbar">
+        <span className="dupes-tab-status">{status}</span>
+        {thresholdControl}
+      </div>
+      {body}
+      {group && !data?.recorded && (
+        <p className="dupes-tab-hint">
+          Found just now — merging, dismissing or excluding records this group
+          in the Duplicates panel.
+        </p>
+      )}
     </div>
   );
 }

@@ -838,9 +838,8 @@ async function tableExists(db: Database, name: string): Promise<boolean> {
 }
 
 // eraseMediaReferences: the one routine that removes EVERY database reference
-// to a path. Shared by forgetMedia (file already gone), deleteMedia (file just
-// trashed), and mergeDuplicatesByPath (duplicate just trashed) so the table
-// list can never drift between them — this mirrors MOVABLE_PATH_COLUMNS above,
+// to a path. Shared by forgetMedia (file already gone) and deleteMedia (file
+// just trashed) so the table list can never drift between them — this mirrors MOVABLE_PATH_COLUMNS above,
 // plus the face-id-keyed assertion tables that only deletion has to clean.
 export async function eraseMediaReferences(
   db: Database,
@@ -1263,115 +1262,6 @@ async function insertMedia(db: Database, filePath: string): Promise<void> {
   }
 }
 
-// Finds other media entries that share the same hash as the provided path
-// Excludes the provided path itself and ignores null/empty hashes
-const loadDuplicatesByPath =
-  (db: Database) => async (_: IpcMainInvokeEvent, args: [string]) => {
-    const targetPath = args[0];
-    try {
-      // Ensure the base file exists in DB with a hash; insert/update like fetchMediaPreview does
-      await insertMedia(db, targetPath);
-      const sql = `
-        SELECT m2.path, m2.elo
-        FROM media AS m
-        JOIN media AS m2 ON m2.hash = m.hash AND m2.path <> m.path
-        WHERE m.path = ?
-          AND m.hash IS NOT NULL AND m.hash <> ''
-        ORDER BY m2.path ASC
-      `;
-      const rows = await db.all(sql, [targetPath]);
-      const library = rows.map((r: any) => ({
-        path: r.path,
-        elo: r.elo,
-        mtimeMs: 0,
-      }));
-      return { library, cursor: 0 };
-    } catch (error) {
-      console.error('Error in loadDuplicatesByPath:', error);
-      throw error;
-    }
-  };
-
-// Merge: copy tags from all duplicates into target, then delete the duplicates
-type MergeDuplicatesInput = [string];
-const mergeDuplicatesByPath =
-  (db: Database) =>
-  async (_: IpcMainInvokeEvent, args: MergeDuplicatesInput) => {
-    const targetPath = args[0];
-    try {
-      // Ensure target is inserted/updated to have hash
-      await insertMedia(db, targetPath);
-
-      // Find other duplicates by same hash
-      const dupSql = `
-        SELECT m2.path AS path
-        FROM media AS m
-        JOIN media AS m2 ON m2.hash = m.hash AND m2.path <> m.path
-        WHERE m.path = ?
-          AND m.hash IS NOT NULL AND m.hash <> ''
-        ORDER BY m2.path ASC
-      `;
-      const dupRows: { path: string }[] = await db.all(dupSql, [targetPath]);
-      const duplicatePaths = dupRows.map((r) => r.path);
-
-      if (duplicatePaths.length === 0) {
-        return { mergedInto: targetPath, deleted: [], copiedTags: 0 };
-      }
-
-      // Copy tags from each duplicate into target
-      let copiedTags = 0;
-      await db.withTransaction(async () => {
-        const insertTagStmt = await db.prepare(
-          `INSERT INTO media_tag_by_category (media_path, tag_label, category_label, weight, time_stamp, created_at)
-         SELECT $1, tag_label, category_label, weight, time_stamp, created_at
-         FROM media_tag_by_category
-         WHERE media_path = $2
-         ON CONFLICT(media_path, tag_label, category_label, time_stamp) DO NOTHING`
-        );
-        try {
-          for (const dupPath of duplicatePaths) {
-            // Insert-select returns no rowcount here; optionally count source rows
-            const countRow = await db.get(
-              `SELECT COUNT(*) AS cnt FROM media_tag_by_category WHERE media_path = $1`,
-              [dupPath]
-            );
-            await insertTagStmt.run(targetPath, dupPath);
-            copiedTags += Number(countRow?.cnt || 0);
-          }
-        } finally {
-          await insertTagStmt.finalize().catch(() => {});
-        }
-      });
-
-      // After copying, delete the duplicates (file + db rows)
-      const deleted: string[] = [];
-      for (const dupPath of duplicatePaths) {
-        try {
-          try {
-            await shell.trashItem(dupPath);
-          } catch {
-            console.error('Error trashing duplicate, trying unlink:', dupPath);
-            try {
-              await fs.promises.unlink(dupPath);
-            } catch {}
-          }
-          // Full reference cleanup, same as delete: the duplicate's
-          // embeddings, faces, scan markers, and battle rows would otherwise
-          // orphan (its tags were already copied to the merge target above).
-          await eraseMediaReferences(db, dupPath);
-          deleted.push(dupPath);
-        } catch (e) {
-          console.error('Failed to delete duplicate', dupPath, e);
-        }
-      }
-
-      return { mergedInto: targetPath, deleted, copiedTags };
-    } catch (error) {
-      console.error('Error in mergeDuplicatesByPath:', error);
-      throw error;
-    }
-  };
-
 export {
   loadMediaByTags,
   loadMediaByDescriptionSearch,
@@ -1384,8 +1274,6 @@ export {
   moveMedia,
   recordBattle,
   updateDescription,
-  loadDuplicatesByPath,
-  mergeDuplicatesByPath,
   importFiles,
 };
 

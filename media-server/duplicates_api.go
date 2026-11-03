@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -33,6 +35,8 @@ func broadcastDuplicatesChanged() {
 //	GET    /api/duplicates?status=pending|dismissed|all&sort=newest|members&limit&offset — groups with members (renderer item shape)
 //	GET    /api/duplicates/stats             — pending/dismissed group counts, item counts
 //	GET    /api/duplicates/for-path?path=    — {groupId, status} for one media item (0 = none)
+//	GET    /api/duplicates/check?path=&threshold= — the item's group, or a preview of the group a check would record
+//	POST   /api/duplicates/check/record      — {path, threshold}: record that group (create or join)
 //	GET    /api/duplicates/{id}              — one group
 //	POST   /api/duplicates/{id}/merge        — {keep, sources?}: media.MergeInto keep ← sources (default: every other active member)
 //	POST   /api/duplicates/{id}/dismiss      — not duplicates: hide the group, remember the decision
@@ -43,9 +47,11 @@ func broadcastDuplicatesChanged() {
 func RegisterDuplicatesRoutes(mux *http.ServeMux, deps *Dependencies) {
 	mux.HandleFunc("/api/duplicates", renderer.ApplyMiddlewares(duplicatesListHandler(deps), renderer.RolePublicRead))
 	// Literal paths — Go's mux prefers them over the "/api/duplicates/{id}"
-	// wildcard, so "stats" / "all" / "for-path" never parse as an id.
+	// wildcard, so "stats" / "all" / "for-path" / "check" never parse as an id.
 	mux.HandleFunc("/api/duplicates/stats", renderer.ApplyMiddlewares(duplicatesStatsHandler(deps), renderer.RolePublicRead))
 	mux.HandleFunc("/api/duplicates/for-path", renderer.ApplyMiddlewares(duplicatesForPathHandler(deps), renderer.RolePublicRead))
+	mux.HandleFunc("/api/duplicates/check", renderer.ApplyMiddlewares(duplicatesCheckHandler(deps), renderer.RolePublicRead))
+	mux.HandleFunc("/api/duplicates/check/record", renderer.ApplyMiddlewares(duplicatesCheckRecordHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/duplicates/all", renderer.ApplyMiddlewares(duplicatesWipeHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/duplicates/{id}", renderer.ApplyMiddlewares(duplicateGroupHandler(deps), renderer.RolePublicRead))
 	mux.HandleFunc("/api/duplicates/{id}/merge", renderer.ApplyMiddlewares(duplicateMergeHandler(deps), renderer.RoleAdmin))
@@ -207,6 +213,149 @@ func duplicatesForPathHandler(deps *Dependencies) http.HandlerFunc {
 			}
 		}
 		writeJSON(w, resp)
+	}
+}
+
+// duplicatesCheckHandler answers the viewer's per-item Duplicates tab: the
+// group the item already belongs to ("recorded": true), or — read-only — the
+// group tasks.PlanDuplicatesForPath would record for it right now
+// ("recorded": false, id 0 for a new group; a join previews the existing
+// group with the item appended). "group" is null when the item has no
+// candidates; "noEmbedding" says why a check could not run.
+func duplicatesCheckHandler(deps *Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			httpError(w, "use GET", http.StatusMethodNotAllowed)
+			return
+		}
+		p := strings.TrimSpace(r.URL.Query().Get("path"))
+		if p == "" {
+			httpError(w, "path required", http.StatusBadRequest)
+			return
+		}
+		pct, _ := strconv.ParseFloat(r.URL.Query().Get("threshold"), 64)
+		g, recorded, noEmbedding, err := duplicateCheck(deps, p, pct)
+		if err != nil {
+			httpError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		resp := map[string]any{"group": nil, "recorded": recorded, "noEmbedding": noEmbedding}
+		if g != nil {
+			v, err := duplicateGroupView(deps, *g)
+			if err != nil {
+				httpError(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			resp["group"] = v
+		}
+		writeJSON(w, resp)
+	}
+}
+
+// duplicateCheck resolves the item's recorded group, else previews the plan.
+func duplicateCheck(deps *Dependencies, p string, pct float64) (g *media.DuplicateGroup, recorded, noEmbedding bool, err error) {
+	if id, err := media.DuplicateGroupForPath(deps.DB, p); err != nil {
+		return nil, false, false, err
+	} else if id != 0 {
+		grp, found, err := media.GetDuplicateGroup(deps.DB, id)
+		if err != nil || !found {
+			return nil, false, false, err
+		}
+		return &grp, true, false, nil
+	}
+	plan, err := tasks.PlanDuplicatesForPath(deps.DB, p, pct)
+	if errors.Is(err, tasks.ErrNoEmbedding) {
+		return nil, false, true, nil
+	}
+	if err != nil || !plan.Found() {
+		return nil, false, false, err
+	}
+	if plan.JoinGroup > 0 {
+		grp, found, err := media.GetDuplicateGroup(deps.DB, plan.JoinGroup)
+		if err != nil || !found {
+			return nil, false, false, err
+		}
+		grp.Members = append(grp.Members, media.DuplicateMember{Path: p, Score: plan.JoinScore})
+		grp.MemberCount++
+		grp.ActiveCount++
+		if plan.JoinScore < grp.MinScore {
+			grp.MinScore = plan.JoinScore
+		}
+		return &grp, false, false, nil
+	}
+	preview := media.DuplicateGroup{
+		Model:       plan.Model,
+		Threshold:   plan.Threshold,
+		AnchorPath:  p,
+		Status:      media.DuplicateStatusPending,
+		Members:     plan.Members,
+		MemberCount: len(plan.Members),
+		ActiveCount: len(plan.Members),
+		MinScore:    1,
+	}
+	for _, m := range plan.Members {
+		preview.MinScore = math.Min(preview.MinScore, m.Score)
+	}
+	return &preview, false, false, nil
+}
+
+// duplicatesCheckRecordHandler records the per-item check's group (create or
+// join) so the usual group actions — merge, dismiss, exclude — apply to it.
+// An item already in a group just returns that group.
+func duplicatesCheckRecordHandler(deps *Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			httpError(w, "use POST", http.StatusMethodNotAllowed)
+			return
+		}
+		var req struct {
+			Path      string  `json:"path"`
+			Threshold float64 `json:"threshold"`
+		}
+		if err := readJSON(r, &req); err != nil || strings.TrimSpace(req.Path) == "" {
+			httpError(w, "bad request: path required", http.StatusBadRequest)
+			return
+		}
+		p := strings.TrimSpace(req.Path)
+		id, err := media.DuplicateGroupForPath(deps.DB, p)
+		if err != nil {
+			httpError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if id == 0 {
+			plan, err := tasks.PlanDuplicatesForPath(deps.DB, p, req.Threshold)
+			if errors.Is(err, tasks.ErrNoEmbedding) {
+				httpError(w, err.Error(), http.StatusConflict)
+				return
+			}
+			if err != nil {
+				httpError(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			if id, err = tasks.ApplyDuplicatePlan(deps.DB, p, plan); err != nil {
+				httpError(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+		}
+		if id == 0 {
+			httpError(w, "no duplicate candidates for this item", http.StatusNotFound)
+			return
+		}
+		g, found, err := media.GetDuplicateGroup(deps.DB, id)
+		if err != nil {
+			httpError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if !found {
+			httpError(w, "no such duplicate group", http.StatusNotFound)
+			return
+		}
+		v, err := duplicateGroupView(deps, g)
+		if err != nil {
+			httpError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, map[string]any{"id": id, "group": v})
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/stevecastle/shrike/media"
+	"github.com/stevecastle/shrike/tasks"
 )
 
 func dupReq(t *testing.T, h http.HandlerFunc, method, target, id, body string) *httptest.ResponseRecorder {
@@ -266,5 +267,68 @@ func TestDuplicatesAPISortByMembers(t *testing.T) {
 	}
 	if rec := dupReq(t, duplicatesListHandler(deps), http.MethodGet, "/api/duplicates?sort=bogus", "", ""); rec.Code != http.StatusBadRequest {
 		t.Errorf("bogus sort: %d; want 400", rec.Code)
+	}
+}
+
+// The per-item check previews a group without writing (id 0, recorded
+// false), records it on POST, and from then on answers with the stored group.
+func TestDuplicatesCheckPreviewThenRecord(t *testing.T) {
+	db := newFacesTestDB(t)
+	deps := &Dependencies{DB: db}
+	dir := t.TempDir()
+	a, b, c := filepath.Join(dir, "a.jpg"), filepath.Join(dir, "b.jpg"), filepath.Join(dir, "c.jpg")
+	model := tasks.ActiveEmbedModel().ID
+	vecs := map[string][]float32{a: {1, 0, 0, 0}, b: {1, 0, 0, 0}, c: {0, 1, 0, 0}}
+	for p, v := range vecs {
+		if _, err := db.Exec(`INSERT INTO media (path, width, height) VALUES (?, 640, 480)`, p); err != nil {
+			t.Fatal(err)
+		}
+		if err := media.UpsertEmbedding(db, p, model, v, 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	type checkResp struct {
+		Group *struct {
+			ID      int64            `json:"id"`
+			Members []map[string]any `json:"members"`
+		} `json:"group"`
+		Recorded    bool `json:"recorded"`
+		NoEmbedding bool `json:"noEmbedding"`
+	}
+	check := func(p string) checkResp {
+		var r checkResp
+		decodeJSON(t, dupReq(t, duplicatesCheckHandler(deps), http.MethodGet,
+			"/api/duplicates/check?path="+urlQuery(p)+"&threshold=100", "", ""), &r)
+		return r
+	}
+
+	r := check(a)
+	if r.Group == nil || r.Recorded || r.Group.ID != 0 || len(r.Group.Members) != 2 {
+		t.Fatalf("preview = %+v; want an unrecorded 2-member group", r)
+	}
+	if id, _ := media.DuplicateGroupForPath(db, a); id != 0 {
+		t.Fatal("GET must not record a group")
+	}
+	if r := check(c); r.Group != nil || r.NoEmbedding {
+		t.Fatalf("c = %+v; want no candidates", r)
+	}
+	if r := check(filepath.Join(dir, "none.jpg")); !r.NoEmbedding {
+		t.Fatalf("none = %+v; want noEmbedding", r)
+	}
+
+	var rec struct {
+		ID int64 `json:"id"`
+	}
+	decodeJSON(t, dupReq(t, duplicatesCheckRecordHandler(deps), http.MethodPost,
+		"/api/duplicates/check/record", "", `{"path":`+jsonString(a)+`,"threshold":100}`), &rec)
+	if rec.ID == 0 {
+		t.Fatal("record returned no group")
+	}
+	if r := check(b); !r.Recorded || r.Group == nil || r.Group.ID != rec.ID {
+		t.Fatalf("after record, b = %+v; want recorded group %d", r, rec.ID)
+	}
+	if got := dupReq(t, duplicatesCheckRecordHandler(deps), http.MethodPost,
+		"/api/duplicates/check/record", "", `{"path":`+jsonString(c)+`}`); got.Code != http.StatusNotFound {
+		t.Fatalf("record c = %d; want 404", got.Code)
 	}
 }

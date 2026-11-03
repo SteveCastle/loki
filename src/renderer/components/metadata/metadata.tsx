@@ -49,10 +49,12 @@ const tabs = [
     active: false,
   },
   {
+    // Vector-similarity duplicates from the media server (visual embeddings,
+    // so images and video only); offered while the server is reachable.
     key: 'duplicates',
     label: 'Duplicates',
     actions: [],
-    fileTypes: [FileTypes.Image, FileTypes.Audio, FileTypes.Video],
+    fileTypes: [FileTypes.Image, FileTypes.Video],
     active: true,
   },
   {
@@ -113,7 +115,7 @@ export default function Metadata() {
   const itemType = getFileType(item?.path || '');
 
   // The tab the user last picked is remembered as-is; when it doesn't apply
-  // (no transcript for an image, Jobs while the server check is pending or
+  // (no transcript for an image, Jobs or Duplicates while the server check is pending or
   // before an item has loaded) the first available tab shows instead, without
   // overwriting the choice, so it comes back as soon as it applies again.
   const handleTabChange = (key: string) => {
@@ -126,7 +128,8 @@ export default function Metadata() {
       (t) =>
         t.active &&
         t.fileTypes.includes(itemType) &&
-        (t.key !== 'jobs' || jobServerAvailable === true)
+        ((t.key !== 'jobs' && t.key !== 'duplicates') ||
+          jobServerAvailable === true)
     );
   }, [itemType, jobServerAvailable]);
 
@@ -174,9 +177,7 @@ export default function Metadata() {
         {shownTabKey === 'jobs' && <JobQueue />}
         {shownTabKey === 'transformations' && <Transformations />}
         {shownTabKey === 'duplicates' && item && (
-          <div className="thumbnails-container">
-            <Duplicates basePath={item.path} />
-          </div>
+          <Duplicates basePath={item.path} />
         )}
       </div>
     </div>

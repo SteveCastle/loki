@@ -81,8 +81,6 @@ export type Channels =
   | 'move-media'
   | 'import-files'
   | 'minimize'
-  | 'load-duplicates-by-path'
-  | 'merge-duplicates-by-path'
   | 'check-for-updates'
   | 'apply-elo-ordering'
   | 'consolidate-tag-files'
@@ -196,20 +194,6 @@ const regenerateThumbnail = async (
   return result as string;
 };
 
-const loadDuplicatesByPath = async (path: string) => {
-  const files = await ipcRenderer.invoke('load-duplicates-by-path', [path]);
-  return files;
-};
-
-const mergeDuplicatesByPath = async (path: string) => {
-  const result = await ipcRenderer.invoke('merge-duplicates-by-path', [path]);
-  return result as {
-    mergedInto: string;
-    deleted: string[];
-    copiedTags: number;
-  };
-};
-
 const getGifMetadata = async (filePath: string) => {
   const result = await ipcRenderer.invoke('load-gif-metadata', [filePath]);
   return result as { frameCount: number; duration: number } | null;
@@ -257,8 +241,6 @@ contextBridge.exposeInMainWorld('electron', {
   fetchMediaPreview,
   listThumbnails,
   regenerateThumbnail,
-  loadDuplicatesByPath,
-  mergeDuplicatesByPath,
   getGifMetadata,
   captureRegion,
   async loadTranscript(filePath: string) {

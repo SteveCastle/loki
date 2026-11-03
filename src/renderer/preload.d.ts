@@ -99,14 +99,6 @@ declare global {
         filteringMode?: string
       ) => Promise<{ path: string }[]>;
       loadMediaByQuery: (predicates: unknown[], mode: string) => Promise<any>;
-      loadDuplicatesByPath: (
-        path: string
-      ) => Promise<{ library: { path: string }[]; cursor: number }>;
-      mergeDuplicatesByPath: (path: string) => Promise<{
-        mergedInto: string;
-        deleted: string[];
-        copiedTags: number;
-      }>;
       getGifMetadata: (filePath: string) => Promise<{
         frameCount: number;
         duration: number;

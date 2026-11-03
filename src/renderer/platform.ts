@@ -574,10 +574,6 @@ export let regenerateThumbnail: (
   timeStamp?: number
 ) => Promise<string>;
 
-export let loadDuplicatesByPath: (path: string) => Promise<any>;
-
-export let mergeDuplicatesByPath: (path: string) => Promise<any>;
-
 export let getGifMetadata: (
   filePath: string
 ) => Promise<GifMetadata | null>;
@@ -708,8 +704,6 @@ if (isElectron) {
   fetchTagCount = window.electron.fetchTagCount;
   listThumbnails = window.electron.listThumbnails;
   regenerateThumbnail = window.electron.regenerateThumbnail;
-  loadDuplicatesByPath = window.electron.loadDuplicatesByPath;
-  mergeDuplicatesByPath = window.electron.mergeDuplicatesByPath;
   getGifMetadata = window.electron.getGifMetadata;
   findSubtitle = ((videoPath: string) =>
     window.electron.ipcRenderer.invoke('find-subtitle', [videoPath])) as any;
@@ -731,7 +725,6 @@ if (isElectron) {
     'cancel-load-files',
     'refresh-library', 'copy-file-into-clipboard',
     'check-for-updates',
-    'load-duplicates-by-path', 'merge-duplicates-by-path',
   ];
 
   invoke = async (channel, args) => {
@@ -995,14 +988,6 @@ if (isElectron) {
       cache,
       timeStamp,
     });
-
-  loadDuplicatesByPath = async () => {
-    throw new Error('Duplicates not yet available in web mode');
-  };
-
-  mergeDuplicatesByPath = async () => {
-    throw new Error('Duplicates not yet available in web mode');
-  };
 
   getGifMetadata = (filePath) =>
     jsonPost('/api/media/gif-metadata', { path: filePath });

@@ -68,7 +68,7 @@ export interface DuplicateStats {
   pendingItems: number;
 }
 
-type ListStatus = 'pending' | 'dismissed';
+export type ListStatus = 'pending' | 'dismissed';
 // Group order: newest found first, or the biggest clusters first.
 type GroupSort = 'newest' | 'members';
 
@@ -81,7 +81,7 @@ interface GroupPage {
 
 const PAGE_SIZE = 25;
 // A merge deletes every other member from disk; big groups take a while.
-const MERGE_TIMEOUT_MS = 30 * 60 * 1000;
+export const MERGE_TIMEOUT_MS = 30 * 60 * 1000;
 // Members shown per card before the "+N more" expander.
 const MEMBER_PREVIEW_CAP = 8;
 
@@ -89,7 +89,10 @@ function authHeaders(authToken: string | null): HeadersInit {
   return authToken ? { Authorization: `Bearer ${authToken}` } : {};
 }
 
-async function apiGet<T>(authToken: string | null, path: string): Promise<T> {
+export async function apiGet<T>(
+  authToken: string | null,
+  path: string
+): Promise<T> {
   const res = await fetch(`${mediaServerBase}${path}`, {
     headers: authHeaders(authToken),
     credentials: 'include',
@@ -102,7 +105,7 @@ async function apiGet<T>(authToken: string | null, path: string): Promise<T> {
 // timeoutMs: merges of big groups delete thousands of files and must not be
 // abandoned by the client (the server finishes anyway, but the panel would
 // report an error for a merge that succeeded).
-async function apiSend<T>(
+export async function apiSend<T>(
   authToken: string | null,
   method: 'POST' | 'DELETE',
   path: string,
@@ -153,13 +156,13 @@ function pct(score: number): string {
   return `${(Math.max(0, Math.min(1, score)) * 100).toFixed(1)}%`;
 }
 
-function baseName(path: string): string {
+export function baseName(path: string): string {
   return path.split(/[\\/]/).pop() || path;
 }
 
 // Library paths and member paths are both the stored spelling, but compare
 // separator- and case-insensitively (Windows) to be safe.
-function samePath(a: string, b: string): boolean {
+export function samePath(a: string, b: string): boolean {
   const norm = (p: string) => p.replace(/\\/g, '/').toLowerCase();
   return norm(a) === norm(b);
 }
@@ -201,7 +204,7 @@ function MemberPreview({ path }: { path: string }) {
 
 // A two-click "armed" confirmation that disarms itself after a few seconds —
 // the same pattern every destructive People/Cleanup button uses.
-function useArmed(ms = 4000): [boolean, () => boolean, () => void] {
+export function useArmed(ms = 4000): [boolean, () => boolean, () => void] {
   const [armed, setArmed] = useState(false);
   useEffect(() => {
     if (!armed) return undefined;
@@ -220,6 +223,53 @@ function useArmed(ms = 4000): [boolean, () => boolean, () => void] {
   return [armed, fire, () => setArmed(false)];
 }
 
+// What POST /api/duplicates/{id}/merge reports (media.MergeInto).
+export interface MergeResult {
+  target: string;
+  tags: number;
+  embeddings: number;
+  transcript: boolean;
+  deleted: string[];
+  failed: string[];
+}
+
+// reportMerge applies a finished merge to the renderer: deleted copies leave
+// the in-memory library immediately (their DB rows are already gone) — same
+// as the palette's Merge — the kept item's per-path caches refresh, and a
+// toast sums it up. Shared by this panel and the metadata Duplicates tab.
+export function reportMerge(
+  libraryService: { send: (event: { type: string; data: unknown }) => unknown },
+  queryClient: ReturnType<typeof useQueryClient>,
+  m: MergeResult
+) {
+  if (m.deleted?.length) {
+    libraryService.send({
+      type: 'REMOVE_MERGED_FILES',
+      data: { paths: m.deleted },
+    });
+  }
+  queryClient.invalidateQueries({ queryKey: ['tags-by-path'] });
+  queryClient.invalidateQueries({ queryKey: ['metadata'] });
+  queryClient.invalidateQueries({ queryKey: ['embeddings'] });
+  queryClient.invalidateQueries({ queryKey: ['transcript'] });
+  queryClient.invalidateQueries({ queryKey: ['taxonomy', 'duplicates'] });
+  const failNote = m.failed?.length
+    ? ` — ${m.failed.length} could not be deleted`
+    : '';
+  libraryService.send({
+    type: 'ADD_TOAST',
+    data: {
+      type: m.failed?.length ? 'info' : 'success',
+      title: `Merged ${m.deleted?.length ?? 0} into ${baseName(m.target)}`,
+      message: `Kept ${m.tags} tag${m.tags === 1 ? '' : 's'}, ${
+        m.embeddings
+      } embedding${m.embeddings === 1 ? '' : 's'}${
+        m.transcript ? ', transcript' : ''
+      }${failNote}`,
+    },
+  });
+}
+
 interface GroupCardProps {
   group: DuplicateGroup;
   canWrite: boolean;
@@ -230,6 +280,8 @@ interface GroupCardProps {
   // filter, the keep highlight follows it (scrolling the detail view moves
   // the highlight) and clicking a member moves it (see onView).
   cursorPath: string | null;
+  // currentPath marks the item the metadata Duplicates tab is showing.
+  currentPath?: string;
   // pinPath (member clicks) lands the library cursor on that item once the
   // cluster filter has loaded, so the detail panel shows it.
   onView: (g: DuplicateGroup, pinPath?: string) => void;
@@ -240,16 +292,21 @@ interface GroupCardProps {
     path: string,
     excluded: boolean
   ) => Promise<void>;
-  onForget: (g: DuplicateGroup) => Promise<void>;
+  // Omitted for an unrecorded preview (id 0), which has nothing to forget.
+  onForget?: (g: DuplicateGroup) => Promise<void>;
 }
 
-function GroupCard({
+// GroupCard is one group with its review controls. A group with id 0 is the
+// metadata tab's unrecorded preview (GET /api/duplicates/check); its actions
+// record it first, so the controls are the same either way.
+export function GroupCard({
   group,
   canWrite,
   isDisabled,
   isActive,
   busy,
   cursorPath,
+  currentPath,
   onView,
   onMerge,
   onStatus,
@@ -281,6 +338,7 @@ function GroupCard({
     : group.members.slice(0, MEMBER_PREVIEW_CAP);
   const hidden = group.members.length - shown.length;
   const dismissed = group.status === 'dismissed';
+  const preview = group.id === 0;
 
   return (
     <div
@@ -293,9 +351,15 @@ function GroupCard({
           type="button"
           className="dupes-group-title"
           onClick={() => onView(group)}
-          title="Show this group's items in the library (adds a dupe: filter chip)"
+          title={
+            preview
+              ? 'Candidates found for this item just now; not recorded until you act on them'
+              : "Show this group's items in the library (adds a dupe: filter chip)"
+          }
         >
-          <span className="dupes-group-id">#{group.id}</span>
+          <span className="dupes-group-id">
+            {preview ? 'New' : `#${group.id}`}
+          </span>
           <span className="dupes-group-count">
             {group.activeCount} item{group.activeCount === 1 ? '' : 's'}
           </span>
@@ -357,23 +421,25 @@ function GroupCard({
             >
               {dismissed ? 'Restore' : 'Not duplicates'}
             </button>
-            <button
-              type="button"
-              className={`dupes-btn dupes-btn-forget${
-                forgetArmed ? ' danger' : ''
-              }`}
-              disabled={busy}
-              onClick={() => {
-                if (fireForget()) void onForget(group);
-              }}
-              title={
-                forgetArmed
-                  ? 'Click again to forget this group (files are untouched; a future scan may regroup them)'
-                  : 'Forget this group without deciding. Files are untouched.'
-              }
-            >
-              {forgetArmed ? 'Confirm forget' : 'Forget'}
-            </button>
+            {onForget && (
+              <button
+                type="button"
+                className={`dupes-btn dupes-btn-forget${
+                  forgetArmed ? ' danger' : ''
+                }`}
+                disabled={busy}
+                onClick={() => {
+                  if (fireForget()) void onForget(group);
+                }}
+                title={
+                  forgetArmed
+                    ? 'Click again to forget this group (files are untouched; a future scan may regroup them)'
+                    : 'Forget this group without deciding. Files are untouched.'
+                }
+              >
+                {forgetArmed ? 'Confirm forget' : 'Forget'}
+              </button>
+            )}
           </div>
         )}
       </div>
@@ -402,13 +468,22 @@ function GroupCard({
             >
               <div className="dupes-member-thumb">
                 <MemberPreview path={m.path} />
-                {m.anchor && (
+                {currentPath && samePath(m.path, currentPath) ? (
                   <span
-                    className="dupes-member-badge anchor"
-                    title="Anchor: every score is measured against this item"
+                    className="dupes-member-badge current"
+                    title="The item you are viewing"
                   >
-                    anchor
+                    this item
                   </span>
+                ) : (
+                  m.anchor && (
+                    <span
+                      className="dupes-member-badge anchor"
+                      title="Anchor: every score is measured against this item"
+                    >
+                      anchor
+                    </span>
+                  )
                 )}
                 {isKeep && (
                   <span
@@ -752,47 +827,15 @@ export default function DuplicatesGrid({
   const handleMerge = (g: DuplicateGroup, keep: string) =>
     withBusy(g, async () => {
       try {
-        const res = await apiSend<{
-          merge: {
-            target: string;
-            tags: number;
-            embeddings: number;
-            transcript: boolean;
-            deleted: string[];
-            failed: string[];
-          };
-        }>(
+        const res = await apiSend<{ merge: MergeResult }>(
           authToken,
           'POST',
           `/api/duplicates/${g.id}/merge`,
           { keep },
           MERGE_TIMEOUT_MS
         );
-        const m = res.merge;
-        if (m.deleted?.length) {
-          // Deleted copies leave the in-memory library immediately (their DB
-          // rows are already gone) — same as the palette's Merge.
-          libraryService.send('REMOVE_MERGED_FILES', {
-            data: { paths: m.deleted },
-          });
-        }
-        queryClient.invalidateQueries({ queryKey: ['tags-by-path'] });
-        queryClient.invalidateQueries({ queryKey: ['metadata'] });
-        queryClient.invalidateQueries({ queryKey: ['embeddings'] });
-        queryClient.invalidateQueries({ queryKey: ['transcript'] });
-        invalidateAfterMutation();
-        const failNote = m.failed?.length
-          ? ` — ${m.failed.length} could not be deleted`
-          : '';
-        toast(
-          m.failed?.length ? 'info' : 'success',
-          `Merged ${m.deleted?.length ?? 0} into ${baseName(m.target)}`,
-          `Kept ${m.tags} tag${m.tags === 1 ? '' : 's'}, ${
-            m.embeddings
-          } embedding${m.embeddings === 1 ? '' : 's'}${
-            m.transcript ? ', transcript' : ''
-          }${failNote}`
-        );
+        reportMerge(libraryService, queryClient, res.merge);
+        reload();
       } catch (err) {
         toast('error', 'Merge failed', String(err));
       }

@@ -237,6 +237,11 @@
   color: #052;
 }
 
+.dupes-member-badge.current {
+  background: rgba(77, 155, 255, 0.9);
+  color: #fff;
+}
+
 .dupes-member-badge.excluded {
   background: rgba(211, 3, 72, 0.8);
   color: #fff;

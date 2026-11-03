@@ -70,6 +70,7 @@ beforeEach(() => {
 });
 
 test('picking a tab persists it and a remount restores it', () => {
+  mockJobServer = true;
   const { unmount } = render(<Metadata />);
   fireEvent.click(screen.getByText('Duplicates'));
   expect(mockStore['metadata.activeTabKey']).toBe('duplicates');
@@ -77,6 +78,15 @@ test('picking a tab persists it and a remount restores it', () => {
 
   render(<Metadata />);
   expect(screen.getByText('duplicates-body')).toBeTruthy();
+});
+
+test('Duplicates is only offered while the media server is reachable', () => {
+  mockJobServer = false;
+  const { rerender } = render(<Metadata />);
+  expect(screen.queryByText('Duplicates')).toBeNull();
+  mockJobServer = true;
+  rerender(<Metadata />);
+  expect(screen.getByText('Duplicates')).toBeTruthy();
 });
 
 test('Jobs survives a remount while the job-server check is still pending', () => {

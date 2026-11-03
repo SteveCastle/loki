@@ -12764,6 +12764,158 @@ paths:
             text/plain:
               schema:
                 $ref: '#/components/schemas/Error'
+  /api/duplicates/check:
+    get:
+      tags:
+        - Duplicate Candidates
+      operationId: checkDuplicatesForPath
+      summary: One item's duplicate candidates (its group, or a preview).
+      description: >-
+        The per-item check behind the viewer's Duplicates tab. When the item already belongs to a
+        group, that group is returned with `recorded: true`. Otherwise one nearest-neighbour query
+        over the visual-embedding index previews the group `find-duplicates` would record for it
+        (`recorded: false`): a new group anchored on the item (`id` 0) from its ungrouped
+        neighbours at or above `threshold`, or — when a neighbour anchors an existing group — that
+        group with the item appended. Read-only; `POST /api/duplicates/check/record` records it.
+      x-access: read
+      parameters:
+        - name: path
+          in: query
+          required: true
+          description: Media path (trimmed).
+          schema:
+            type: string
+        - name: threshold
+          in: query
+          required: false
+          description: Similarity floor in percent, as `find-duplicates --threshold` (default 100).
+          schema:
+            type: number
+            default: 100
+      responses:
+        '200':
+          description: The item's group or preview; `group` is null when there are no candidates.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  group:
+                    nullable: true
+                    allOf:
+                      - $ref: '#/components/schemas/DuplicateGroup'
+                  recorded:
+                    type: boolean
+                    description: '`true` when `group` is stored; `false` for a preview.'
+                  noEmbedding:
+                    type: boolean
+                    description: The item has no visual embedding for the active model, so no check ran.
+                required:
+                  - group
+                  - recorded
+                  - noEmbedding
+        '400':
+          description: >-
+            `path` missing (`path required`). The body is `{"error": "..."}` but is sent with `Content-Type: text/plain`.
+          content:
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '405':
+          description: >-
+            Method other than GET. The body is `{"error": "..."}` but is sent with `Content-Type: text/plain`.
+          content:
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: >-
+            Database or index error. The body is `{"error": "..."}` but is sent with `Content-Type: text/plain`.
+          content:
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/duplicates/check/record:
+    post:
+      tags:
+        - Duplicate Candidates
+      operationId: recordDuplicatesForPath
+      summary: Record one item's duplicate group (create or join).
+      description: >-
+        Records the group `GET /api/duplicates/check` previews, so merge, dismiss and exclude apply
+        to it. An item already in a group just returns that group. Broadcasts a
+        `duplicates-updated` event on `/stream` when a group is created or joined.
+      x-access: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                path:
+                  type: string
+                  description: Media path (trimmed).
+                threshold:
+                  type: number
+                  default: 100
+                  description: Similarity floor in percent.
+              required:
+                - path
+            example:
+              path: D:/photos/beach.jpg
+              threshold: 100
+      responses:
+        '200':
+          description: The recorded group.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: integer
+                    format: int64
+                  group:
+                    $ref: '#/components/schemas/DuplicateGroup'
+                required:
+                  - id
+                  - group
+        '400':
+          description: >-
+            `path` missing. The body is `{"error": "..."}` but is sent with `Content-Type: text/plain`.
+          content:
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: >-
+            The item has no duplicate candidates. The body is `{"error": "..."}` but is sent with `Content-Type: text/plain`.
+          content:
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '405':
+          description: >-
+            Method other than POST. The body is `{"error": "..."}` but is sent with `Content-Type: text/plain`.
+          content:
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: >-
+            The item has no visual embedding for the active model. The body is `{"error": "..."}` but is sent with `Content-Type: text/plain`.
+          content:
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: >-
+            Database or index error. The body is `{"error": "..."}` but is sent with `Content-Type: text/plain`.
+          content:
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/Error'
   /api/duplicates/all:
     delete:
       tags:

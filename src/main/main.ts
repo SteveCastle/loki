@@ -600,8 +600,6 @@ ipcMain.handle('load-db', async (event, args) => {
   ipcMain.removeHandler('order-tags');
   ipcMain.removeHandler('delete-tag');
   ipcMain.removeHandler('create-job');
-  ipcMain.removeHandler('load-duplicates-by-path');
-  ipcMain.removeHandler('merge-duplicates-by-path');
   ipcMain.removeHandler('list-thumbnails');
   ipcMain.removeHandler('regenerate-thumbnail');
   ipcMain.removeHandler('delete-file');
@@ -668,14 +666,6 @@ ipcMain.handle('load-db', async (event, args) => {
   ipcMain.handle('merge-item-metadata', mediaModule.mergeItemMetadata(db));
   ipcMain.handle('move-media', mediaModule.moveMedia(db));
   ipcMain.handle('import-files', mediaModule.importFiles(db));
-  ipcMain.handle(
-    'load-duplicates-by-path',
-    mediaModule.loadDuplicatesByPath(db)
-  );
-  ipcMain.handle(
-    'merge-duplicates-by-path',
-    mediaModule.mergeDuplicatesByPath(db)
-  );
 
   // Register Metadata/Taxonomy Events
   ipcMain.handle(

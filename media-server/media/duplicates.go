@@ -722,3 +722,52 @@ func DuplicateGroupKeeper(db *sql.DB, g DuplicateGroup) (string, map[string]Dupl
 	}
 	return PreferredDuplicateKeeper(g, facts), facts, nil
 }
+
+// DuplicateMembership is where one path sits in the duplicate tables.
+type DuplicateMembership struct {
+	GroupID int64
+	Anchor  bool // the path is its group's anchor
+}
+
+// DuplicateMembershipForPaths looks up the group (and anchor role) of each
+// path that belongs to one; paths in no group are absent from the map. The
+// per-item duplicate check uses it on a short neighbour list, so it never
+// loads the whole assignment table the way DuplicateAssignments does.
+func DuplicateMembershipForPaths(db *sql.DB, paths []string) (map[string]DuplicateMembership, error) {
+	if db == nil {
+		return nil, fmt.Errorf("database connection not available")
+	}
+	out := make(map[string]DuplicateMembership, len(paths))
+	const chunk = 500
+	for lo := 0; lo < len(paths); lo += chunk {
+		part := paths[lo:min(lo+chunk, len(paths))]
+		args := make([]any, len(part))
+		for i, p := range part {
+			args[i] = p
+		}
+		rows, err := db.Query(
+			`SELECT m.media_path, m.group_id, (m.media_path = g.anchor_path)
+			 FROM duplicate_member m
+			 JOIN duplicate_group g ON g.id = m.group_id
+			 WHERE m.media_path IN (?`+strings.Repeat(",?", len(part)-1)+`)`, args...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var p string
+			var m DuplicateMembership
+			var anchor int
+			if err := rows.Scan(&p, &m.GroupID, &anchor); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			m.Anchor = anchor != 0
+			out[p] = m
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
