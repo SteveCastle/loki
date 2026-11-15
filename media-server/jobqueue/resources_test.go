@@ -94,7 +94,7 @@ func TestResourceCountsReleasedOnEveryTransition(t *testing.T) {
 		},
 		"error": func(q *Queue, id string) error { return q.ErrorJob(id) },
 		"pause": func(q *Queue, id string) error {
-			if err := q.RequestPause(id); err != nil {
+			if err := q.RequestPause(id, false); err != nil {
 				return err
 			}
 			return q.PauseJob(id)

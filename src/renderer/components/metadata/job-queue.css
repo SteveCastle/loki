@@ -112,6 +112,15 @@
   opacity: 0.6;
 }
 
+.JobQueue .jq-job-times {
+  font-size: 0.7rem;
+  opacity: 0.6;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .JobQueue .jq-progress {
   height: 4px;
   border-radius: 2px;

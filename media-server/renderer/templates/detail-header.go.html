@@ -62,12 +62,24 @@
     </div>
     {{- if .CreatedAt.IsZero | not}}
     <div><strong>Created:</strong> {{formatTime .CreatedAt}}</div>
-    {{- end}} {{- if .CompletedAt.IsZero | not}}
-    <div>
-      <strong>Completed:</strong>
-      <span id="completedAt">{{formatTime .CompletedAt}}</span>
+    {{- end}}
+    <div id="startedAtRow" {{ if .StartedAt.IsZero }}style="display: none"{{ end }}>
+      <strong>Started:</strong>
+      <span id="startedAt">{{ if not .StartedAt.IsZero }}{{formatTime .StartedAt}}{{ end }}</span>
     </div>
-    {{- end}} {{- if .ErroredAt.IsZero | not}}
+    <div id="completedAtRow" {{ if .CompletedAt.IsZero }}style="display: none"{{ end }}>
+      <strong>Ended:</strong>
+      <span id="completedAt">{{ if not .CompletedAt.IsZero }}{{formatTime .CompletedAt}}{{ end }}</span>
+    </div>
+    <div id="durationRow" {{ if .StartedAt.IsZero }}style="display: none"{{ end }}>
+      <strong id="durationLabel">{{ if .CompletedAt.IsZero }}Elapsed:{{ else }}Duration:{{ end }}</strong>
+      <span
+        id="duration"
+        {{ if and (not .StartedAt.IsZero) .CompletedAt.IsZero (eq .State 1) }}data-run-start="{{ .StartedAt.UnixMilli }}"{{ end }}
+        >{{ runDuration .StartedAt .CompletedAt }}</span
+      >
+    </div>
+    {{- if .ErroredAt.IsZero | not}}
     <div>
       <strong>Errored:</strong>
       <span id="erroredAt">{{formatTime .ErroredAt}}</span>

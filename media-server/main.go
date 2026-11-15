@@ -460,7 +460,7 @@ func cancelHandler(deps *Dependencies) http.HandlerFunc {
 			http.Error(w, "Use POST", http.StatusMethodNotAllowed)
 			return
 		}
-		deps.Queue.CancelJob(r.PathValue("id"))
+		deps.Queue.UserCancelJob(r.PathValue("id"))
 
 		// Send successful response
 		w.Header().Set("Content-Type", "text/plain")

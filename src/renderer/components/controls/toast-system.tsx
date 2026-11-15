@@ -34,6 +34,9 @@ interface JobRunnerJob {
   errored_at?: string;
   progress_done?: number;
   progress_total?: number;
+  // Set between a pause request and the job actually parking (graceful
+  // pauses wait for the current item; GPU runs stop at once).
+  pause_requested?: boolean;
 }
 
 interface Toast {
@@ -55,8 +58,9 @@ interface JobToastProps {
   // Timed auto-dismiss: hides the toast but, unlike onClear, lets a later
   // update for the same job bring it back.
   onExpire: () => void;
-  // Pause/resume the job (graceful: the current item finishes and all
-  // completed work is kept). Shown for active and paused jobs.
+  // Pause/resume the job. Item-loop jobs pause after the current item; long
+  // GPU runs stop at once and restart their item on resume. Shown for
+  // active and paused jobs.
   onPauseResume: () => void;
 }
 
@@ -323,6 +327,14 @@ const JobToast: React.FC<JobToastProps> = ({
 
   const { libraryService } = useContext(GlobalStateContext);
   const status = job.state;
+  // Optimistic "pausing" between the click and the server's update event;
+  // cleared whenever the job's state changes (paused, finished, failed).
+  const [pauseClicked, setPauseClicked] = useState(false);
+  useEffect(() => {
+    setPauseClicked(false);
+  }, [status]);
+  const pausing =
+    status === 'in_progress' && (pauseClicked || !!job.pause_requested);
   const title = getJobTitle(job);
   const subtitle = getJobSubtitle(job);
 
@@ -403,6 +415,7 @@ const JobToast: React.FC<JobToastProps> = ({
           <span className="toast-title">
             {title}
             {status === 'paused' ? ' (paused)' : ''}
+            {pausing ? ' (pausing…)' : ''}
           </span>
           {subtitle && <span className="toast-message">{subtitle}</span>}
           {progressTotal > 0 && (
@@ -441,14 +454,18 @@ const JobToast: React.FC<JobToastProps> = ({
         <button
           type="button"
           className="toast-pause"
+          disabled={pausing}
           onClick={(e) => {
             e.stopPropagation();
+            if (status !== 'paused') setPauseClicked(true);
             onPauseResume();
           }}
           title={
             status === 'paused'
-              ? 'Resume from where it stopped'
-              : 'Pause after the current item — finished work is kept'
+              ? 'Resume'
+              : pausing
+              ? 'Pausing…'
+              : 'Pause — finished work is kept; a running generation stops and restarts on resume'
           }
         >
           {status === 'paused' ? '▶' : '⏸'}
@@ -867,15 +884,22 @@ export function ToastSystem() {
         signal: controller.signal,
       });
       clearTimeout(timeoutId);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) {
+        const text = (await res.text().catch(() => '')).trim();
+        throw new Error(text || `HTTP ${res.status}`);
+      }
     } catch (error) {
       console.error('Failed to pause/resume job:', error);
+      const msg = error instanceof Error ? error.message : String(error);
       libraryService.send({
         type: 'ADD_TOAST',
         data: {
           type: 'error',
-          title: 'Failed to pause/resume job',
-          message: 'Could not communicate with job service',
+          title: `Failed to ${job.state === 'paused' ? 'resume' : 'pause'} job`,
+          message:
+            msg === 'The user aborted a request.' || msg.includes('abort')
+              ? 'The job service did not respond'
+              : msg,
         },
       });
     }

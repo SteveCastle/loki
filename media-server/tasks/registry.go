@@ -183,3 +183,31 @@ func RegisterTask(id, name string, options []TaskOption, fn TaskFn) {
 func GetTasks() TaskMap {
 	return tasks
 }
+
+// gracefulPauseTasks are the tasks whose item loops poll PauseRequested
+// between SHORT items (a file, a hash, an embedding), so a pause lands within
+// moments and keeps the in-flight item's work. Every other task — long GPU
+// runs (reshoot, retouch, dream, splat, scene-*), single-shot tasks — has no
+// usable pause point, so pausing stops the run immediately and the job
+// restarts its interrupted item on resume. Add a task here only when its loop
+// really polls PauseRequested per item.
+var gracefulPauseTasks = map[string]bool{
+	"cleanup": true, "thumbnail-cleanup": true,
+	"autotag": true, "embed": true, "describe": true, "transcribe": true,
+	"hash": true, "dimensions": true, "process": true, "faces": true,
+	"assign-person": true, "metadata": true, "hls": true, "move": true,
+	"split-dir": true, "dedupe": true, "find-duplicates": true,
+	"merge-duplicates": true, "lora-dataset": true,
+	"ffmpeg": true, "ffmpeg-scale": true, "ffmpeg-convert": true,
+	"ffmpeg-extract-audio": true, "ffmpeg-extract-audio-clip": true,
+	"ffmpeg-screenshot": true, "ffmpeg-thumbnail": true, "ffmpeg-reverse": true,
+	"ffmpeg-speed": true, "ffmpeg-grayscale": true, "ffmpeg-blur": true,
+	"ffmpeg-resize": true, "ffmpeg-crop": true, "ffmpeg-rotate": true,
+	"ffmpeg-caption": true, "ffmpeg-thumbsheet": true,
+}
+
+// PausesGracefully reports whether a pause of a running job with this command
+// waits for the next item boundary (true) or stops the run now (false).
+func PausesGracefully(command string) bool {
+	return gracefulPauseTasks[command]
+}

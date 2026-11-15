@@ -31,6 +31,11 @@ func jobAPIHandler(deps *Dependencies) http.HandlerFunc {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")
+		var durationMs *int64
+		if d, ok := job.RunDuration(); ok {
+			ms := d.Milliseconds()
+			durationMs = &ms
+		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"id":             job.ID,
 			"command":        job.Command,
@@ -39,7 +44,9 @@ func jobAPIHandler(deps *Dependencies) http.HandlerFunc {
 			"progress_total": job.ProgressTotal,
 			"output_files":   job.OutputFiles,
 			"created_at":     job.CreatedAt,
+			"started_at":     job.StartedAt,
 			"completed_at":   job.CompletedAt,
+			"duration_ms":    durationMs,
 			"log":            lines,
 		})
 	}

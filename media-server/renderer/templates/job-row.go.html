@@ -23,8 +23,24 @@
   </div>
   <div class="jobs-cell arguments" data-label="Arguments">{{ .Arguments }}</div>
   <div class="jobs-cell input" data-label="Input">{{ template "jobInput" (jobInputView .Input) }}</div>
-  <div class="jobs-cell created" data-label="Created">
-    {{ formatTime .CreatedAt }}
+  <div class="jobs-cell created" data-label="Time">
+    <div class="job-times">
+      <span title="Queued">{{ formatTime .CreatedAt }}</span>
+      {{ if not .StartedAt.IsZero }}
+      <span
+        class="job-run"
+        title="Started {{ formatTime .StartedAt }}{{ if not .CompletedAt.IsZero }} · Ended {{ formatTime .CompletedAt }}{{ end }}"
+      >
+        {{- if not .CompletedAt.IsZero -}}
+        took {{ runDuration .StartedAt .CompletedAt }}
+        {{- else if eq .State 1 -}}
+        running <span class="job-elapsed" data-run-start="{{ .StartedAt.UnixMilli }}"></span>
+        {{- else -}}
+        started {{ formatTime .StartedAt }}
+        {{- end -}}
+      </span>
+      {{ end }}
+    </div>
   </div>
   <div class="jobs-cell actions" data-label="Actions">
     {{ if or (eq .State 0) (eq .State 1) }}

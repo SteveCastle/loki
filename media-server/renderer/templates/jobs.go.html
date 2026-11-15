@@ -166,6 +166,18 @@
         font-size: var(--text-xs);
       }
 
+      .jobs-cell .job-times {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        min-width: 0;
+      }
+
+      .jobs-cell .job-run {
+        color: var(--text-secondary);
+        font-variant-numeric: tabular-nums;
+      }
+
       .jobs-cell.actions {
         justify-content: center;
         gap: var(--space-2);
@@ -314,7 +326,7 @@
           <div class="jobs-cell">Command</div>
           <div class="jobs-cell">Arguments</div>
           <div class="jobs-cell">Input</div>
-          <div class="jobs-cell">Created</div>
+          <div class="jobs-cell">Time</div>
           <div class="jobs-cell">Actions</div>
         </div>
         <div id="jobs" class="table-body">
@@ -717,6 +729,30 @@
           '</div>';
         jobsElement.appendChild(empty);
       }
+
+      // Live elapsed time for running jobs: every [data-run-start] (epoch ms
+      // of the run's first start) shows time since then. Rows are replaced
+      // wholesale by SSE updates, so each tick re-queries the DOM.
+      function fmtRunDuration(ms) {
+        if (!(ms >= 0)) ms = 0;
+        if (ms < 1000) return Math.round(ms) + 'ms';
+        const s = Math.floor(ms / 1000);
+        const pad = (n) => String(n).padStart(2, '0');
+        if (s < 60) return s + 's';
+        if (s < 3600) return Math.floor(s / 60) + 'm ' + pad(s % 60) + 's';
+        if (s < 86400)
+          return Math.floor(s / 3600) + 'h ' + pad(Math.floor((s % 3600) / 60)) + 'm';
+        return Math.floor(s / 86400) + 'd ' + Math.floor((s % 86400) / 3600) + 'h';
+      }
+      function tickElapsed() {
+        const now = Date.now();
+        document.querySelectorAll('[data-run-start]').forEach((el) => {
+          const start = Number(el.getAttribute('data-run-start'));
+          if (start > 0) el.textContent = fmtRunDuration(now - start);
+        });
+      }
+      tickElapsed();
+      setInterval(tickElapsed, 1000);
 
       function htmlToNode(html) {
         const template = document.createElement('template');

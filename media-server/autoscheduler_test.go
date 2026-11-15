@@ -199,7 +199,7 @@ func TestSchedulerManualPauseRespected(t *testing.T) {
 	}
 
 	// The user pauses OUR job by hand (scheduler did not set pausedByUs).
-	if err := q.RequestPause(job.ID); err != nil {
+	if err := q.RequestPause(job.ID, false); err != nil {
 		t.Fatal(err)
 	}
 

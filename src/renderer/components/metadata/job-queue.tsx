@@ -6,6 +6,12 @@ import { subscribeStream } from '../../stream-bus';
 import { getJobTitle } from '../controls/toast-system';
 import { useCanWrite } from '../../hooks/useCanWrite';
 import { baseName, jobInputPaths, navigateToMedia } from '../../job-paths';
+import {
+  formatClock,
+  formatDuration,
+  jobRunTiming,
+  jobTimesTooltip,
+} from '../../job-timing';
 import './job-queue.css';
 
 type QueueJob = {
@@ -15,8 +21,17 @@ type QueueJob = {
   input: string;
   state: string;
   created_at: string;
+  /** First time the job began running (kept through pause/resume). */
+  started_at?: string;
+  claimed_at?: string;
+  /** When it reached any terminal state (completed/error/cancelled). */
+  completed_at?: string;
+  /** started_at → completed_at; null until both exist. */
+  duration_ms?: number | null;
   progress_done?: number;
   progress_total?: number;
+  /** A pause was requested and the job hasn't parked yet. */
+  pause_requested?: boolean;
   /** Files the job wrote (registered outputs). */
   output_files?: string[] | null;
 };
@@ -28,7 +43,13 @@ const FILES_SHOWN = 3;
  * A job's input and output files as clickable rows: clicking one shows it in
  * the viewer. Long lists show the first few and expand into a scroll box.
  */
-function JobFiles({ job, onOpen }: { job: QueueJob; onOpen: (path: string) => void }) {
+function JobFiles({
+  job,
+  onOpen,
+}: {
+  job: QueueJob;
+  onOpen: (path: string) => void;
+}) {
   const [expanded, setExpanded] = useState(false);
   const inputs = jobInputPaths(job.input);
   const outputs = (job.output_files || []).filter(Boolean);
@@ -64,6 +85,42 @@ function JobFiles({ job, onOpen }: { job: QueueJob; onOpen: (path: string) => vo
         </button>
       )}
     </div>
+  );
+}
+
+/** Live "time since start" for a running job, re-rendered once a second. */
+function Elapsed({ since }: { since: number }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+  return <>{formatDuration(now - since)}</>;
+}
+
+/**
+ * Start → end and duration on one line: "14:02:11 → 14:05:13 · 3m 02s",
+ * or "14:02:11 → now · 1m 05s" (ticking) while running. Nothing for a job
+ * that never started.
+ */
+function JobTimes({ job }: { job: QueueJob }) {
+  const t = jobRunTiming(job);
+  if (t.startedMs === null) return null;
+  let end = '';
+  if (t.endedMs !== null) end = formatClock(t.endedMs);
+  else if (t.live) end = 'now';
+  return (
+    <span className="jq-job-times" title={jobTimesTooltip(job)}>
+      {formatClock(t.startedMs)}
+      {end ? ` → ${end}` : ''}
+      {t.durationMs !== null && ` · ${formatDuration(t.durationMs)}`}
+      {t.live && (
+        <>
+          {' · '}
+          <Elapsed since={t.startedMs} />
+        </>
+      )}
+    </span>
   );
 }
 
@@ -236,10 +293,13 @@ export default function JobQueue() {
               {getJobTitle(job as any)}
             </span>
             <span className="jq-job-meta">
-              {STATE_LABEL[job.state] ?? job.state}
+              {job.pause_requested && job.state === 'in_progress'
+                ? 'Pausing…'
+                : STATE_LABEL[job.state] ?? job.state}
               {total > 0 ? ` · ${done}/${total}` : ''}
-              {job.created_at ? ` · ${timeAgo(job.created_at)}` : ''}
+              {job.created_at ? ` · queued ${timeAgo(job.created_at)}` : ''}
             </span>
+            <JobTimes job={job} />
             {total > 0 && isActive && (
               <div className="jq-progress">
                 <div
@@ -256,7 +316,12 @@ export default function JobQueue() {
             {(job.state === 'in_progress' || job.state === 'pending') && (
               <button
                 type="button"
-                title="Pause after the current item"
+                disabled={!!job.pause_requested}
+                title={
+                  job.pause_requested
+                    ? 'Pausing…'
+                    : 'Pause — finished work is kept; a running generation stops and restarts on resume'
+                }
                 onClick={() => post(`/job/${job.id}/pause`)}
               >
                 ⏸

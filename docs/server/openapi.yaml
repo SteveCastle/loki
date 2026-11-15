@@ -94,16 +94,37 @@ components:
         created_at:
           type: string
           format: date-time
+          description: When the job was queued.
+        started_at:
+          type: string
+          format: date-time
+          description: >-
+            When the job first began running. Kept through pause/resume and server restarts. Zero
+            time (`0001-01-01T00:00:00Z`) for a job that never ran.
         claimed_at:
           type: string
           format: date-time
-          description: Zero time (`0001-01-01T00:00:00Z`) until claimed.
+          description: >-
+            Claim time of the current run segment (reset on resume and at startup). Zero time
+            (`0001-01-01T00:00:00Z`) until claimed. Use `started_at` for the run's start.
         completed_at:
           type: string
           format: date-time
+          description: >-
+            When the job reached a terminal state (completed, error or cancelled); `state` says
+            which. Zero time (`0001-01-01T00:00:00Z`) while the job is not finished.
         errored_at:
           type: string
           format: date-time
+        duration_ms:
+          type:
+            - integer
+            - 'null'
+          format: int64
+          description: >-
+            Wall-clock milliseconds from `started_at` to `completed_at` (pauses included); `null`
+            until the job has both started and ended. For a running job compute elapsed time from
+            `started_at`.
         output_files:
           type: array
           items:
@@ -138,9 +159,11 @@ components:
         - dependencies
         - state
         - created_at
+        - started_at
         - claimed_at
         - completed_at
         - errored_at
+        - duration_ms
         - output_files
         - source_files
         - workflow_id
@@ -858,10 +881,22 @@ components:
         created_at:
           type: string
           format: date-time
+        started_at:
+          type: string
+          format: date-time
+          description: When the job first began running; zero time (`0001-01-01T00:00:00Z`) until then.
         completed_at:
           type: string
           format: date-time
-          description: Zero time (`0001-01-01T00:00:00Z`) until completed.
+          description: >-
+            When the job reached a terminal state (completed, error or cancelled); zero time
+            (`0001-01-01T00:00:00Z`) until then.
+        duration_ms:
+          type:
+            - integer
+            - 'null'
+          format: int64
+          description: Milliseconds from `started_at` to `completed_at`; `null` until both are set.
         log:
           type: array
           items:
@@ -875,7 +910,9 @@ components:
         - progress_total
         - output_files
         - created_at
+        - started_at
         - completed_at
+        - duration_ms
         - log
     JobForPathSummary:
       type: object

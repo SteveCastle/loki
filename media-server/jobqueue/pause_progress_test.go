@@ -24,7 +24,7 @@ func TestPauseRequestAndPauseJob(t *testing.T) {
 	if q.PauseRequested(j.ID) {
 		t.Fatal("no pause requested yet")
 	}
-	if err := q.RequestPause(j.ID); err != nil {
+	if err := q.RequestPause(j.ID, false); err != nil {
 		t.Fatal(err)
 	}
 	if !q.PauseRequested(j.ID) {
@@ -53,7 +53,7 @@ func TestPauseRequestAndPauseJob(t *testing.T) {
 func TestRequestPauseOnPendingPausesImmediately(t *testing.T) {
 	q := newTestQueue(t)
 	id, _ := q.AddJob("", "wait", nil, "input", nil)
-	if err := q.RequestPause(id); err != nil {
+	if err := q.RequestPause(id, false); err != nil {
 		t.Fatal(err)
 	}
 	if q.Jobs[id].State != StatePaused {
@@ -65,7 +65,7 @@ func TestResumeRequeuesAndKeepsProgress(t *testing.T) {
 	q := newTestQueue(t)
 	j := addAndClaim(t, q)
 	_ = q.SetJobProgress(j.ID, 7, 20)
-	_ = q.RequestPause(j.ID)
+	_ = q.RequestPause(j.ID, false)
 	_ = q.PauseJob(j.ID)
 
 	if err := q.ResumeJob(j.ID); err != nil {
@@ -87,7 +87,7 @@ func TestResumeRequeuesAndKeepsProgress(t *testing.T) {
 func TestCancelPausedJob(t *testing.T) {
 	q := newTestQueue(t)
 	j := addAndClaim(t, q)
-	_ = q.RequestPause(j.ID)
+	_ = q.RequestPause(j.ID, false)
 	_ = q.PauseJob(j.ID)
 
 	if err := q.CancelJob(j.ID); err != nil {
@@ -109,7 +109,7 @@ func TestProgressPersistsAcrossReload(t *testing.T) {
 	}
 	// SetJobProgress writes a targeted UPDATE; a full row save keeps other
 	// columns in sync at state transitions.
-	_ = q.RequestPause(j.ID)
+	_ = q.RequestPause(j.ID, false)
 	_ = q.PauseJob(j.ID)
 
 	// Simulate a restart: fresh queue over the same DB.

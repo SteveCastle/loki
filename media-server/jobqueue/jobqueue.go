@@ -142,9 +142,27 @@ type Job struct {
 	// host/resource buckets until its task actually returns (see
 	// ReleaseCancelled).
 	cancelHold bool
+	// preemptPause: a pause stopped this run mid-task (its context was
+	// cancelled); when the task returns the runner parks it as Paused instead
+	// of Cancelled, and the job gets a fresh context for its resume.
+	preemptPause bool
+	// PauseRequested is true between a pause request and the job actually
+	// parking (or finishing), so UIs can show "Pausing…".
+	PauseRequested bool `json:"pause_requested,omitempty"`
 
-	// Timestamps for various states
+	// Timestamps for various states. Run tracking:
+	//   CreatedAt   — queued.
+	//   StartedAt   — FIRST time the job began running (claimed). Kept through
+	//                 pause/resume and server restarts, so it marks the start
+	//                 of the run as a whole; zero for a job that never ran.
+	//   ClaimedAt   — the CURRENT run segment's claim (reset on resume and at
+	//                 startup), so it is not a reliable start time.
+	//   CompletedAt — when the job reached ANY terminal state (completed,
+	//                 error, cancelled); the run's end time. The state says
+	//                 how it ended. ErroredAt is kept for compatibility.
+	// The JSON also carries a derived duration_ms (see MarshalJSON).
 	CreatedAt   time.Time `json:"created_at"`
+	StartedAt   time.Time `json:"started_at"`
 	ClaimedAt   time.Time `json:"claimed_at"`
 	CompletedAt time.Time `json:"completed_at"`
 	ErroredAt   time.Time `json:"errored_at"`
@@ -170,6 +188,57 @@ type Job struct {
 	// Throttling bookkeeping for progress broadcasts/persists (not serialized).
 	lastProgressBroadcast time.Time
 	lastProgressPersist   time.Time
+}
+
+// IsTerminal reports whether the state is final (completed, error,
+// cancelled). Paused is not terminal: a paused job can be resumed.
+func (s JobState) IsTerminal() bool {
+	return s == StateCompleted || s == StateError || s == StateCancelled
+}
+
+// RunDuration is the wall-clock time from StartedAt to CompletedAt (pauses
+// and restarts in between included). ok is false while the job has not both
+// started and ended — a running job's elapsed time is computed by the UI
+// from started_at instead.
+func (j *Job) RunDuration() (d time.Duration, ok bool) {
+	if j.StartedAt.IsZero() || j.CompletedAt.IsZero() {
+		return 0, false
+	}
+	d = j.CompletedAt.Sub(j.StartedAt)
+	if d < 0 {
+		d = 0
+	}
+	return d, true
+}
+
+// markStarted stamps StartedAt on the job's first claim only.
+func (j *Job) markStarted(now time.Time) {
+	j.ClaimedAt = now
+	if j.StartedAt.IsZero() {
+		j.StartedAt = now
+	}
+}
+
+// markEnded stamps the end of the run on a terminal transition.
+func (j *Job) markEnded(now time.Time) {
+	j.CompletedAt = now
+}
+
+// jobJSON breaks the MarshalJSON recursion.
+type jobJSON Job
+
+// MarshalJSON adds the derived duration_ms (milliseconds from started_at to
+// completed_at; null until the job has both started and ended).
+func (j Job) MarshalJSON() ([]byte, error) {
+	var dur *int64
+	if d, ok := j.RunDuration(); ok {
+		ms := d.Milliseconds()
+		dur = &ms
+	}
+	return json.Marshal(struct {
+		jobJSON
+		DurationMs *int64 `json:"duration_ms"`
+	}{jobJSON(j), dur})
 }
 
 type WorkflowTask struct {
@@ -295,6 +364,9 @@ func (q *Queue) createJobsTable() error {
 	_, _ = q.Db.Exec("ALTER TABLE jobs ADD COLUMN progress_total INTEGER")
 	_, _ = q.Db.Exec("ALTER TABLE jobs ADD COLUMN resources TEXT")
 	_, _ = q.Db.Exec("ALTER TABLE jobs ADD COLUMN interrupt_count INTEGER")
+	// Run start (first claim). NULL on rows written before it existed; the
+	// loader falls back to claimed_at for those (no backfill UPDATE needed).
+	_, _ = q.Db.Exec("ALTER TABLE jobs ADD COLUMN started_at DATETIME")
 
 	return nil
 }
@@ -327,8 +399,8 @@ func (q *Queue) saveJobToDB(job *Job) error {
 		id, command, arguments, input, original_input, host, stdout, dependencies, state,
 		created_at, claimed_at, completed_at, errored_at, job_order_position,
 		output_files, source_files, workflow_id, progress_done, progress_total, resources,
-		interrupt_count
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		interrupt_count, started_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 	_, err := q.Db.Exec(query,
 		job.ID,
@@ -352,6 +424,7 @@ func (q *Queue) saveJobToDB(job *Job) error {
 		job.ProgressTotal,
 		string(resourcesJSON),
 		job.InterruptCount,
+		job.StartedAt,
 	)
 	if err == nil {
 		q.noteSavedLocked(job.ID)
@@ -371,7 +444,7 @@ func (q *Queue) loadJobsFromDB() error {
 		   created_at, claimed_at, completed_at, errored_at, job_order_position,
 		   COALESCE(output_files, '[]'), COALESCE(source_files, '[]'), COALESCE(workflow_id, ''),
 		   COALESCE(progress_done, 0), COALESCE(progress_total, 0), COALESCE(resources, ''),
-		   COALESCE(interrupt_count, 0)
+		   COALESCE(interrupt_count, 0), started_at
 	FROM jobs
 	ORDER BY job_order_position`
 
@@ -389,6 +462,7 @@ func (q *Queue) loadJobsFromDB() error {
 		var argumentsJSON, stdoutJSON, dependenciesJSON, outputFilesJSON, sourceFilesJSON, resourcesJSON string
 		var state int
 		var position int
+		var startedAt sql.NullTime
 
 		err := rows.Scan(
 			&job.ID,
@@ -412,6 +486,7 @@ func (q *Queue) loadJobsFromDB() error {
 			&job.ProgressTotal,
 			&resourcesJSON,
 			&job.InterruptCount,
+			&startedAt,
 		)
 		if err != nil {
 			log.Printf("Error scanning job row: %v", err)
@@ -440,6 +515,19 @@ func (q *Queue) loadJobsFromDB() error {
 
 		job.State = JobState(state)
 
+		// Run timestamps. Rows from before started_at existed: the last
+		// claim is the best start we have. Rows from before CompletedAt was
+		// stamped on every terminal state: an error's ErroredAt is its end.
+		if startedAt.Valid {
+			job.StartedAt = startedAt.Time
+		}
+		if job.StartedAt.IsZero() && !job.ClaimedAt.IsZero() && job.State != StatePending {
+			job.StartedAt = job.ClaimedAt
+		}
+		if job.CompletedAt.IsZero() && job.State == StateError && !job.ErroredAt.IsZero() {
+			job.CompletedAt = job.ErroredAt
+		}
+
 		if job.Host == "" {
 			job.Host = getHost(job.Command, job.Input)
 		}
@@ -459,6 +547,7 @@ func (q *Queue) loadJobsFromDB() error {
 			if job.InterruptCount >= maxJobResumes {
 				job.State = StateError
 				job.ErroredAt = time.Now()
+				job.markEnded(job.ErroredAt)
 				job.Stdout = append(job.Stdout, fmt.Sprintf(
 					"Not auto-resumed: interrupted %d times without completing "+
 						"(possible out-of-memory). Restart it manually if intended.",
@@ -648,6 +737,7 @@ func (q *Queue) CopyJob(id string) (string, error) {
 	newJob.ProgressDone = 0
 	newJob.ProgressTotal = 0
 	newJob.CreatedAt = time.Now()
+	newJob.StartedAt = time.Time{}
 	newJob.ClaimedAt = time.Time{}
 	newJob.CompletedAt = time.Time{}
 	newJob.ErroredAt = time.Time{}
@@ -697,7 +787,7 @@ func (q *Queue) ClaimJob() (*Job, error) {
 			}
 
 			job.State = StateInProgress
-			job.ClaimedAt = time.Now()
+			job.markStarted(time.Now())
 			q.incRunningLocked(job)
 
 			// Construct effective input from OriginalInput and parent outputs
@@ -766,11 +856,18 @@ func (q *Queue) ErrorJob(id string) error {
 	if job.State != StateInProgress {
 		return errors.New("job is not in progress, cannot set error")
 	}
+	if job.preemptPause {
+		// The "error" is the run dying from a preemptive pause's cancelled
+		// context (tasks report their own failures): park it instead.
+		return q.pauseJobLocked(job)
+	}
 
 	job.State = StateError
 	job.ErroredAt = time.Now()
+	job.markEnded(job.ErroredAt)
 	q.decRunningLocked(job)
 	delete(q.pauseRequests, id)
+	job.PauseRequested = false
 	q.dropJobItemsLocked(id)
 
 	// Save to database
@@ -809,6 +906,7 @@ func (q *Queue) cancelWorkflowDependentsLocked(erroredID, workflowID string) {
 			for _, dep := range j.Dependencies {
 				if cancelled[dep] {
 					j.State = StateCancelled
+					j.markEnded(time.Now())
 					j.Cancel()
 					cancelled[j.ID] = true
 					q.dropJobItemsLocked(j.ID)
@@ -838,6 +936,11 @@ func (q *Queue) CancelJob(id string) error {
 	if job.State != StatePending && job.State != StateInProgress && job.State != StatePaused {
 		return errors.New("job is not pending, in progress, or paused, cannot cancel")
 	}
+	if job.State == StateInProgress && job.preemptPause {
+		// A task noticing its preempt-paused context reports "cancelled";
+		// park it. (A user cancel clears the preempt first: UserCancelJob.)
+		return q.pauseJobLocked(job)
+	}
 	job.Cancel()
 
 	if job.State == StateInProgress {
@@ -848,7 +951,10 @@ func (q *Queue) CancelJob(id string) error {
 	}
 
 	job.State = StateCancelled
+	job.markEnded(time.Now())
 	delete(q.pauseRequests, id)
+	job.PauseRequested = false
+	job.preemptPause = false
 	q.dropJobItemsLocked(id)
 
 	// Save to database
@@ -880,10 +986,14 @@ func (q *Queue) ReleaseCancelled(id string) {
 }
 
 // RequestPause asks a running or pending job to pause. A pending job pauses
-// immediately (it just stops being claimable); an in-progress job keeps
-// running until its task polls PauseRequested at the next item boundary and
-// returns ErrPaused — so the current item's writes always complete first.
-func (q *Queue) RequestPause(id string) error {
+// immediately (it just stops being claimable). An in-progress job either
+// pauses GRACEFULLY — it keeps running until its task polls PauseRequested at
+// the next item boundary and returns ErrPaused, so the current item's writes
+// always complete first — or, with preempt, is stopped NOW: its context is
+// cancelled and the runner parks it as Paused once the task returns (the
+// interrupted item restarts on resume). Preempt is for tasks whose single
+// "item" is a long GPU run (reshoot, retouch…) that has no pause point.
+func (q *Queue) RequestPause(id string, preempt bool) error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -900,10 +1010,37 @@ func (q *Queue) RequestPause(id string) error {
 			q.pauseRequests = make(map[string]struct{})
 		}
 		q.pauseRequests[id] = struct{}{}
-		return nil
+		job.PauseRequested = true
+		if preempt && !job.preemptPause {
+			job.preemptPause = true
+			if job.Cancel != nil {
+				job.Cancel()
+			}
+		}
+		return serializeListUpdate("update", job)
 	default:
 		return errors.New("job is not pending or in progress, cannot pause")
 	}
+}
+
+// UserCancelJob is CancelJob for an explicit user/API cancel: it overrides a
+// pending preemptive pause so the job really ends Cancelled.
+func (q *Queue) UserCancelJob(id string) error {
+	q.mu.Lock()
+	if job, ok := q.Jobs[id]; ok {
+		job.preemptPause = false
+	}
+	q.mu.Unlock()
+	return q.CancelJob(id)
+}
+
+// PausePreempted reports whether the job's run was stopped by a preemptive
+// pause (so a cancelled context means "park", not "cancel").
+func (q *Queue) PausePreempted(id string) bool {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	job, ok := q.Jobs[id]
+	return ok && job.preemptPause
 }
 
 // PauseRequested reports whether a pause has been requested for the job.
@@ -939,6 +1076,13 @@ func (q *Queue) pauseJobLocked(job *Job) error {
 	}
 	job.State = StatePaused
 	delete(q.pauseRequests, job.ID)
+	job.PauseRequested = false
+	if job.preemptPause || (job.Ctx != nil && job.Ctx.Err() != nil) {
+		// The preempted run's context is spent; the resume needs a live one.
+		// Safe: the task has already returned when the runner parks the job.
+		job.Ctx, job.Cancel = context.WithCancel(context.Background())
+	}
+	job.preemptPause = false
 
 	if err := q.saveJobToDB(job); err != nil {
 		log.Printf("Failed to save job pause to database: %v", err)
@@ -966,6 +1110,7 @@ func (q *Queue) ResumeJob(id string) error {
 	q.firstPending = 0 // a job mid-history is claimable again
 	job.ClaimedAt = time.Time{}
 	delete(q.pauseRequests, id)
+	job.PauseRequested = false
 
 	if err := q.saveJobToDB(job); err != nil {
 		log.Printf("Failed to save job resume to database: %v", err)
@@ -1154,9 +1299,10 @@ func (q *Queue) CompleteJob(id string) error {
 	}
 
 	job.State = StateCompleted
-	job.CompletedAt = time.Now()
+	job.markEnded(time.Now())
 	q.decRunningLocked(job)
 	delete(q.pauseRequests, id)
+	job.PauseRequested = false
 	q.dropJobItemsLocked(id)
 
 	// Save to database
@@ -1317,6 +1463,7 @@ func (q *Queue) RemoveJob(id string) error {
 	}
 
 	delete(q.pauseRequests, id)
+	job.PauseRequested = false
 	q.dropJobItemsLocked(id)
 	delete(q.Jobs, id)
 	delete(q.dirty, id)

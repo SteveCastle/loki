@@ -3,6 +3,7 @@ package renderer
 import (
 	"embed"
 	"encoding/json"
+	"fmt"
 	"html"
 	"html/template"
 	"log"
@@ -31,6 +32,38 @@ const templateGlob = "templates/*.go.html"
 // Example usage in template: {{ formatTime .SomeTimeField }}
 func formatTime(t time.Time) string {
 	return t.Format("Jan 2, 2006 15:04:05")
+}
+
+// formatDuration renders a run duration compactly: "850ms", "42s",
+// "3m 12s", "1h 04m", "2d 3h". Mirrored by fmtRunDuration in the job
+// templates' JS and by formatDuration in src/renderer/job-timing.ts.
+func formatDuration(d time.Duration) string {
+	if d < 0 {
+		d = 0
+	}
+	if d < time.Second {
+		return fmt.Sprintf("%dms", d.Milliseconds())
+	}
+	s := int64(d / time.Second)
+	switch {
+	case s < 60:
+		return fmt.Sprintf("%ds", s)
+	case s < 3600:
+		return fmt.Sprintf("%dm %02ds", s/60, s%60)
+	case s < 86400:
+		return fmt.Sprintf("%dh %02dm", s/3600, (s%3600)/60)
+	default:
+		return fmt.Sprintf("%dd %dh", s/86400, (s%86400)/3600)
+	}
+}
+
+// runDuration formats end-start, or "" when either end is unset (a job that
+// never ran, or one still running — the page ticks those live).
+func runDuration(start, end time.Time) string {
+	if start.IsZero() || end.IsZero() {
+		return ""
+	}
+	return formatDuration(end.Sub(start))
 }
 
 // htmlAttr safely escapes a string for use in HTML attributes
@@ -72,6 +105,7 @@ func initTemplates() *template.Template {
 			"json":         jsonFunc,
 			"jobInputView": jobInputView,
 			"progressPct":  progressPct,
+			"runDuration":  runDuration,
 		}).
 		ParseFS(templatesFS, templateGlob)
 	if err != nil {

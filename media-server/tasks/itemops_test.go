@@ -296,7 +296,7 @@ func TestRunItemOpsPausePreservesProgress(t *testing.T) {
 				Process: func(ctx context.Context, path, _ string) (*ItemCommit, error) {
 					// Request pause during the first item: the feeder must stop
 					// before the next item while this one's commit still lands.
-					_ = q.RequestPause(jobID)
+					_ = q.RequestPause(jobID, false)
 					return &ItemCommit{Commit: func() error { return nil }, Detail: "done"}, nil
 				},
 			}, nil

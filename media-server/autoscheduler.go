@@ -455,7 +455,7 @@ func (s *autoScheduler) tick() {
 	// ---- mode off: keep our job parked, do nothing else -------------------
 	if s.mode != "auto" && !s.forced {
 		if job != nil && (job.State == jobqueue.StateInProgress || job.State == jobqueue.StatePending) {
-			if err := q.RequestPause(job.ID); err == nil {
+			if err := q.RequestPause(job.ID, false); err == nil {
 				s.pausedByUs = true
 			}
 		}
@@ -508,7 +508,7 @@ func (s *autoScheduler) tick() {
 	switch {
 	case !run:
 		if job != nil && (job.State == jobqueue.StateInProgress || job.State == jobqueue.StatePending) {
-			if err := q.RequestPause(job.ID); err == nil {
+			if err := q.RequestPause(job.ID, false); err == nil {
 				s.pausedByUs = true
 				s.lastPause = time.Now()
 			}

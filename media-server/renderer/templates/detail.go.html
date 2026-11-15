@@ -537,6 +537,74 @@
         // rowHeight 24px matches CSS (24px height)
         const term = new VirtualTerminal('terminal-scroller', 'terminal-phantom', 'terminal-viewport', initialLines, 24);
 
+        // Run timing (started / ended / duration). Zero Go times serialize
+        // as year 1, so anything at or before the epoch means "unset".
+        function jobTimeMs(iso) {
+          var t = iso ? Date.parse(iso) : NaN;
+          return t > 0 ? t : 0;
+        }
+        function fmtJobTime(ms) {
+          var d = new Date(ms);
+          var pad = function (n) { return String(n).padStart(2, '0'); };
+          var mon = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getMonth()];
+          return mon + ' ' + d.getDate() + ', ' + d.getFullYear() + ' ' +
+            pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+        }
+        function fmtRunDuration(ms) {
+          if (!(ms >= 0)) ms = 0;
+          if (ms < 1000) return Math.round(ms) + 'ms';
+          var s = Math.floor(ms / 1000);
+          var pad = function (n) { return String(n).padStart(2, '0'); };
+          if (s < 60) return s + 's';
+          if (s < 3600) return Math.floor(s / 60) + 'm ' + pad(s % 60) + 's';
+          if (s < 86400)
+            return Math.floor(s / 3600) + 'h ' + pad(Math.floor((s % 3600) / 60)) + 'm';
+          return Math.floor(s / 86400) + 'd ' + Math.floor((s % 86400) / 3600) + 'h';
+        }
+        function setRow(rowId, show) {
+          var row = document.getElementById(rowId);
+          if (row) row.style.display = show ? '' : 'none';
+        }
+        function updateRunTiming(job) {
+          var started = jobTimeMs(job.started_at);
+          var ended = jobTimeMs(job.completed_at);
+          var startedEl = document.getElementById('startedAt');
+          var endedEl = document.getElementById('completedAt');
+          var durEl = document.getElementById('duration');
+          var durLabel = document.getElementById('durationLabel');
+          setRow('startedAtRow', !!started);
+          setRow('completedAtRow', !!ended);
+          setRow('durationRow', !!started);
+          if (startedEl) startedEl.innerText = started ? fmtJobTime(started) : '';
+          if (endedEl) endedEl.innerText = ended ? fmtJobTime(ended) : '';
+          if (!durEl) return;
+          if (started && ended) {
+            durEl.removeAttribute('data-run-start');
+            durEl.innerText =
+              typeof job.duration_ms === 'number'
+                ? fmtRunDuration(job.duration_ms)
+                : fmtRunDuration(ended - started);
+            if (durLabel) durLabel.innerText = 'Duration:';
+          } else if (started && job.state === 'in_progress') {
+            durEl.setAttribute('data-run-start', String(started));
+            durEl.innerText = fmtRunDuration(Date.now() - started);
+            if (durLabel) durLabel.innerText = 'Elapsed:';
+          } else {
+            // Paused / re-queued: stop ticking, keep the last value.
+            durEl.removeAttribute('data-run-start');
+            if (durLabel) durLabel.innerText = 'Elapsed:';
+          }
+        }
+        function tickElapsed() {
+          var now = Date.now();
+          document.querySelectorAll('[data-run-start]').forEach(function (el) {
+            var start = Number(el.getAttribute('data-run-start'));
+            if (start > 0) el.textContent = fmtRunDuration(now - start);
+          });
+        }
+        tickElapsed();
+        setInterval(tickElapsed, 1000);
+
         const STREAM_URL = '/stream';
         const EVENT_STDOUT = 'stdout-{{.Job.ID}}';
         const EVENT_UPDATE = 'update';
@@ -763,14 +831,11 @@
                   if (resumeBtnEl) resumeBtnEl.style.display = 'none';
                 }
 
-                if (data.job.completed_at) {
-                  var completedAt = document.getElementById('completedAt');
-                  if (completedAt)
-                    completedAt.innerText = data.job.completed_at;
-                }
-                if (data.job.errored_at) {
+                updateRunTiming(data.job);
+                var erroredMs = jobTimeMs(data.job.errored_at);
+                if (erroredMs) {
                   var erroredAt = document.getElementById('erroredAt');
-                  if (erroredAt) erroredAt.innerText = data.job.errored_at;
+                  if (erroredAt) erroredAt.innerText = fmtJobTime(erroredMs);
                 }
               }
             });

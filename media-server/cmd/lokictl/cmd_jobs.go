@@ -19,9 +19,11 @@ type jobRow struct {
 	Dependencies  []string `json:"dependencies"`
 	State         string   `json:"state"`
 	CreatedAt     any      `json:"created_at"`
+	StartedAt     any      `json:"started_at"`
 	ClaimedAt     any      `json:"claimed_at"`
 	CompletedAt   any      `json:"completed_at"`
 	ErroredAt     any      `json:"errored_at"`
+	DurationMs    *int64   `json:"duration_ms"`
 	OutputFiles   []string `json:"output_files"`
 	SourceFiles   []string `json:"source_files"`
 	WorkflowID    string   `json:"workflow_id"`

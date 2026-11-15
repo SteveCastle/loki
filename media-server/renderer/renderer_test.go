@@ -432,3 +432,29 @@ func TestLoggerWithDifferentMethods(t *testing.T) {
 		})
 	}
 }
+
+func TestFormatDuration(t *testing.T) {
+	tests := []struct {
+		in   time.Duration
+		want string
+	}{
+		{-time.Second, "0ms"},
+		{850 * time.Millisecond, "850ms"},
+		{42 * time.Second, "42s"},
+		{3*time.Minute + 2*time.Second, "3m 02s"},
+		{time.Hour + 4*time.Minute + 59*time.Second, "1h 04m"},
+		{50 * time.Hour, "2d 2h"},
+	}
+	for _, tt := range tests {
+		if got := formatDuration(tt.in); got != tt.want {
+			t.Errorf("formatDuration(%v) = %q; want %q", tt.in, got, tt.want)
+		}
+	}
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	if got := runDuration(start, time.Time{}); got != "" {
+		t.Errorf("runDuration without end = %q; want empty", got)
+	}
+	if got := runDuration(start, start.Add(75*time.Second)); got != "1m 15s" {
+		t.Errorf("runDuration = %q; want 1m 15s", got)
+	}
+}

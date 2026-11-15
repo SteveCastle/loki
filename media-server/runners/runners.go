@@ -108,7 +108,13 @@ func (r *Runners) runJob(j *jobqueue.Job) {
 				// If context is canceled, prefer Cancelled state
 				select {
 				case <-j.Ctx.Done():
-					_ = r.queue.CancelJob(j.ID)
+					// A preemptive pause cancels the run's context too:
+					// park it for resume rather than cancelling the job.
+					if r.queue.PausePreempted(j.ID) {
+						_ = r.queue.PauseJob(j.ID)
+					} else {
+						_ = r.queue.CancelJob(j.ID)
+					}
 				default:
 					_ = r.queue.ErrorJob(j.ID)
 				}
@@ -128,6 +134,12 @@ func (r *Runners) runJob(j *jobqueue.Job) {
 func (r *Runners) finalizeIfRunning(id string, taskErr error) {
 	snap, _, ok := r.queue.JobSnapshot(id, 0)
 	if !ok || snap.State != jobqueue.StateInProgress {
+		return
+	}
+	if r.queue.PausePreempted(id) {
+		// Stopped by a preemptive pause (the task may even have returned
+		// nil after its context died): park it, never "complete" it.
+		_ = r.queue.PauseJob(id)
 		return
 	}
 	if taskErr != nil {
