@@ -101,6 +101,7 @@ var reshootOptions = []TaskOption{
 	{Name: "animate", Label: "Living Photo", Type: "bool", Default: false, Description: "Animate the first image with natural ambient life (the CLI writes the prompt; set Describe)"},
 	{Name: "describe", Label: "Describe Subject", Type: "string", Default: "", Description: "With Living Photo: one sentence naming the subject and setting"},
 	{Name: "shake", Label: "Camera Shake", Type: "enum", Choices: []string{"none", "subtle", "handheld"}, Default: "subtle", Description: "With Living Photo: camera behaviour"},
+	{Name: "loop", Label: "Seamless Loop", Type: "bool", Default: false, Description: "With Living Photo: a frame-perfect loop: the clip ends on the photo again, every motion is a cycle and the camera drifts back, so the last frame flows into the first"},
 	{Name: "prompt", Label: "Prompt", Type: "string", Default: "", Description: "Full prompt (use <Picture 1>, <Video 1>, <Audio 1> tags); with Living Photo it adds direction"},
 	{Name: "duration", Label: "Duration (s)", Type: "number", Default: 5.0, Description: "Seconds (0.25-15.08; snapped up to the model's frame grid)"},
 	{Name: "size", Label: "Size", Type: "string", Default: "", Description: "Output size WxH (multiples of 32); empty = native / megapixels"},
@@ -109,6 +110,7 @@ var reshootOptions = []TaskOption{
 	{Name: "model", Label: "Model", Type: "enum", Choices: []string{reshootModelH3, reshootModelFast}, Default: reshootModelH3, Description: "h3 = MiniMax H3 (best quality, 20 steps); fast = FastH3 Omni, distilled for 8 steps: about 2.5x faster end to end (4-5x faster sampling), may be lower quality (needs the fasth3-omni dependency besides MiniMax H3's)"},
 	{Name: "dit", Label: "Diffusion Model", Type: "string", Default: "", Description: "One of the server's extra reshoot models (config.json reshootModels, by file name): runs that file with its own recipe instead of H3 / FastH3 Omni; empty = the model above"},
 	{Name: "steps", Label: "Steps", Type: "number", Default: 0.0, Description: "Sampling steps (4-60); 0 = the model's default (20 for h3, 8 for fast)"},
+	{Name: "passes", Label: "Passes", Type: "number", Default: 2.0, Description: "2 = best quality: a low-resolution pass, a learned latent upscale, then a short refine at the output size (the ErosMax two-pass workflow; needs the h3-latent-upscaler dependency); 1 = fast: one pass at the output size"},
 	{Name: "seed", Label: "Seed", Type: "number", Default: -1.0, Description: "Noise seed; -1 = random (logged)"},
 	{Name: "refsize", Label: "Reference Image Size", Type: "enum", Choices: []string{"match", "max"}, Default: "match", Description: "match = scaled to the generation's area; max = up to 2048px (better identity, much slower)"},
 	{Name: "noaudio", Label: "No Audio", Type: "bool", Default: false, Description: "Do not generate/mux audio"},
@@ -122,16 +124,21 @@ type reshootParams struct {
 	Model string // reshootModelH3 | reshootModelFast
 	// Dit is a configured extra model's file (the `dit` option, checked by
 	// applyReshootDit), passed as --dit; empty = Model's own file.
-	Dit          string
-	Animate      bool
-	Describe     string
-	Shake        string
-	Prompt       string
-	Duration     float64
-	Size         string
-	Native       bool
-	Megapixels   float64
-	Steps        int
+	Dit      string
+	Animate  bool
+	Describe string
+	Shake    string
+	// Loop (with Animate) asks the engine for a seamless loop (--loop).
+	Loop       bool
+	Prompt     string
+	Duration   float64
+	Size       string
+	Native     bool
+	Megapixels float64
+	Steps      int
+	// Passes is 2 (two-pass: low-res pass, latent upscale, refine) or 1; 0 =
+	// the engine predates --passes, so the flag is left out (one pass).
+	Passes       int
 	Seed         int64
 	RefSize      string
 	NoAudio      bool
@@ -152,6 +159,7 @@ func reshootParamsFromOptions(opts map[string]any) reshootParams {
 		Animate:      optBool(opts, "animate"),
 		Describe:     strings.TrimSpace(optString(opts, "describe")),
 		Shake:        strings.ToLower(strings.TrimSpace(optString(opts, "shake"))),
+		Loop:         optBool(opts, "loop"),
 		Prompt:       strings.TrimSpace(optString(opts, "prompt")),
 		Size:         strings.TrimSpace(optString(opts, "size")),
 		Native:       true,
@@ -193,6 +201,10 @@ func reshootParamsFromOptions(opts map[string]any) reshootParams {
 		steps = reshootDefaultSteps(p.Model)
 	}
 	p.Steps = clampInt(steps, 4, 60)
+	p.Passes = 2
+	if int(optFloat(opts, "passes")) == 1 {
+		p.Passes = 1
+	}
 	p.Seed = -1
 	if _, ok := opts["seed"]; ok {
 		p.Seed = int64(optFloat(opts, "seed"))
@@ -259,6 +271,9 @@ func buildReshootArgs(p reshootParams, images, videos, audios []string, output, 
 			args = append(args, "--describe="+p.Describe)
 		}
 		args = append(args, "--shake", p.Shake)
+		if p.Loop {
+			args = append(args, "--loop")
+		}
 	}
 	if promptFile != "" {
 		args = append(args, "--prompt-file", promptFile)
@@ -280,6 +295,9 @@ func buildReshootArgs(p reshootParams, images, videos, audios []string, output, 
 		args = append(args, "--megapixels", formatFloatArg(p.Megapixels))
 	}
 	args = append(args, "--steps", strconv.Itoa(p.Steps))
+	if p.Passes > 0 {
+		args = append(args, "--passes", strconv.Itoa(p.Passes))
+	}
 	if p.Seed >= 0 {
 		args = append(args, "--seed", strconv.FormatInt(p.Seed, 10))
 	}
@@ -350,7 +368,7 @@ func reshootTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 		return fail(err.Error(), err)
 	}
 
-	bin, err := resolveAITool(ctx, q, j.ID, tag, reshootSpec(p.Model, p.Dit))
+	bin, err := resolveAITool(ctx, q, j.ID, tag, reshootJobSpec(p))
 	if err != nil {
 		return fail(err.Error(), err)
 	}
@@ -365,6 +383,20 @@ func reshootTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 	}
 	if p.Dit != "" {
 		q.PushJobStdout(j.ID, fmt.Sprintf("%s: model %s (%s recipe), %d steps", tag, p.Dit, p.Model, p.Steps))
+	}
+	if p.Animate && p.Loop {
+		if !aiToolHelpHas(ctx, bin, "--loop") {
+			return fail("this loki-reshoot is too old for seamless loops; update it (Dependencies page, or your own build on PATH) or turn Loop off", nil)
+		}
+		q.PushJobStdout(j.ID, tag+": seamless loop")
+	}
+	if p.Passes == 2 {
+		if aiToolHelpHas(ctx, bin, "--passes") {
+			q.PushJobStdout(j.ID, tag+": two passes (low-resolution pass, latent upscale, refine)")
+		} else {
+			q.PushJobStdout(j.ID, tag+": this loki-reshoot predates two-pass generation; running one pass (update it for the best-quality mode)")
+			p.Passes = 0
+		}
 	}
 
 	res, rerr := resolveJobItemsRaw(j, q)

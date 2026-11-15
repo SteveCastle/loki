@@ -17,7 +17,7 @@ use std::sync::Arc;
 
 const CONV_SMEM: u32 = 4 * (256 + 128) * 32 * 2; // 96 KB
 /// Pick the block-tile height: 256 rows (16 warps) unless that leaves fewer than ~2 waves of blocks.
-fn tile_cfg(m: usize, n: usize, sms: usize) -> (usize, u32, u32, &'static str) {
+pub(crate) fn tile_cfg(m: usize, n: usize, sms: usize) -> (usize, u32, u32, &'static str) {
     let blocks256 = ((m + 255) / 256) * ((n + 127) / 128);
     if blocks256 >= 2 * sms {
         (256, 512, 4 * (256 + 128) * 32 * 2, "")

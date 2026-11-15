@@ -2,6 +2,11 @@
 //! references -> Qwen3-VL conditioning + VAE latents -> DiT sampling (res_multistep, or Euler for the distilled FastH3)
 //! -> video/audio decode -> mp4.
 //!
+//! Two-pass mode (`Request::two_pass`, the ErosMax "two-pass optimized" ComfyUI workflow): pass 1 samples at a low
+//! resolution, the learned latent upscaler (`upscaler`) enlarges the video latent to the output size, and pass 2 re-noises
+//! it to a partial-denoise sigma and refines it in a few steps. The soundtrack is pass 1's (pass 2 still sees the
+//! re-noised audio, as the joint model needs it, but its audio output is discarded, as in the workflow).
+//!
 //! Phases keep GPU memory bounded on a 24 GB card: text encoder (evicted) -> VAE encode (evicted) -> DiT (evicted) -> VAE decode.
 use crate::cuda::Device;
 use crate::dit_h3::{Dit, DitInputs, RefBlock, RefKind};
@@ -11,6 +16,7 @@ use crate::media::{self, Ffmpeg, VideoWriter, AUDIO_SR, FPS};
 use crate::sampler;
 use crate::te_h3::{RefItem, TextEncoder};
 use crate::tensor::{DType, Tensor};
+use crate::upscaler::Upscaler;
 use crate::vae_audio::AudioVae;
 use crate::vae_video::VideoVae;
 use anyhow::{ensure, Context, Result};
@@ -48,6 +54,25 @@ pub enum RefImageSize {
     Max,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SamplerKind {
+    Euler,
+    ResMultistep,
+    ErSde,
+}
+
+/// The refine stage of a two-pass run.
+#[derive(Clone, Debug)]
+pub struct TwoPass {
+    /// pass 1 canvas (multiples of 32); the output canvas is the request's width x height
+    pub first_width: usize,
+    pub first_height: usize,
+    pub refine_steps: usize,
+    /// ComfyUI BasicScheduler denoise of the refine schedule (`simple`)
+    pub refine_denoise: f64,
+    pub refine_sampler: SamplerKind,
+}
+
 #[derive(Clone, Debug)]
 pub struct Request {
     pub prompt: String,
@@ -68,6 +93,10 @@ pub struct Request {
     pub sparse: bool,
     /// A few-step distilled (turbo) model: plain Euler steps instead of res_multistep. Implied by PDD output heads.
     pub distilled: bool,
+    /// Sampler of the (first) pass; None = the recipe's (Euler when distilled, else res_multistep)
+    pub sampler: Option<SamplerKind>,
+    pub scheduler: sampler::Scheduler,
+    pub two_pass: Option<TwoPass>,
     pub crf: u32,
     pub out: PathBuf,
 }
@@ -78,6 +107,8 @@ pub struct Paths {
     pub text_encoder: PathBuf,
     pub video_vae: PathBuf,
     pub audio_vae: PathBuf,
+    /// the latent upscaler (two-pass runs only)
+    pub upscaler: Option<PathBuf>,
 }
 
 // ---- geometry helpers (ports of nodes_minimax_h3.py) --------------------------------------------------------
@@ -207,10 +238,22 @@ pub fn run(dev: Arc<Device>, req: &Request, paths: &Paths, ff: &Ffmpeg, record: 
     let (frame_count, latent_t, audio_t) = temporal_shape(req.frames);
     check_limits(req.width, req.height, frame_count)?;
     let (lh, lw) = (req.height / 16, req.width / 16);
-    crate::info!(
-        "output: {}x{} @ {} fps, {} frames ({:.2} s), latent {}x{}x{} (+{} audio frames), {} steps, seed {}",
-        req.width, req.height, FPS, frame_count, frame_count as f64 / FPS as f64, latent_t, lh, lw, audio_t, req.steps, req.seed
-    );
+    // the canvas the references are sized for and pass 1 samples on (the workflow's MiniMaxH3ReferenceToVideo runs at
+    // the first-pass size)
+    let (gen_w, gen_h) = req.two_pass.as_ref().map_or((req.width, req.height), |tp| (tp.first_width, tp.first_height));
+    if let Some(tp) = &req.two_pass {
+        check_limits(gen_w, gen_h, frame_count)?;
+        ensure!(gen_w <= req.width && gen_h <= req.height, "two-pass: the first pass ({gen_w}x{gen_h}) must not be larger than the output ({}x{})", req.width, req.height);
+        crate::info!(
+            "output: {}x{} @ {} fps, {} frames ({:.2} s), latent {}x{}x{} (+{} audio frames), seed {}; two passes: {} steps at {gen_w}x{gen_h}, latent upscale, {} refine steps (denoise {})",
+            req.width, req.height, FPS, frame_count, frame_count as f64 / FPS as f64, latent_t, lh, lw, audio_t, req.seed, req.steps, tp.refine_steps, tp.refine_denoise
+        );
+    } else {
+        crate::info!(
+            "output: {}x{} @ {} fps, {} frames ({:.2} s), latent {}x{}x{} (+{} audio frames), {} steps, seed {}",
+            req.width, req.height, FPS, frame_count, frame_count as f64 / FPS as f64, latent_t, lh, lw, audio_t, req.steps, req.seed
+        );
+    }
 
     // ---- 1. load / resize references (CPU) -----------------------------------------------------------------
     let mut images: Vec<Image> = Vec::new();
@@ -221,7 +264,7 @@ pub fn run(dev: Arc<Device>, req: &Request, paths: &Paths, ff: &Ffmpeg, record: 
             crate::info!("first reference {}x{} fitted to the {}x{} canvas ({:?}{})", img.w, img.h, req.width, req.height, f, if padded { ", black bars to be filled by the model" } else { "" });
             img = fitted;
         }
-        let (tw, th) = ref_image_dims(img.w, img.h, req.width, req.height, req.ref_image_size);
+        let (tw, th) = ref_image_dims(img.w, img.h, gen_w, gen_h, req.ref_image_size);
         let r = img.resize_lanczos(tw, th);
         images.push(Image { w: tw, h: th, rgb: r.data });
     }
@@ -330,49 +373,92 @@ pub fn run(dev: Arc<Device>, req: &Request, paths: &Paths, ff: &Ffmpeg, record: 
         let t0 = std::time::Instant::now();
         // VSA from the first step by default (as FastH3 is trained); LOKI_VSA_SIGMA=s keeps steps above sigma s dense
         let dit = load_dit(&dev, &paths.dit, req.sparse)?;
-        let inp = DitInputs {
-            text: &cond.context,
-            text_tags: &cond.tags,
-            refs: &refs,
-            latent_t,
-            latent_h: lh,
-            latent_w: lw,
-            audio_t,
-            seed: req.seed,
-            cond_noise_aug: None,
-        };
-        let mut run = dit.prepare(&inp).context("preparing DiT run")?;
-        let xv = sampler::randn(&dev, &[24, latent_t, lh, lw], req.seed)?;
-        let xa = sampler::randn(&dev, &[32, 2, audio_t], req.seed ^ 0x9E37_79B9_7F4A_7C15)?;
-        let sigmas = sampler::simple_sigmas(req.steps, sampler::SHIFT_VIDEO);
-        run.sigmas = sigmas.clone();
         // a few-step distilled model (--model fast, or any with PDD heads) is trained for plain Euler steps; the base
         // model for res_multistep
         let distilled = req.distilled || dit.pdd_heads() > 1;
+        let first_sampler = req.sampler.unwrap_or(if distilled { SamplerKind::Euler } else { SamplerKind::ResMultistep });
+        let refine_steps = req.two_pass.as_ref().map_or(0, |tp| tp.refine_steps);
+        let total_steps = req.steps + refine_steps;
         let show_bar = std::io::IsTerminal::is_terminal(&std::io::stderr()) && !crate::log::quiet();
-        let bar = if show_bar { indicatif::ProgressBar::new(req.steps as u64) } else { indicatif::ProgressBar::hidden() };
+        let bar = if show_bar { indicatif::ProgressBar::new(total_steps as u64) } else { indicatif::ProgressBar::hidden() };
         bar.set_style(indicatif::ProgressStyle::with_template("  sampling {bar:40} {pos}/{len} steps  {elapsed_precise} eta {eta_precise}").unwrap());
-        let sample = if distilled { sampler::euler } else { sampler::res_multistep };
-        sample(
-            &dev,
-            &sigmas,
-            &xv,
-            &xa,
-            &mut |v, a, sigma, ov, oa| {
+        // one sampling pass over `sigmas` at latent size (h, w); progress counts on from `done`
+        let sample_pass = |h: usize, w: usize, xv: &Tensor, xa: &Tensor, sigmas: &[f64], kind: SamplerKind, done: usize| -> Result<()> {
+            let inp = DitInputs {
+                text: &cond.context,
+                text_tags: &cond.tags,
+                refs: &refs,
+                latent_t,
+                latent_h: h,
+                latent_w: w,
+                audio_t,
+                seed: req.seed,
+                cond_noise_aug: None,
+            };
+            let mut run = dit.prepare(&inp).context("preparing DiT run")?;
+            // the sigmas the model is evaluated at (PDD heads pick their interval from this schedule)
+            run.sigmas = if kind == SamplerKind::ErSde { sampler::er_sde_sigmas(sigmas) } else { sigmas.to_vec() };
+            let mut model = |v: &Tensor, a: &Tensor, sigma: f32, ov: &Tensor, oa: &Tensor| -> Result<()> {
                 crate::worker::check_cancel()?;
                 dit.forward(&mut run, v, a, sigma, ov, oa)
-            },
-            &|i, total| {
-                bar.set_position(i as u64);
+            };
+            let progress = |i: usize, _n: usize| {
+                bar.set_position((done + i) as u64);
                 if !show_bar {
-                    crate::info!("step {i}/{total}"); // machine-readable progress for callers that capture stderr
+                    crate::info!("step {}/{total_steps}", done + i); // machine-readable progress for callers that capture stderr
                 }
-            },
-        )?;
+            };
+            match kind {
+                SamplerKind::Euler => sampler::euler(&dev, sigmas, xv, xa, &mut model, &progress),
+                SamplerKind::ResMultistep => sampler::res_multistep(&dev, sigmas, xv, xa, &mut model, &progress),
+                SamplerKind::ErSde => sampler::er_sde(&dev, sigmas, xv, xa, req.seed ^ (done as u64), &mut model, &progress),
+            }
+        };
+        let (lh1, lw1) = (gen_h / 16, gen_w / 16);
+        let xv = sampler::randn(&dev, &[24, latent_t, lh1, lw1], req.seed)?;
+        let xa = sampler::randn(&dev, &[32, 2, audio_t], req.seed ^ 0x9E37_79B9_7F4A_7C15)?;
+        let sigmas = sampler::schedule(req.scheduler, req.steps, 1.0, sampler::SHIFT_VIDEO);
+        sample_pass(lh1, lw1, &xv, &xa, &sigmas, first_sampler, 0)?;
+        let out = match &req.two_pass {
+            None => (xv, xa),
+            Some(tp) => {
+                crate::info!("pass 1: {} steps at {gen_w}x{gen_h} in {:.1}s", req.steps, t0.elapsed().as_secs_f64());
+                let t1 = std::time::Instant::now();
+                let up_path = paths.upscaler.as_ref().context("two-pass run without a latent upscaler")?;
+                let xv_up = {
+                    let up = Upscaler::load(dev.clone(), up_path).context("loading the latent upscaler")?;
+                    up.upscale(&xv, lh, lw).context("latent upscale")?
+                };
+                drop(xv);
+                dev.sync()?;
+                crate::info!("latent upscale {lw1}x{lh1} -> {lw}x{lh} in {:.1}s", t1.elapsed().as_secs_f64());
+                // LOKI_TWO_PASS_SKIP_REFINE (diagnostics): decode the upscaled pass-1 latent as is
+                if std::env::var_os("LOKI_TWO_PASS_SKIP_REFINE").is_some() {
+                    crate::info!("LOKI_TWO_PASS_SKIP_REFINE: no pass 2");
+                } else {
+                    // pass 1's soundtrack is the result's; pass 2 refines a re-noised copy alongside the video
+                    let xa2 = Tensor::new(&dev, DType::F32, &xa.shape)?;
+                    dev.dtod(xa2.ptr, xa.ptr, xa.bytes())?;
+                    let sig2 = sampler::schedule(sampler::Scheduler::Simple, tp.refine_steps, tp.refine_denoise, sampler::SHIFT_VIDEO);
+                    // (randn uploads synchronously: the stream must be idle, see upscaler.rs)
+                    dev.sync()?;
+                    let nv = sampler::randn(&dev, &xv_up.shape, req.seed ^ 0x2BA5_5000_0000_0001)?;
+                    let na = sampler::randn(&dev, &xa2.shape, req.seed ^ 0x2BA5_5000_0000_0002)?;
+                    sampler::noise_latent(&dev, &xv_up, &nv, sig2[0])?;
+                    sampler::noise_latent(&dev, &xa2, &na, sig2[0])?;
+                    dev.sync()?;
+                    drop((nv, na));
+                    let t2 = std::time::Instant::now();
+                    sample_pass(lh, lw, &xv_up, &xa2, &sig2, tp.refine_sampler, req.steps)?;
+                    crate::info!("pass 2: {} refine steps at {}x{} (from sigma {:.3}) in {:.1}s", tp.refine_steps, req.width, req.height, sig2[0], t2.elapsed().as_secs_f64());
+                }
+                (xv_up, xa)
+            }
+        };
         bar.finish_and_clear();
-        crate::info!("sampled {} steps in {:.1}s", req.steps, t0.elapsed().as_secs_f64());
+        crate::info!("sampled {} steps in {:.1}s", total_steps, t0.elapsed().as_secs_f64());
         dit.prof.report();
-        (xv, xa)
+        out
     }; // DiT dropped
     dev.sync()?;
     drop(refs);

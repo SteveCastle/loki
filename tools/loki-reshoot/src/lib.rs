@@ -16,6 +16,7 @@ pub mod models;
 pub mod pipeline;
 pub mod presets;
 pub mod sampler;
+pub mod upscaler;
 pub mod te_h3;
 pub mod vae_audio;
 pub mod vae_video;

@@ -1,5 +1,5 @@
-//! Flow-matching schedule (ModelSamplingAV shift + `simple` scheduler) and the `res_multistep` (ComfyUI k_diffusion,
-//! eta = 0) and `euler` samplers, operating on the packed (video, carried-audio) latent pair.
+//! Flow-matching schedules (ModelSamplingAV shift + the `simple` / `sgm_uniform` schedulers, partial denoise) and the
+//! `res_multistep` (ComfyUI k_diffusion, eta = 0), `euler` and `er_sde` samplers, operating on the packed (video, carried-audio) latent pair.
 use crate::cuda::{Arg, Device};
 use crate::tensor::{DType, Tensor};
 use anyhow::Result;
@@ -24,6 +24,45 @@ pub fn simple_sigmas(steps: usize, shift: f64) -> Vec<f64> {
     let mut sig: Vec<f64> = (0..steps).map(|x| table[table.len() - 1 - (x as f64 * ss) as usize] as f64).collect();
     sig.push(0.0);
     sig
+}
+
+/// ComfyUI `sgm_uniform` (normal_scheduler with sgm=True) on ModelSamplingDiscreteFlow(shift): timesteps linear from
+/// timestep(sigma_max) = 1000 to timestep(sigma_min) = 1000 * shift(0.001), `steps` of them (the endpoint dropped), each
+/// mapped back through the shifted sigma, then 0.
+pub fn sgm_uniform_sigmas(steps: usize, shift: f64) -> Vec<f64> {
+    let sigma_min = snr_shift(shift, 1.0 / 1000.0) as f32 as f64;
+    let (start, end) = (1000.0f64, sigma_min * 1000.0);
+    let mut sig: Vec<f64> = (0..steps)
+        .map(|i| {
+            // torch.linspace(start, end, steps + 1) in f32
+            let ts = (start + (end - start) * i as f64 / steps as f64) as f32 as f64;
+            snr_shift(shift, ts / 1000.0) as f32 as f64
+        })
+        .collect();
+    sig.push(0.0);
+    sig
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Scheduler {
+    Simple,
+    SgmUniform,
+}
+
+/// ComfyUI `BasicScheduler(scheduler, steps, denoise)`: below denoise 1 the schedule of int(steps / denoise) steps is
+/// computed and its last `steps` steps are taken (so the run starts at that schedule's sigma, not at 1).
+pub fn schedule(kind: Scheduler, steps: usize, denoise: f64, shift: f64) -> Vec<f64> {
+    let total = if denoise < 1.0 { ((steps as f64 / denoise.max(1e-6)) as usize).max(steps) } else { steps };
+    let all = match kind {
+        Scheduler::Simple => simple_sigmas(total, shift),
+        Scheduler::SgmUniform => sgm_uniform_sigmas(total, shift),
+    };
+    all[all.len() - (steps + 1)..].to_vec()
+}
+
+/// Flow-matching `noise_scaling` (ComfyUI CONST): x = sigma * noise + (1 - sigma) * latent, in place on `latent`.
+pub fn noise_latent(dev: &Device, latent: &Tensor, noise: &Tensor, sigma: f64) -> Result<()> {
+    axpby3(dev, latent, latent, noise, None, (1.0 - sigma) as f32, sigma as f32, 0.0)
 }
 
 /// Standard-normal noise on the device (f32), reproducible from `seed`.
@@ -106,9 +145,115 @@ pub fn res_multistep(dev: &Device, sigmas: &[f64], xv: &Tensor, xa: &Tensor, mod
     Ok(())
 }
 
+/// ComfyUI `er_sde` (VP ER-SDE-Solver-3, s_noise 1, max_stage 3) on the flow (CONST) parameterization: stochastic, so
+/// fresh noise is drawn after every step but the last (seeded from `seed`). This is the two-pass workflow's sampler.
+pub fn er_sde(dev: &Device, sigmas: &[f64], xv: &Tensor, xa: &Tensor, seed: u64, model: &mut Model, progress: &dyn Fn(usize, usize)) -> Result<()> {
+    let steps = sigmas.len() - 1;
+    let sig = er_sde_sigmas(sigmas);
+    // half-logSNR = -logit(sigma); er_lambda = exp(-half_log_snr) = sigma / (1 - sigma)
+    let lam: Vec<f64> = sig.iter().map(|&s| s / (1.0 - s)).collect();
+    let ns = |x: f64| x * ((x.powf(0.3)).exp() + 10.0);
+    let points = 200usize;
+    let mk = |t: &Tensor| Tensor::new(dev, DType::F32, &t.shape);
+    let (vv, va) = (mk(xv)?, mk(xa)?);
+    let (mut dv, mut da) = (mk(xv)?, mk(xa)?); // denoised
+    let (mut odv, mut oda) = (mk(xv)?, mk(xa)?); // old denoised
+    let (mut ddv, mut dda) = (mk(xv)?, mk(xa)?); // denoised_d
+    let (mut oddv, mut odda) = (mk(xv)?, mk(xa)?); // old denoised_d
+    for i in 0..steps {
+        let s = sig[i];
+        model(xv, xa, s as f32, &vv, &va)?;
+        axpby3(dev, &dv, xv, &vv, None, 1.0, -(s as f32), 0.0)?;
+        axpby3(dev, &da, xa, &va, None, 1.0, -(s as f32), 0.0)?;
+        let stage = (i + 1).min(3);
+        if sig[i + 1] == 0.0 {
+            dev.dtod(xv.ptr, dv.ptr, xv.bytes())?;
+            dev.dtod(xa.ptr, da.ptr, xa.bytes())?;
+        } else {
+            let (ls, lt) = (lam[i], lam[i + 1]);
+            let alpha_s = sig[i] / ls;
+            let alpha_t = sig[i + 1] / lt;
+            let r_alpha = alpha_t / alpha_s;
+            let r = ns(lt) / ns(ls);
+            // stage 1 (Euler)
+            let (a1, b1) = ((r_alpha * r) as f32, (alpha_t * (1.0 - r)) as f32);
+            axpby3(dev, xv, xv, &dv, None, a1, b1, 0.0)?;
+            axpby3(dev, xa, xa, &da, None, a1, b1, 0.0)?;
+            if stage >= 2 {
+                let dt = lt - ls;
+                let step = -dt / points as f64;
+                let pos: Vec<f64> = (0..points).map(|k| lt + k as f64 * step).collect();
+                let s_int: f64 = pos.iter().map(|&p| 1.0 / ns(p)).sum::<f64>() * step;
+                // denoised_d = (denoised - old_denoised) / (ls - lam[i-1])
+                let inv = (1.0 / (ls - lam[i - 1])) as f32;
+                axpby3(dev, &ddv, &dv, &odv, None, inv, -inv, 0.0)?;
+                axpby3(dev, &dda, &da, &oda, None, inv, -inv, 0.0)?;
+                let c2 = (alpha_t * (dt + s_int * ns(lt))) as f32;
+                axpby3(dev, xv, xv, &ddv, None, 1.0, c2, 0.0)?;
+                axpby3(dev, xa, xa, &dda, None, 1.0, c2, 0.0)?;
+                if stage >= 3 {
+                    let s_u: f64 = pos.iter().map(|&p| (p - ls) / ns(p)).sum::<f64>() * step;
+                    // denoised_u = (denoised_d - old_denoised_d) / ((ls - lam[i-2]) / 2); folded into the update
+                    let inv_u = 2.0 / (ls - lam[i - 2]);
+                    let c3 = alpha_t * ((dt * dt) / 2.0 + s_u * ns(lt)) * inv_u;
+                    axpby3(dev, xv, xv, &ddv, Some(&oddv), 1.0, c3 as f32, -(c3 as f32))?;
+                    axpby3(dev, xa, xa, &dda, Some(&odda), 1.0, c3 as f32, -(c3 as f32))?;
+                }
+                std::mem::swap(&mut ddv, &mut oddv);
+                std::mem::swap(&mut dda, &mut odda);
+            }
+            let amp = (lt * lt - ls * ls * r * r).sqrt();
+            let amp = if amp.is_finite() { amp } else { 0.0 };
+            let g = (alpha_t * amp) as f32;
+            if g != 0.0 {
+                // randn uploads synchronously into a stream-ordered allocation: let queued kernels finish first
+                dev.sync()?;
+                let step_seed = seed ^ 0xE5DE_0000_0000_0000 ^ ((i as u64 + 1) << 20);
+                let nv = randn(dev, &xv.shape, step_seed)?;
+                let na = randn(dev, &xa.shape, step_seed ^ 0x9E37_79B9_7F4A_7C15)?;
+                axpby3(dev, xv, xv, &nv, None, 1.0, g, 0.0)?;
+                axpby3(dev, xa, xa, &na, None, 1.0, g, 0.0)?;
+            }
+        }
+        std::mem::swap(&mut dv, &mut odv);
+        std::mem::swap(&mut da, &mut oda);
+        dev.sync()?;
+        progress(i + 1, steps);
+    }
+    Ok(())
+}
+
+/// The sigmas er_sde actually evaluates the model at: ComfyUI's `offset_first_sigma_for_snr` moves a first sigma of 1
+/// (infinite logSNR) to percent_to_sigma(1e-4) = shift(1 - 1e-4).
+pub fn er_sde_sigmas(sigmas: &[f64]) -> Vec<f64> {
+    let mut s = sigmas.to_vec();
+    if s.len() > 1 && s[0] >= 1.0 {
+        s[0] = snr_shift(SHIFT_VIDEO, 1.0 - 1e-4);
+    }
+    s
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn sgm_uniform_and_partial_schedules() {
+        // sgm_uniform: timesteps linspace(1000, 1000*sigma_min, 9)[:-1]
+        let s = sgm_uniform_sigmas(8, 12.0);
+        assert_eq!(s.len(), 9);
+        assert!((s[0] - 1.0).abs() < 1e-6);
+        let smin = 12.0 * 0.001 / (1.0 + 11.0 * 0.001);
+        let ts1 = 1000.0 + (smin * 1000.0 - 1000.0) / 8.0;
+        let want = 12.0 * (ts1 / 1000.0) / (1.0 + 11.0 * (ts1 / 1000.0));
+        assert!((s[1] - want).abs() < 1e-5, "{} vs {}", s[1], want);
+        assert_eq!(s[8], 0.0);
+        // BasicScheduler(simple, 3, denoise 0.3): last 3 steps of the 10-step schedule
+        let p = schedule(Scheduler::Simple, 3, 0.3, 12.0);
+        let full = simple_sigmas(10, 12.0);
+        assert_eq!(p, full[7..].to_vec());
+        assert!((p[0] - 12.0 * 0.3 / (1.0 + 11.0 * 0.3)).abs() < 1e-6);
+        assert_eq!(schedule(Scheduler::Simple, 8, 1.0, 12.0), simple_sigmas(8, 12.0));
+    }
     #[test]
     fn schedule_matches_comfy() {
         let s = simple_sigmas(20, 12.0);

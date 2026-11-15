@@ -192,6 +192,10 @@ func previewReshoot(ctx context.Context, p reshootParams, files []string) (Promp
 		if ip.Model == reshootModelFast && !aiToolHelpHas(ctx, tool, "--model") {
 			ip.Model = reshootModelH3
 		}
+		if ip.Loop && !aiToolHelpHas(ctx, tool, "--loop") {
+			ip.Loop = false
+			out.Note = strings.TrimSpace(out.Note + " This loki-reshoot is too old for seamless loops: shown without the loop wording (the job will ask for an update).")
+		}
 		prompt, err := runShowPrompt(ctx, tool, p.Prompt, func(promptFile string) []string {
 			return buildReshootArgs(ip, images, videos, audios, filepath.Join(os.TempDir(), "loki-preview.mp4"), promptFile)
 		})

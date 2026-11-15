@@ -55,6 +55,16 @@ func reshootSpec(model, dit string) aiToolSpec {
 	return reshootTool
 }
 
+// reshootJobSpec is reshootSpec plus what the job's options add: a two-pass
+// run needs the latent upscaler.
+func reshootJobSpec(p reshootParams) aiToolSpec {
+	s := reshootSpec(p.Model, p.Dit)
+	if p.Passes == 2 {
+		s.Extra = append(append([]string{}, s.Extra...), "h3-latent-upscaler")
+	}
+	return s
+}
+
 // installAIDep installs one dependency on demand (EnsureModels' downloader);
 // a variable so tests never touch the network.
 var installAIDep = installDep

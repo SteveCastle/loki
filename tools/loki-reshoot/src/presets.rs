@@ -13,7 +13,9 @@ pub enum Shake {
 /// `extra` is appended as additional direction. When either says the backdrop is plain (solid white, studio
 /// backdrop, isolated...) the environment and sound lines switch to a plain-backdrop variant: the generic "the place
 /// is alive" wording otherwise makes the model paint a room or scenery behind the subject.
-pub fn animate_prompt(describe: Option<&str>, shake: Shake, extra: Option<&str>, padded: bool) -> String {
+/// `looped` asks for a seamless loop: the shot also ends on <Picture 1>, every motion is a cycle that settles back,
+/// the camera drifts back to its start and the ambience stays even, so the last frame flows into the first.
+pub fn animate_prompt(describe: Option<&str>, shake: Shake, extra: Option<&str>, padded: bool, looped: bool) -> String {
     let plain = describe.is_some_and(plain_backdrop) || extra.is_some_and(plain_backdrop);
     let what = describe.map(|d| d.trim().trim_end_matches('.')).filter(|d| !d.is_empty()).unwrap_or("the person or subject and the setting shown");
     let camera = match shake {
@@ -26,6 +28,22 @@ pub fn animate_prompt(describe: Option<&str>, shake: Shake, extra: Option<&str>,
         " The thin black bars at the edges of <Picture 1> are padding, not part of the scene: from the first frame on, the video seamlessly extends the photographed scene into those areas, matching its lighting, textures and perspective, so the frame is completely filled with no black bars."
     } else {
         ""
+    };
+    // Loop: <Picture 1> anchors the last frame too (the guide's "the shot ends on <Picture N>"), motion is cyclic.
+    let (ends, anchor, anchor_note, cycle, camera_return, sound_loop) = if looped {
+        (
+            " and ends exactly on <Picture 1> again, forming one seamless, frame-perfect loop,",
+            "[Shot 1] first and last frame",
+            "the video begins from this exact composition and returns to it exactly in its final frame",
+            " The motion is one gentle, evenly paced cycle repeated a whole number of times, every repetition identical, so the last repetition lands exactly back at the start: breathing, sway, blinks, hair, fabric and any motion in the environment rise and settle back in the same rhythm each time. The motion is already under way at its steady pace in the very first frame, with no slow start from stillness, and it keeps that same pace through the last frame instead of slowing to a stop, so <Subject 1> passes back through exactly the pose, expression, positions and framing of <Picture 1> while still moving and flows straight into the first frame again. The light, exposure, colors, white balance and contrast stay exactly those of <Picture 1> in every frame, with no gradual brightening, darkening or color shift. The shot ends on <Picture 1>: the video plays as an endless seamless loop with no jump, no pause, no cut, no fade and no visible restart, and there are no one-off actions or events that would break the loop.",
+            match shake {
+                Shake::None => "",
+                _ => " The camera's drift is a slow, gentle cycle that returns precisely to its starting position and framing by the last frame.",
+            },
+            " The ambience is already playing at full, steady level at the very first instant and stays even to the last, with no silence or fade-in at the start, no fade-out at the end and no distinct one-off sounds, so the audio loops seamlessly too.",
+        )
+    } else {
+        ("", "[Shot 1] first frame", "the video begins from this exact composition and keeps its look", "", "", "")
     };
     let (life, environment, sound, soundscape) = if plain {
         (
@@ -42,23 +60,24 @@ pub fn animate_prompt(describe: Option<&str>, shake: Shake, extra: Option<&str>,
             "Clearly audible, soft natural ambience of the depicted place throughout: room tone, gentle air movement, faint distant environmental sounds, subtle breathing and fabric rustle; no speech.",
         )
     };
+    let soundscape_loop = if looped { " Even and continuous from the first instant to the last, no fade-in or fade-out, so it loops seamlessly." } else { "" };
     format!(
 "subject_definitions:
 <Subject 1> is {what} in <Picture 1>, to be kept exactly as shown: identity, face, expression, body proportions, hair, skin, clothing, accessories, pose, framing, colors, lighting and photographic rendering.
 
 summary:
-[keyframe completion] The target video is a faithful, photorealistic living-photo animation of <Picture 1>: one continuous shot that starts exactly from <Picture 1> in which {life}.{bars}{extra}
+[keyframe completion] The target video is a faithful, photorealistic living-photo animation of <Picture 1>: one continuous shot that starts exactly from <Picture 1>{ends} in which {life}.{bars}{extra}
 
 retention_analysis:
 <Subject 1> (appears in [Shot 1]): fully_preserved - identity, appearance, clothing, pose, setting and framing are retained.
-<Picture 1> ([Shot 1] first frame): fully_preserved - the video begins from this exact composition and keeps its look.
+<Picture 1> ({anchor}): fully_preserved - {anchor_note}.
 
 detailed_description:
 The target video keeps the photorealistic look, colors, natural lighting and framing of <Picture 1>, like a few seconds of real footage of the same moment.
-[Shot 1] The shot begins exactly from <Picture 1> and stays one uninterrupted, unedited take with the same composition. <Subject 1> is at rest and shows only small natural life: slow relaxed breathing that gently lifts the chest and shoulders, tiny weight shifts, soft natural blinks, a faint subtle change of expression, small relaxed head and hand micro-movements, and hair and clothing reacting slightly to the air. {environment} Nothing new enters the frame, no new people or objects appear, the pose is not changed, and there is no dramatic motion. {camera} {sound}
+[Shot 1] The shot begins exactly from <Picture 1> and stays one uninterrupted, unedited take with the same composition. <Subject 1> is at rest and shows only small natural life: slow relaxed breathing that gently lifts the chest and shoulders, tiny weight shifts, soft natural blinks, a faint subtle change of expression, small relaxed head and hand micro-movements, and hair and clothing reacting slightly to the air. {environment} Nothing new enters the frame, no new people or objects appear, the pose is not changed, and there is no dramatic motion.{cycle} {camera}{camera_return} {sound}{sound_loop}
 
 overall_soundscape:
-{soundscape}
+{soundscape}{soundscape_loop}
 
 non_diegetic_music:
 N/A
@@ -83,7 +102,7 @@ mod tests {
     use super::*;
     #[test]
     fn prompt_has_sections() {
-        let p = animate_prompt(Some("the young woman taking a mirror selfie"), Shake::Subtle, None, true);
+        let p = animate_prompt(Some("the young woman taking a mirror selfie"), Shake::Subtle, None, true, false);
         for s in ["subject_definitions:", "summary:", "retention_analysis:", "detailed_description:", "overall_soundscape:", "non_diegetic_music:"] {
             assert!(p.contains(s));
         }
@@ -97,11 +116,33 @@ mod tests {
             (Some("an old man reading a newspaper. The background is a solid white space"), None),
             (Some("an old man reading a newspaper"), Some("Keep the plain white background.")),
         ] {
-            let p = animate_prompt(d, Shake::Subtle, e, false);
+            let p = animate_prompt(d, Shake::Subtle, e, false, false);
             assert!(p.contains("plain, uniform, solid backdrop"), "{p}");
             for bad in ["foliage", "curtains", "outdoor", "depicted place"] {
                 assert!(!p.contains(bad), "{bad} in {p}");
             }
         }
+    }
+
+    #[test]
+    fn loop_anchors_last_frame() {
+        let plain = animate_prompt(Some("a cat on a windowsill"), Shake::Subtle, None, false, false);
+        assert!(!plain.contains("loop"), "{plain}");
+        assert!(plain.contains("<Picture 1> ([Shot 1] first frame)"));
+        let p = animate_prompt(Some("a cat on a windowsill"), Shake::Subtle, None, false, true);
+        for want in [
+            "ends exactly on <Picture 1>",
+            "([Shot 1] first and last frame)",
+            "The shot ends on <Picture 1>",
+            "returns precisely to its starting position",
+            "audio loops seamlessly",
+            "no slow start from stillness",
+            "no gradual brightening, darkening",
+            "no silence or fade-in",
+        ] {
+            assert!(p.contains(want), "missing {want:?} in {p}");
+        }
+        let still = animate_prompt(None, Shake::None, None, false, true);
+        assert!(!still.contains("returns precisely to its starting position"), "{still}");
     }
 }

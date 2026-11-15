@@ -500,6 +500,25 @@
             "size_bytes": 22213723064
           }
         ]
+      },
+      {
+        "id": "h3-latent-upscaler",
+        "name": "MiniMax H3 latent upscaler (3D, fp16)",
+        "feature": "AI video from references",
+        "description": "Learned 24-channel latent upscaler for loki-reshoot's two-pass (best quality) mode: enlarges the low-resolution first pass in latent space before the refine pass, without a decode/re-encode round trip (LBH-123-AI/Minimax_h3_latent_Upscaler, Apache-2.0).",
+        "version": "1.0.0",
+        "consumers": [
+          "reshoot"
+        ],
+        "size_bytes": 690592672,
+        "files": [
+          {
+            "url": "https://huggingface.co/LBH-123-AI/Minimax_h3_latent_Upscaler/resolve/main/minimax_h3_latent_upscaler_3d_conv_v1/minimax_h3_latent_upscaler_3d_conv_v1_fp16.safetensors",
+            "rel_path": "minimax_h3_latent_upscaler_3d_conv_v1_fp16.safetensors",
+            "sha256": "043e5a48e161610ef6c3ea974645220354d06fa618abca15f76d084812eb55c2",
+            "size_bytes": 690592672
+          }
+        ]
       }
   ]
 }

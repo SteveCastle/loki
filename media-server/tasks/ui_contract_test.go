@@ -109,6 +109,22 @@ func TestUIContractReshoot(t *testing.T) {
 		return p
 	}
 
+	t.Run("bring to life as a loop", func(t *testing.T) {
+		p := parse(map[string]string{"animate": "1", "describe": "a cat", "loop": "1"})
+		if !p.Loop {
+			t.Fatalf("loop not parsed: %+v", p)
+		}
+		got := strings.Join(buildReshootArgs(p, []string{"a.png"}, nil, nil, "o.mp4", ""), "|")
+		if !strings.Contains(got, "--shake|subtle|--loop") {
+			t.Errorf("args %q missing --loop", got)
+		}
+		// Loop only means something with Living Photo.
+		p = parse(map[string]string{"prompt": "x", "loop": "1"})
+		if got := strings.Join(buildReshootArgs(p, []string{"a.png"}, nil, nil, "o.mp4", ""), "|"); strings.Contains(got, "--loop") {
+			t.Errorf("--loop without animate: %q", got)
+		}
+	})
+
 	t.Run("bring to life", func(t *testing.T) {
 		p := parse(map[string]string{"animate": "1", "describe": "a woman in a sunlit room", "shake": "handheld", "duration": "5", "steps": "20", "seed": "9"})
 		if !p.Animate || p.Describe != "a woman in a sunlit room" || p.Shake != "handheld" || p.Duration != 5 || p.Steps != 20 || p.Seed != 9 {
@@ -153,6 +169,25 @@ func TestUIContractReshoot(t *testing.T) {
 		p = parse(map[string]string{"prompt": "x", "steps": "20"})
 		if args := buildReshootArgs(p, []string{"a.png"}, nil, nil, "o.mp4", ""); hasArg(args, "--model") || p.Model != "h3" {
 			t.Errorf("h3 args = %q (model %q)", args, p.Model)
+		}
+	})
+
+	t.Run("quality: passes=1 is one pass, anything else (or none) is two-pass", func(t *testing.T) {
+		for fields, want := range map[string]string{"1": "1", "2": "2", "": "2"} {
+			f := map[string]string{"prompt": "x"}
+			if fields != "" {
+				f["passes"] = fields
+			}
+			p := parse(f)
+			if v, _ := argValue(buildReshootArgs(p, []string{"a.png"}, nil, nil, "o.mp4", ""), "--passes"); v != want {
+				t.Errorf("passes=%q: --passes %q, want %q", fields, v, want)
+			}
+		}
+		// an engine without --passes gets no flag (the task zeroes Passes)
+		p := parse(map[string]string{"prompt": "x"})
+		p.Passes = 0
+		if hasArg(buildReshootArgs(p, []string{"a.png"}, nil, nil, "o.mp4", ""), "--passes") {
+			t.Error("--passes passed to an engine that predates it")
 		}
 	})
 

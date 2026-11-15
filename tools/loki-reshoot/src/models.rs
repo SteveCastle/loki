@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 /// Hugging Face repos the files come from (`<repo>/resolve/main/<hf_path>`).
 pub const HF_H3: &str = "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/";
 pub const HF_FAST: &str = "https://huggingface.co/FastVideo/FastH3-Omni-Comfy/resolve/main/";
+pub const HF_UPSCALER: &str = "https://huggingface.co/LBH-123-AI/Minimax_h3_latent_Upscaler/resolve/main/";
 
 #[derive(Clone, Copy)]
 pub struct ModelSpec {
@@ -21,6 +22,14 @@ pub const DIT: ModelSpec = ModelSpec { what: "diffusion model", patterns: &["min
 pub const FAST_DIT: ModelSpec = ModelSpec { what: "FastH3 diffusion model", patterns: &["fasth3_omniref", "int8"], repo: HF_FAST, hf_path: "diffusion_models/fasth3_omniref_8step_pruned_int8_convrot.safetensors", size_gb: 22.2 };
 pub const TEXT_ENCODER: ModelSpec = ModelSpec { what: "text encoder", patterns: &["qwen3vl_32b", "minimax"], repo: HF_H3, hf_path: "text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors", size_gb: 15.7 };
 pub const VIDEO_VAE: ModelSpec = ModelSpec { what: "video VAE", patterns: &["minimax_h3_video_vae"], repo: HF_H3, hf_path: "vae/minimax_h3_video_vae_fp16.safetensors", size_gb: 5.2 };
+/// LBH-123-AI's MiniMax H3 latent upscaler (3D conv, Apache-2.0): the two-pass workflow's learned latent resize.
+pub const UPSCALER: ModelSpec = ModelSpec {
+    what: "latent upscaler",
+    patterns: &["minimax_h3_latent_upscaler_3d"],
+    repo: HF_UPSCALER,
+    hf_path: "minimax_h3_latent_upscaler_3d_conv_v1/minimax_h3_latent_upscaler_3d_conv_v1_fp16.safetensors",
+    size_gb: 0.7,
+};
 pub const AUDIO_VAE: ModelSpec = ModelSpec { what: "audio VAE", patterns: &["minimax_h3_audio_vae"], repo: HF_H3, hf_path: "vae/minimax_h3_audio_vae_fp32.safetensors", size_gb: 0.6 };
 
 fn exe_dir() -> PathBuf {

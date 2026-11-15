@@ -84,6 +84,28 @@ func TestReshootSpec(t *testing.T) {
 	}
 }
 
+func TestReshootJobSpecTwoPass(t *testing.T) {
+	p := reshootParams{Model: "fast", Passes: 2}
+	if got := strings.Join(reshootJobSpec(p).modelIDs(), ","); got != "minimax-h3-ref2va,fasth3-omni,h3-latent-upscaler" {
+		t.Errorf("two-pass fast models = %s", got)
+	}
+	p = reshootParams{Model: "h3", Dit: "tune.safetensors", Passes: 1}
+	if got := strings.Join(reshootJobSpec(p).modelIDs(), ","); got != "minimax-h3-ref2va" {
+		t.Errorf("one-pass models = %s", got)
+	}
+	if len(reshootTool.Extra) != 0 {
+		t.Errorf("reshootTool mutated: %+v", reshootTool)
+	}
+	up, ok := models.Lookup("h3-latent-upscaler")
+	if !ok {
+		t.Fatal("h3-latent-upscaler missing from the manifest")
+	}
+	// loki-reshoot discovers it by this name pattern (models.rs UPSCALER)
+	if len(up.Files) != 1 || !strings.Contains(up.Files[0].RelPath, "minimax_h3_latent_upscaler_3d") || up.SizeBytes != up.EffectiveSizeBytes() {
+		t.Errorf("upscaler entry = %+v", up)
+	}
+}
+
 func TestFastH3Manifest(t *testing.T) {
 	fast, ok := models.Lookup("fasth3-omni")
 	if !ok {

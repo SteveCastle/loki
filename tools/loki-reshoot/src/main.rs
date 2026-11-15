@@ -6,7 +6,8 @@ use loki_reshoot::genmeta;
 use loki_reshoot::media::{Ffmpeg, FPS};
 use loki_reshoot::models;
 use loki_reshoot::fit::{self, Fit};
-use loki_reshoot::pipeline::{self, MediaSpec, Paths, RefImageSize, Request};
+use loki_reshoot::pipeline::{self, MediaSpec, Paths, RefImageSize, Request, SamplerKind, TwoPass};
+use loki_reshoot::sampler::Scheduler;
 use loki_reshoot::presets::{self, Shake};
 use std::path::{Path, PathBuf};
 
@@ -44,6 +45,29 @@ impl ModelArg {
             ModelArg::Fast => "FastH3 Omni",
         }
     }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
+enum SamplerArg {
+    Euler,
+    ResMultistep,
+    ErSde,
+}
+
+impl SamplerArg {
+    fn kind(self) -> SamplerKind {
+        match self {
+            SamplerArg::Euler => SamplerKind::Euler,
+            SamplerArg::ResMultistep => SamplerKind::ResMultistep,
+            SamplerArg::ErSde => SamplerKind::ErSde,
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
+enum SchedulerArg {
+    Simple,
+    SgmUniform,
 }
 
 #[derive(Copy, Clone, Debug, ValueEnum)]
@@ -86,6 +110,14 @@ MODELS
   finetunes. $LOKI_RESHOOT_DIT / $LOKI_RESHOOT_FAST_DIT set a machine default per model. A bare NAME is looked up in the
   model folders.
 
+QUALITY (--passes)
+  2 (default, best quality; the ErosMax two-pass workflow): pass 1 samples at --first-pass-mp (0.5 MP) with er_sde /
+  sgm_uniform, a learned latent upscaler (MiniMax H3 latent upscaler 3D, 0.7 GB, downloaded on first use) enlarges the latent
+  to the output size, and pass 2 re-noises it to --refine-denoise (0.3) and refines it in --refine-steps (3 for fast models,
+  6 for h3) er_sde steps. Sharper detail and less flicker at large sizes, at about the cost of one full-size pass.
+  The soundtrack comes from pass 1.
+  1 (fast): one pass at the output size with --model's recipe (the behaviour before two-pass existed).
+
 ",
         include_str!("../docs/PROMPT_CHEATSHEET.txt")
     )
@@ -107,6 +139,10 @@ struct Cli {
     /// With --animate: camera behaviour.
     #[arg(long, value_enum, default_value_t = ShakeArg::Subtle)]
     shake: ShakeArg,
+    /// With --animate: make the clip a seamless loop. The shot also ends on the photo, every motion is a cycle that settles
+    /// back, the camera drifts back to its start and the ambience stays even, so the last frame flows into the first.
+    #[arg(long = "loop")]
+    looped: bool,
     /// Use the model's native canvas: snap the first reference's aspect to the nearest supported ratio (1:1 768x768, 4:3 1024x768,
     /// 3:4 768x1024, 16:9 1344x768, 9:16 768x1344) and fit the first image to it (see --fit). Overridden by --size.
     #[arg(long)]
@@ -179,6 +215,31 @@ struct Cli {
     /// for exactly 8).
     #[arg(long)]
     steps: Option<usize>,
+    /// 2 = two-pass (best quality): a low-resolution pass, the learned latent upscale, then a short refine at the output
+    /// size. 1 = one pass at the output size (fast). See QUALITY below.
+    #[arg(long, default_value_t = 2, value_parser = clap::value_parser!(u8).range(1..=2))]
+    passes: u8,
+    /// Two-pass: size of the first pass, in megapixels of 1024x1024 (the workflow's resolution selector), at the output's
+    /// aspect, multiples of 32. 0.3-0.5 is typical; more = more first-pass detail, slower.
+    #[arg(long, default_value_t = 0.5)]
+    first_pass_mp: f64,
+    /// Two-pass: refine steps of pass 2. Default 3 for few-step (fast) models, 6 for h3 (--steps x --refine-denoise).
+    #[arg(long)]
+    refine_steps: Option<usize>,
+    /// Two-pass: how much of the upscaled latent pass 2 re-generates (ComfyUI denoise of a `simple` schedule; 0.3 starts
+    /// the refine at sigma ~0.84 under the model's shift 12). Lower keeps more of pass 1, higher adds more new detail.
+    #[arg(long, default_value_t = 0.3)]
+    refine_denoise: f64,
+    /// Sampler: `euler`, `res-multistep` or `er-sde` (stochastic). Default: er-sde for two-pass runs, else the recipe's
+    /// (res_multistep for h3, euler for fast).
+    #[arg(long, value_enum)]
+    sampler: Option<SamplerArg>,
+    /// Sigma schedule of the (first) pass: `simple` or `sgm-uniform`. Default: sgm-uniform for two-pass runs, else simple.
+    #[arg(long, value_enum)]
+    scheduler: Option<SchedulerArg>,
+    /// Latent upscaler file for --passes 2 (default: auto-discovered MiniMax H3 latent upscaler 3D, downloaded if missing).
+    #[arg(long)]
+    upscaler: Option<PathBuf>,
     /// Noise seed (default: random, printed).
     #[arg(long)]
     seed: Option<u64>,
@@ -276,7 +337,18 @@ fn model_paths(cli: &Cli) -> Result<Paths> {
         text_encoder: models::resolve(cli.text_encoder.clone(), &models::TEXT_ENCODER)?,
         video_vae: models::resolve(cli.video_vae.clone(), &models::VIDEO_VAE)?,
         audio_vae: models::resolve(cli.audio_vae.clone(), &models::AUDIO_VAE)?,
+        upscaler: if cli.passes == 2 { Some(models::resolve(cli.upscaler.clone(), &models::UPSCALER)?) } else { None },
     })
+}
+
+/// The two-pass plan for an output canvas: pass 1 at `mp` megapixels (of 1024^2) at the output's aspect, multiples of
+/// 32 (the workflow's ResolutionSelector). None when that is not smaller than the output (nothing to upscale).
+fn first_pass_size(width: usize, height: usize, mp: f64) -> Option<(usize, usize)> {
+    let ar = width as f64 / height as f64;
+    let area = mp * 1024.0 * 1024.0;
+    let r = |x: f64| ((x / 32.0).round() as usize * 32).max(64);
+    let (w, h) = (r((area * ar).sqrt()), r((area / ar).sqrt()));
+    (w < width && h < height).then_some((w, h))
 }
 
 fn run(argv: Vec<String>) -> Result<()> {
@@ -405,7 +477,7 @@ fn run(argv: Vec<String>) -> Result<()> {
                 ShakeArg::Subtle => Shake::Subtle,
                 ShakeArg::Handheld => Shake::Handheld,
             };
-            presets::animate_prompt(cli.describe.as_deref(), shake, extra.as_deref(), padded_first)
+            presets::animate_prompt(cli.describe.as_deref(), shake, extra.as_deref(), padded_first, cli.looped)
         }
         (Some(p), _) => p.clone(),
         (None, Some(f)) => std::fs::read_to_string(f).with_context(|| format!("reading {}", f.display()))?,
@@ -426,6 +498,30 @@ fn run(argv: Vec<String>) -> Result<()> {
         ensure!(!worker::active(), "-o - (mp4 on stdout) is not available in --worker mode; give a file");
         ensure!(!std::io::stdout().is_terminal(), "refusing to write a video to the terminal: pipe stdout (| ffmpeg -i - ...) or use -o FILE");
     }
+    let steps = cli.steps.unwrap_or(cli.model.default_steps());
+    ensure!(steps >= 1, "--steps must be at least 1");
+    let two_pass = if cli.passes == 2 {
+        ensure!(cli.refine_denoise > 0.0 && cli.refine_denoise < 1.0, "--refine-denoise must be between 0 and 1");
+        ensure!(cli.first_pass_mp > 0.05, "--first-pass-mp is too small");
+        match first_pass_size(width, height, cli.first_pass_mp) {
+            Some((fw, fh)) => Some(TwoPass {
+                first_width: fw,
+                first_height: fh,
+                refine_steps: cli.refine_steps.unwrap_or(((steps as f64 * cli.refine_denoise).round() as usize).max(3)),
+                refine_denoise: cli.refine_denoise,
+                refine_sampler: cli.sampler.map(SamplerArg::kind).unwrap_or(SamplerKind::ErSde),
+            }),
+            None => {
+                eprintln!("note: the output ({width}x{height}) is not larger than the first pass at {} MP; running one pass", cli.first_pass_mp);
+                None
+            }
+        }
+    } else {
+        None
+    };
+    if let Some(tp) = &two_pass {
+        ensure!(tp.refine_steps >= 1, "--refine-steps must be at least 1");
+    }
     let req = Request {
         prompt,
         ref_images: cli.ref_image.clone(),
@@ -434,7 +530,7 @@ fn run(argv: Vec<String>) -> Result<()> {
         width,
         height,
         frames,
-        steps: cli.steps.unwrap_or(cli.model.default_steps()),
+        steps,
         seed,
         ref_image_size: match cli.ref_image_size {
             RefSize::Match => RefImageSize::Match,
@@ -445,6 +541,14 @@ fn run(argv: Vec<String>) -> Result<()> {
         no_audio: cli.no_audio,
         sparse: !cli.dense_attention,
         distilled: cli.model == ModelArg::Fast,
+        sampler: cli.sampler.map(SamplerArg::kind).or(two_pass.as_ref().map(|_| SamplerKind::ErSde)),
+        scheduler: match cli.scheduler {
+            Some(SchedulerArg::Simple) => Scheduler::Simple,
+            Some(SchedulerArg::SgmUniform) => Scheduler::SgmUniform,
+            None if two_pass.is_some() => Scheduler::SgmUniform,
+            None => Scheduler::Simple,
+        },
+        two_pass,
         crf: cli.crf,
         out,
     };
@@ -528,6 +632,16 @@ fn generation_record(cli: &Cli, req: &Request, dit: &Path, frame_count: usize, f
         .set("prompt", req.prompt.clone())
         .set("seed", req.seed)
         .set("steps", req.steps)
+        .set("passes", if req.two_pass.is_some() { 2 } else { 1 })
+        .set("sampler", req.sampler.map(|k| match k {
+            SamplerKind::Euler => "euler",
+            SamplerKind::ResMultistep => "res_multistep",
+            SamplerKind::ErSde => "er_sde",
+        }))
+        .set("scheduler", match req.scheduler { Scheduler::Simple => "simple", Scheduler::SgmUniform => "sgm_uniform" })
+        .set("first_pass", req.two_pass.as_ref().map(|tp| json!({ "width": tp.first_width, "height": tp.first_height, "megapixels": cli.first_pass_mp })))
+        .set("refine_steps", req.two_pass.as_ref().map(|tp| tp.refine_steps))
+        .set("refine_denoise", req.two_pass.as_ref().map(|tp| tp.refine_denoise))
         .set("width", req.width)
         .set("height", req.height)
         .set("frames", frame_count)
@@ -541,6 +655,7 @@ fn generation_record(cli: &Cli, req: &Request, dit: &Path, frame_count: usize, f
         .set("animate", if cli.animate.is_some() { Some(true) } else { None })
         .set("describe", if cli.animate.is_some() { cli.describe.clone() } else { None })
         .set("shake", if cli.animate.is_some() { Some(format!("{:?}", cli.shake).to_lowercase()) } else { None })
+        .set("loop", if cli.animate.is_some() && cli.looped { Some(true) } else { None })
         .set("inputs", inputs);
     rec
 }

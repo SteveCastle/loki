@@ -58,6 +58,9 @@ loki-reshoot --prompt TEXT [OPTIONS]
       --size WxH | --aspect W:H --megapixels F    output size (default: first reference's aspect at 0.4 MP)
       --model h3|fast                   h3 = MiniMax H3 (default, best quality); fast = FastH3 Omni (8 steps + sparse attention)
       --dense-attention                 fast: full attention instead of VSA
+      --passes 2|1                      2 = two-pass, best quality (default); 1 = one pass at the output size
+      --first-pass-mp F (0.5)  --refine-steps N (3 fast / 6 h3)  --refine-denoise F (0.3)  --upscaler PATH|NAME
+      --sampler euler|res-multistep|er-sde  --scheduler simple|sgm-uniform   (defaults: er-sde + sgm-uniform for two passes)
       --steps N (20 h3 / 8 fast)  --seed N  --ref-image-size match|max  --no-audio  --crf N (18)  -q  --json  --show-prompt  --prompt-guide  --meta JSON|--meta-file FILE
       --dit / --text-encoder / --video-vae / --audio-vae PATH|NAME   model files (a bare NAME is looked up in the model folders)
       --ffmpeg PATH
@@ -82,6 +85,9 @@ loki-reshoot --animate photo.jpg --describe "the woman in a black swimsuit takin
 ambient sound, keeping the photo's identity and framing. It implies `--native`: the model works best at five canvases (1:1 768×768,
 4:3 1024×768, 3:4 768×1024, 16:9 1344×768, 9:16 768×1344); the first image is snapped to the nearest ratio and fitted with
 `--fit auto|crop|pad|stretch` (default `auto`: centre-crop when the ratio is within ~12%, else pad; padded black bars are kept by the model, not filled). Without an audio reference the model generates near-silent ambience; add `-a` for audible sound.
+
+`--loop` (with `--animate`) asks for a seamless loop: the shot also ends on the photo, every movement is a cycle that settles back, the
+camera drifts back to its start and the ambience stays even, so the last frame flows into the first. Short clips (3-5 s) loop best.
 
 ## What the model can do (limits enforced by the CLI)
 
@@ -126,8 +132,20 @@ in bf16/fp16 (those are quantized to int8 ConvRot as they load, as the block GEM
 are converted to fp16. A bare file name is looked up in the model folders; the file name is recorded as `dit` in the
 generation record. The media server offers the files in its `reshootModels` config list (each with its recipe) as a per-job
 choice in the Transform flow, passed as `--dit`.
-Turbo finetunes are often sampled in ComfyUI with a second pass (latent upscale + a few low-denoise refinement steps);
-this engine runs the single pass.
+
+**Two passes (`--passes 2`, the default).** The ErosMax "two-pass optimized" ComfyUI workflow, natively. Pass 1 samples at
+`--first-pass-mp` (0.5 MP of 1024², the output's aspect, multiples of 32) with `er_sde` on an `sgm_uniform` schedule. The
+[MiniMax H3 latent upscaler](https://huggingface.co/LBH-123-AI/Minimax_h3_latent_Upscaler) (3D conv, Apache-2.0, 0.7 GB,
+`src/upscaler.rs`) enlarges the video latent to the output size. Pass 2 re-noises it with BasicScheduler's partial-denoise
+rule (`simple`, `--refine-denoise` 0.3, which is sigma ~0.84 under shift 12) and refines it in `--refine-steps` er_sde steps
+(3 for fast, 6 for h3). The soundtrack is pass 1's: pass 2 sees a re-noised copy, but its audio output is discarded, as in
+the workflow. The references are sized for the first-pass canvas, as the workflow's `MiniMaxH3ReferenceToVideo` is. The result
+has sharper detail and steadier backgrounds. At 1344x768 / 5 s on a 4090 a turbo finetune takes ~120 s end to end in two
+passes against ~140 s in one pass (8 steps at 0.5 MP plus 3 at full size); a base-style model (20 + 6 steps) takes ~200 s.
+The upscaler runs the node's 32-frame temporal chunks and sees a *doubly* normalized latent: a ComfyUI H3 LATENT is
+already normalized, and the node normalizes it again. `tests/upscaler.rs` checks the port against the node's own network
+(`ref/ref_upscaler.py`, rel L2 < 1e-3). `LOKI_TWO_PASS_SKIP_REFINE=1` decodes the upscaled pass-1 latent without pass 2
+(diagnostics). The workflow's RTX Video Super Resolution and film grain post-processing are not included.
 
 Looked up next to the binary, in `./models`, and in `$LOKI_MODELS` (a path list); any that are missing are downloaded (resumable)
 from Hugging Face into `models/` next to the binary (~42 GB for `h3`; `fast` adds 22 GB).
@@ -139,6 +157,7 @@ from Hugging Face into `models/` next to the binary (~42 GB for `h3`; `fast` add
 | `--text-encoder` | `qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors` | 15.7 GB |
 | `--video-vae` | `minimax_h3_video_vae_fp16.safetensors` | 5.2 GB |
 | `--audio-vae` | `minimax_h3_audio_vae_fp32.safetensors` | 0.6 GB |
+| `--upscaler` (`--passes 2`) | `minimax_h3_latent_upscaler_3d_conv_v1_fp16.safetensors` ([LBH-123-AI/Minimax_h3_latent_Upscaler](https://huggingface.co/LBH-123-AI/Minimax_h3_latent_Upscaler)) | 0.7 GB |
 
 Models are loaded in phases so everything fits a 24 GB card: text encoder (evicted) → VAE encode of the references (evicted)
 → DiT sampling (evicted) → VAE decode streamed straight into ffmpeg.
