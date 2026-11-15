@@ -10,15 +10,18 @@ pub mod worker;
 // H3 engine components (one workstream each)
 pub mod dit_h3;
 pub mod fit;
+pub mod h3image;
 pub mod genmeta;
 pub mod media;
 pub mod models;
 pub mod pipeline;
 pub mod presets;
+pub mod rng;
 pub mod sampler;
 pub mod upscaler;
 pub mod te_h3;
 pub mod vae_audio;
+pub mod vae_image;
 pub mod vae_video;
 pub mod vsa;
 

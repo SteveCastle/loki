@@ -1,4 +1,5 @@
-//! Command-line front end: a generic Qwen Image 2.1 image-edit tool with named presets (`--preset 4kify`, ...).
+//! Command-line front end: a generic image-edit tool with named presets (`--preset 4kify`, ...) on two models: Qwen Image
+//! 2.1 (default) and MiniMax H3 Image (`--model h3`, run by loki-reshoot's H3 engine, see `h3.rs`).
 //!
 //! loki- toolkit conventions (shared with loki-reshoot): images in from files/globs/directories or stdin (`-`), the result out as a file (its path is
 //! printed on stdout, or one JSON object per job with `--json`) or as PNG bytes on stdout (`-o -`); progress and
@@ -6,6 +7,7 @@
 use crate::cuda::Device;
 use crate::dit::Dit;
 use crate::genmeta;
+use crate::h3::{self, Model};
 use crate::image::Rgb8;
 use crate::models;
 use crate::pipeline::{Encoded, Pipeline, Settings};
@@ -14,6 +16,7 @@ use crate::text_encoder::TextEncoder;
 use crate::vae::Vae;
 use anyhow::{bail, ensure, Context, Result};
 use clap::{CommandFactory, Parser};
+use loki_reshoot::h3image;
 use std::io::{IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
 
@@ -37,6 +40,14 @@ REFERENCES
   The input is <image1>; every --ref FILE adds <image2>, <image3>, ... to each job (multi-image edits and compositions).
   The prompt can mention them: \"put the jacket from <image2> on the person in <image1>\".
 
+MODELS (--model)
+  qwen  Qwen Image 2.1 (default): 25 steps, flow shift 0.69; Qwen3-VL-8B text encoder.
+  h3    MiniMax H3 Image: edits and multi-reference compositions with up to 16 pictures, native 4-16 MP output, 6 steps
+        at CFG 1 (distilled); Qwen3-VL-32B text encoder (shared with loki-reshoot). <imageN> tags are read as its
+        <Picture N>. Long, specific English descriptions of the result work best. A canvas under 4 MP is drawn at 4 MP
+        and resampled (the official pipeline's minimum); presets were tuned on Qwen Image but work with either model.
+  --dit FILE with an H3 Image checkpoint picks h3 by itself.
+
 EXAMPLES
   PROG -p \"make it night, with rain\" photo.jpg                     # edit at the input's size -> photo_edit.png
   PROG -p \"put the jacket of <image2> on <image1>\" -r jacket.png me.png
@@ -45,10 +56,13 @@ EXAMPLES
   PROG --preset 4kify photo.jpg                                       # restore + outpaint to a 4K wallpaper
   PROG --preset restore -o - old.jpg | PROG -p \"colorize\" - -o - | PROG --preset 4kify - -o wall.png
   PROG --preset 4kify -q -o walls/ shots/*.jpg | xargs -n1 echo       # batch: paths of the results on stdout
+  PROG --model h3 -p \"Make <image1> a rainy night street, neon reflections on the wet asphalt\" photo.jpg
+  PROG --model h3 -p \"<image1> wearing the jacket from <image2>, same pose and lighting\" -r jacket.png me.png
+  PROG --model h3 --long-edge 4096 -p \"Restore and sharpen <image1>, same framing\" old.jpg     # up to ~16 MP
 ";
 
 #[derive(Parser, Debug)]
-#[command(version, about = "loki-retouch: AI image editing on a standalone CUDA engine (Qwen Image 2.1). Edit content, upscale, restore, composite, outpaint; wallpapers via --preset 4kify. Part of the loki- toolkit (see also loki-reshoot, images -> video).", after_help = HELP)]
+#[command(version, about = "loki-retouch: AI image editing on a standalone CUDA engine (Qwen Image 2.1, or MiniMax H3 Image with --model h3). Edit content, upscale, restore, composite, outpaint; wallpapers via --preset 4kify. Part of the loki- toolkit (see also loki-reshoot, images -> video).", after_help = HELP)]
 struct Cli {
     /// Input image(s): files, directories, globs ("photos/*.jpg"), or `-` for an image on stdin. Each input is one job; models
     /// are loaded once for all of them.
@@ -64,7 +78,7 @@ struct Cli {
     /// Text appended to the final prompt (handy to extend a preset).
     #[arg(long)]
     append: Option<String>,
-    /// Extra reference image added to every job as <image2>, <image3>, ... (repeatable).
+    /// Extra reference image added to every job as <image2>, <image3>, ... (repeatable; MiniMax H3 Image takes up to 15).
     #[arg(short, long = "ref", value_name = "FILE")]
     refs: Vec<PathBuf>,
     /// Batch file of jobs, one JSON object per line: {"input": FILE, "prompt": TEXT, "refs": [FILE, ...], "seed": N, "out": FILE,
@@ -119,15 +133,19 @@ struct Cli {
     #[arg(short, long)]
     out: Option<String>,
 
-    /// Sampling steps.
-    #[arg(long, default_value_t = 25)]
-    steps: usize,
+    /// Editing model: qwen (Qwen Image 2.1, the default) or h3 (MiniMax H3 Image: up to 16 pictures, native 4-16 MP output,
+    /// 6 steps). See MODELS.
+    #[arg(long, value_name = "qwen|h3")]
+    model: Option<String>,
+    /// Sampling steps (default: Qwen Image 25, MiniMax H3 Image 6).
+    #[arg(long)]
+    steps: Option<usize>,
     /// Noise seed (incremented per input; held fixed with --seq).
     #[arg(long, default_value_t = 0)]
     seed: u64,
-    /// Flow shift of the sampling schedule.
-    #[arg(long, default_value_t = 0.69)]
-    shift: f32,
+    /// Flow shift of the sampling schedule (Qwen Image; default 0.69).
+    #[arg(long)]
+    shift: Option<f32>,
     /// Size parameter of the references seen by the model (0 = automatic: the input's own size, capped at the output's pixel
     /// budget; wallpaper presets: see README).
     #[arg(long, default_value_t = 0)]
@@ -147,13 +165,14 @@ struct Cli {
     #[arg(long, value_name = "FILE")]
     meta_file: Option<String>,
 
-    /// Qwen Image 2.1 diffusion model (int8 convrot safetensors). Default: auto-discover next to the binary, or download.
+    /// Diffusion model: Qwen Image 2.1 (int8 convrot), or a MiniMax H3 Image checkpoint (selects --model h3). Default:
+    /// the model's own file, auto-discovered next to the binary / in the model folders, or downloaded.
     #[arg(long)]
     dit: Option<PathBuf>,
-    /// Qwen3-VL 8B text encoder (int8 convrot safetensors).
+    /// Text encoder: Qwen3-VL 8B (int8 convrot) for Qwen Image, Qwen3-VL-32B (NVFP4) for MiniMax H3 Image.
     #[arg(long)]
     text_encoder: Option<PathBuf>,
-    /// Qwen Image 2.1 VAE (bf16 safetensors).
+    /// VAE: Qwen Image 2.1 (bf16) or MiniMax H3 Image (fp16), by model.
     #[arg(long)]
     vae: Option<PathBuf>,
 
@@ -377,10 +396,27 @@ fn load_dit(dev: &std::sync::Arc<Device>, p: &Path) -> Result<std::rc::Rc<Dit>> 
     crate::worker::load(&format!("dit {}", p.display()), p, || Dit::load(dev.clone(), p))
 }
 
+/// The editing model: --model, else MiniMax H3 Image when --dit is an H3 Image checkpoint, else Qwen Image.
+fn chosen_model(cli: &Cli) -> Result<Model> {
+    let by_file = cli.dit.as_deref().map(|p| p.is_file() && h3::is_h3_file(p)).unwrap_or(false);
+    match cli.model.as_deref().map(Model::parse).transpose()? {
+        Some(Model::Qwen) if by_file => bail!("--model qwen but {} is a MiniMax H3 Image checkpoint", cli.dit.as_ref().unwrap().display()),
+        Some(m) => Ok(m),
+        None => Ok(if by_file { Model::H3 } else { Model::Qwen }),
+    }
+}
+
+/// The H3 engine's model files: explicit flags (or bare names in the model folders), else discovered, else downloaded.
+fn h3_paths(cli: &Cli) -> Result<h3image::Paths> {
+    h3image::Paths::resolve(cli.dit.clone(), cli.text_encoder.clone(), cli.vae.clone())
+}
+
 fn run(prog: &'static str, default_preset: Option<&'static str>, argv: Vec<String>) -> Result<()> {
     let cmd = Cli::command().name(prog).bin_name(prog).after_help(HELP.replace("PROG", prog));
     let Some(cli) = crate::worker::parse_args::<Cli>(cmd, argv)? else { return Ok(()) };
     crate::log::set_quiet(cli.quiet);
+    loki_reshoot::log::set_quiet(cli.quiet);
+    let model = chosen_model(&cli)?;
 
     if cli.worker {
         ensure!(!crate::worker::active(), "--worker inside a worker request");
@@ -390,6 +426,11 @@ fn run(prog: &'static str, default_preset: Option<&'static str>, argv: Vec<Strin
             model: "Qwen Image 2.1",
             run: &|argv| run(prog, default_preset, argv),
             warm: &|_| {
+                if model == Model::H3 {
+                    let dev = h3image::device(true)?;
+                    let host = h3::RetouchHost { bar: indicatif::ProgressBar::hidden(), show_bar: false };
+                    return h3image::warm(&dev, &host, &h3_paths(&cli)?);
+                }
                 let (dit, te, vae) = model_paths(&cli)?;
                 let dev = crate::worker::device()?;
                 let _init = Pipeline::new(dev.clone(), Settings { target_w: 0, target_h: 0, out_w: 0, out_h: 0, steps: 1, shift: 0.0, seed: 0, ref_resolution: 0, ref_policy: crate::pipeline::RefPolicy::Native, prompt: String::new() })?;
@@ -471,7 +512,7 @@ fn run(prog: &'static str, default_preset: Option<&'static str>, argv: Vec<Strin
     if cli.show_prompt && cli.inputs.is_empty() {
         // no input needed when the preset (or --size) fixes the output size
         let ((w, h), _) = target_size(&cli, preset.as_ref(), (1024, 1024))?;
-        crate::worker::out_line(&make_prompt(w, h));
+        crate::worker::out_line(&shown_prompt(model, &make_prompt(w, h), cli.refs.len() + 1));
         return Ok(());
     }
     ensure!(!cli.inputs.is_empty() || !jobs.is_empty(), "no input image (give files, a directory, a glob, or `-` for stdin)");
@@ -479,7 +520,7 @@ fn run(prog: &'static str, default_preset: Option<&'static str>, argv: Vec<Strin
     let first_dims = sources[0].dims()?;
     if cli.show_prompt {
         let ((w, h), _) = target_size(&cli, preset.as_ref(), first_dims)?;
-        crate::worker::out_line(&make_prompt(w, h));
+        crate::worker::out_line(&shown_prompt(model, &make_prompt(w, h), cli.refs.len() + 1));
         return Ok(());
     }
     // each job's references: its own (--jobs), else the flags'
@@ -497,6 +538,10 @@ fn run(prog: &'static str, default_preset: Option<&'static str>, argv: Vec<Strin
         })
         .collect::<Result<_>>()?;
     let fixed_seed = preset.as_ref().map(|p| p.seq).unwrap_or(false);
+    if model == Model::H3 {
+        let ctx = H3Run { prog, cli: &cli, preset: preset.as_ref(), preset_name: &preset_name, sources: &sources, dests: &dests, jobs: &jobs, job_refs: &job_refs, fixed_seed, meta: &meta };
+        return run_h3(&ctx, &make_prompt);
+    }
     let policy = preset.as_ref().map(|p| p.ref_policy()).unwrap_or(crate::pipeline::RefPolicy::Native);
 
     let (dit_path, te_path, vae_path) = model_paths(&cli)?;
@@ -505,7 +550,7 @@ fn run(prog: &'static str, default_preset: Option<&'static str>, argv: Vec<Strin
 
     let dev = crate::worker::device()?;
     crate::info!("  gpu: {} MB free of {} MB", dev.free_mem()? >> 20, dev.total_mem >> 20);
-    let base = Settings { target_w: 0, target_h: 0, out_w: 0, out_h: 0, steps: cli.steps, shift: cli.shift, seed: cli.seed, ref_resolution: cli.ref_resolution, ref_policy: policy, prompt: String::new() };
+    let base = Settings { target_w: 0, target_h: 0, out_w: 0, out_h: 0, steps: cli.steps.unwrap_or(25), shift: cli.shift.unwrap_or(0.69), seed: cli.seed, ref_resolution: cli.ref_resolution, ref_policy: policy, prompt: String::new() };
     let _init = Pipeline::new(dev.clone(), base.clone())?; // initializes the GEMM/attention/VAE kernels
     let t_all = std::time::Instant::now();
     let mut ref_imgs: std::collections::HashMap<PathBuf, Rgb8> = std::collections::HashMap::new();
@@ -608,39 +653,176 @@ fn run(prog: &'static str, default_preset: Option<&'static str>, argv: Vec<Strin
             .set("ref_resolution", settings.ref_resolution)
             .set("inputs", inputs.clone())
             .set("meta", meta.clone());
-        let text = [(genmeta::PNG_KEYWORD.to_string(), rec.to_json())];
-        match &dests[*i] {
-            Dest::Stdout => {
-                let mut so = std::io::stdout().lock();
-                so.write_all(&out_img.png_bytes(&text)?)?;
-                so.flush()?;
-                crate::info!("wrote PNG to stdout ({:.1}s decode+encode)", t0.elapsed().as_secs_f64());
-            }
-            Dest::File(path) => {
-                if let Some(d) = path.parent() {
-                    if !d.as_os_str().is_empty() {
-                        std::fs::create_dir_all(d)?;
-                    }
-                }
-                out_img.save_png(path, &text)?;
-                crate::info!("wrote {} ({:.1}s decode+save)", path.display(), t0.elapsed().as_secs_f64());
-                if cli.json {
-                    let j = serde_json::json!({
-                        "input": src.name(), "output": path.display().to_string(), "width": settings.out_w, "height": settings.out_h,
-                        "seed": settings.seed, "steps": settings.steps, "preset": preset_name, "generation": rec.to_value(),
-                    });
-                    crate::worker::out_line(&j.to_string());
-                } else if !stdout_is_image {
-                    crate::worker::out_line(&path.display().to_string());
-                }
-            }
-        }
+        let summary = serde_json::json!({"input": src.name(), "width": settings.out_w, "height": settings.out_h, "seed": settings.seed, "steps": settings.steps, "preset": preset_name});
+        write_result(&cli, &dests[*i], &out_img, &rec, summary, stdout_is_image, t0)?;
     }
     drop(model);
     dev.sync()?;
     crate::info!("done in {:.1}s", t_all.elapsed().as_secs_f64());
     if failed > 0 {
         bail!("{failed} of {} input(s) failed", sources.len());
+    }
+    Ok(())
+}
+
+/// What --show-prompt prints: the final prompt, for MiniMax H3 Image with its tags translated and the labelled pictures
+/// in front, exactly as its text encoder reads it.
+fn shown_prompt(model: Model, prompt: &str, pictures: usize) -> String {
+    match model {
+        Model::Qwen => prompt.to_string(),
+        Model::H3 => h3image::show_prompt(&h3::picture_tags(prompt), pictures),
+    }
+}
+
+/// Write one result (PNG with its generation record) to its destination and report it on stdout.
+fn write_result(cli: &Cli, dest: &Dest, img: &Rgb8, rec: &genmeta::Record, mut summary: serde_json::Value, stdout_is_image: bool, t0: std::time::Instant) -> Result<()> {
+    let text = [(genmeta::PNG_KEYWORD.to_string(), rec.to_json())];
+    match dest {
+        Dest::Stdout => {
+            let mut so = std::io::stdout().lock();
+            so.write_all(&img.png_bytes(&text)?)?;
+            so.flush()?;
+            crate::info!("wrote PNG to stdout ({:.1}s decode+encode)", t0.elapsed().as_secs_f64());
+        }
+        Dest::File(path) => {
+            if let Some(d) = path.parent() {
+                if !d.as_os_str().is_empty() {
+                    std::fs::create_dir_all(d)?;
+                }
+            }
+            img.save_png(path, &text)?;
+            crate::info!("wrote {} ({:.1}s decode+save)", path.display(), t0.elapsed().as_secs_f64());
+            if cli.json {
+                if let Some(o) = summary.as_object_mut() {
+                    o.insert("output".into(), serde_json::json!(path.display().to_string()));
+                    o.insert("generation".into(), rec.to_value());
+                }
+                crate::worker::out_line(&summary.to_string());
+            } else if !stdout_is_image {
+                crate::worker::out_line(&path.display().to_string());
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Everything `run` decided that the MiniMax H3 Image path needs.
+struct H3Run<'a> {
+    prog: &'static str,
+    cli: &'a Cli,
+    preset: Option<&'a Preset>,
+    preset_name: &'a Option<String>,
+    sources: &'a [Source],
+    dests: &'a [Dest],
+    jobs: &'a [Job],
+    job_refs: &'a [&'a [PathBuf]],
+    fixed_seed: bool,
+    meta: &'a Option<serde_json::Value>,
+}
+
+/// MiniMax H3 Image edits: each input is one request of the H3 engine (the input is <Picture 1>, its references follow),
+/// all batched so every model loads once. The canvas is the requested size on the 32 px grid, drawn at 4 MP at least and
+/// resampled to exactly the requested size (or delivered as drawn with --snap).
+fn run_h3(c: &H3Run, make_prompt: &dyn Fn(usize, usize) -> String) -> Result<()> {
+    let (cli, prog) = (c.cli, c.prog);
+    ensure!(cli.shift.is_none(), "--shift is a Qwen Image setting; MiniMax H3 Image samples on its own distilled sigma grid");
+    ensure!(cli.ref_resolution == 0 && c.jobs.iter().all(|j| j.sizes.is_none()), "--ref-resolution / job \"sizes\" are Qwen Image settings; MiniMax H3 Image sizes its pictures itself (1024-2048 px short edge)");
+    let steps = cli.steps.unwrap_or(h3image::DEFAULT_STEPS);
+    ensure!((1..=100).contains(&steps), "--steps must be in 1..100");
+    let paths = h3_paths(cli)?;
+    crate::info!("{prog}: {} input(s), {}{}", c.sources.len(), h3image::MODEL_NAME, c.preset_name.as_ref().map(|n| format!(", preset {n}")).unwrap_or_default());
+    crate::info!("  dit: {}\n  text encoder: {}\n  vae: {}", paths.dit.display(), paths.text_encoder.display(), paths.vae.display());
+    let to_engine = |i: &Rgb8| loki_reshoot::image::Rgb8 { w: i.w, h: i.h, data: i.data.clone() };
+    let mut ref_imgs: std::collections::HashMap<PathBuf, Rgb8> = std::collections::HashMap::new();
+    for r in c.job_refs.iter().flat_map(|rs| rs.iter()) {
+        if !ref_imgs.contains_key(r) {
+            ref_imgs.insert(r.clone(), Rgb8::load(r)?);
+        }
+    }
+    // per request: (job index, delivered size, inputs for the record)
+    let mut reqs: Vec<h3image::Request> = Vec::new();
+    let mut plan: Vec<(usize, (usize, usize), Vec<serde_json::Value>)> = Vec::new();
+    let mut failed = 0usize;
+    for (i, src) in c.sources.iter().enumerate() {
+        let res = (|| -> Result<(h3image::Request, (usize, usize), Vec<serde_json::Value>)> {
+            let img = src.load()?;
+            let ((w, h), (ow, oh)) = target_size(cli, c.preset, (img.w, img.h))?;
+            let (gw, gh) = h3image::generation_canvas(ow, oh);
+            h3image::check_size(gw, gh)?;
+            let out = if cli.snap { (gw, gh) } else { (ow, oh) };
+            let prompt = match c.jobs.get(i).and_then(|j| j.prompt.as_ref()) {
+                Some(p) => p.trim().to_string(),
+                None => make_prompt(w, h),
+            };
+            let seed = match c.jobs.get(i).and_then(|j| j.seed) {
+                Some(seed) => seed,
+                None if c.fixed_seed => cli.seed,
+                None => cli.seed.wrapping_add(i as u64),
+            };
+            let mut imgs = vec![img];
+            imgs.extend(c.job_refs[i].iter().map(|r| ref_imgs[r].clone()));
+            ensure!(imgs.len() <= h3image::MAX_REFS, "MiniMax H3 Image takes at most {} pictures (the input and {} --ref)", h3image::MAX_REFS, h3image::MAX_REFS - 1);
+            let inputs: Vec<serde_json::Value> = imgs
+                .iter()
+                .enumerate()
+                .map(|(k, im)| {
+                    let path = if k == 0 { match src { Source::Path(p) => p.display().to_string(), Source::Stdin(_) => "-".to_string() } } else { c.job_refs[i][k - 1].display().to_string() };
+                    serde_json::json!({ "tag": format!("<Picture {}>", k + 1), "path": path, "width": im.w, "height": im.h })
+                })
+                .collect();
+            let req = h3image::Request { prompt: h3::picture_tags(&prompt), images: imgs.iter().map(to_engine).collect(), width: gw, height: gh, steps, seed, init: None };
+            Ok((req, out, inputs))
+        })();
+        match res {
+            Ok((r, out, inputs)) => {
+                reqs.push(r);
+                plan.push((i, out, inputs));
+            }
+            Err(e) => {
+                eprintln!("{prog}: skipping {}: {e:#}", src.name());
+                failed += 1;
+            }
+        }
+    }
+    if reqs.is_empty() {
+        bail!("nothing to do");
+    }
+    let dev = h3image::device(crate::worker::active())?;
+    let show_bar = !cli.quiet && std::io::stderr().is_terminal();
+    let bar = if show_bar { indicatif::ProgressBar::new(steps as u64) } else { indicatif::ProgressBar::hidden() };
+    bar.set_style(indicatif::ProgressStyle::with_template("  {bar:40} {pos}/{len} steps  {elapsed_precise} eta {eta_precise}").unwrap());
+    let host = h3::RetouchHost { bar, show_bar };
+    let stdout_is_image = c.dests.iter().any(|d| matches!(d, Dest::Stdout));
+    let t_all = std::time::Instant::now();
+    h3image::generate_many(&dev, &host, &paths, &reqs, &mut |ri, out| {
+        let t0 = std::time::Instant::now();
+        let (i, (ow, oh), inputs) = &plan[ri];
+        let req = &reqs[ri];
+        let mut img = Rgb8 { w: out.image.w, h: out.image.h, data: out.image.data };
+        if (img.w, img.h) != (*ow, *oh) {
+            crate::info!("  resampling {}x{} -> exactly {}x{}", img.w, img.h, ow, oh);
+            img = img.resize_lanczos(*ow, *oh);
+        }
+        let mut rec = genmeta::Record::new(prog, env!("CARGO_PKG_VERSION"), h3image::MODEL_NAME);
+        rec.set("model_id", "h3")
+            .set("prompt", req.prompt.clone())
+            .set("preset", c.preset_name.clone())
+            .set("seed", req.seed)
+            .set("steps", req.steps)
+            .set("cfg", 1.0)
+            .set("width", *ow)
+            .set("height", *oh)
+            .set("generated_width", if (req.width, req.height) != (*ow, *oh) { Some(req.width) } else { None })
+            .set("generated_height", if (req.width, req.height) != (*ow, *oh) { Some(req.height) } else { None })
+            .set("inputs", inputs.clone())
+            .set("meta", c.meta.clone());
+        let summary = serde_json::json!({"input": c.sources[*i].name(), "width": ow, "height": oh, "seed": req.seed, "steps": req.steps, "preset": c.preset_name, "model": "h3"});
+        write_result(cli, &c.dests[*i], &img, &rec, summary, stdout_is_image, t0)
+    })?;
+    host.bar.finish_and_clear();
+    crate::info!("done in {:.1}s", t_all.elapsed().as_secs_f64());
+    if failed > 0 {
+        bail!("{failed} of {} input(s) failed", c.sources.len());
     }
     Ok(())
 }

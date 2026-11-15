@@ -9,6 +9,7 @@ pub mod engines;
 pub mod flow;
 pub mod flux2;
 pub mod genmeta;
+pub mod h3;
 pub mod image;
 pub mod krea2;
 pub mod linear;

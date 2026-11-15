@@ -46,6 +46,8 @@ pub fn is_distilled(a: Arch, path: &Path) -> bool {
         Arch::Anima => ["turbo", "distill", "lightning"].iter().any(|k| n.contains(k)),
         Arch::Flux2 => !n.contains("base"),
         Arch::Sdxl => crate::sdxl::is_distilled(path),
+        // a 6-step PDD model: its output heads are distilled on its own sigma grid
+        Arch::H3Image => true,
     }
 }
 
@@ -61,6 +63,7 @@ pub fn defaults(a: Arch, distilled: bool) -> (usize, f32) {
         (Arch::Sdxl, false) => (30, 6.0),
         (Arch::Sdxl, true) => (8, 1.0),
         (Arch::Moss, _) => (50, 3.0),
+        (Arch::H3Image, _) => (loki_reshoot::h3image::DEFAULT_STEPS, 1.0),
     }
 }
 
@@ -74,6 +77,8 @@ pub fn show_prompt(a: Arch, p: &str) -> Vec<String> {
         Arch::Moss => vec![crate::text_encoder::template(p)],
         // what CLIP reads, by weight: each segment on its own line with its weight
         Arch::Sdxl => vec![crate::clip::weighted_segments(p).into_iter().map(|(t, w)| if w == 1.0 { t } else { format!("[{t}]x{w}") }).collect()],
+        // no chat template: the pictures' labelled vision blocks, then the prompt as given
+        Arch::H3Image => vec![loki_reshoot::h3image::show_prompt(p, 0)],
     }
 }
 
@@ -92,6 +97,7 @@ pub(crate) fn te_spec(a: Arch, dit: &Path) -> Result<&'static Spec> {
         }
         Arch::Moss => &models::TEXT_ENCODER,
         Arch::Sdxl => bail!("an SDXL checkpoint carries its own text encoders"),
+        Arch::H3Image => &models::H3_TE,
     })
 }
 
@@ -102,6 +108,7 @@ pub(crate) fn vae_spec(a: Arch) -> Option<&'static Spec> {
         Arch::Flux2 => Some(&models::FLUX2_VAE),
         Arch::Moss => Some(&models::VAE),
         Arch::Sdxl => None,
+        Arch::H3Image => Some(&models::H3_IMAGE_VAE),
     }
 }
 
@@ -165,7 +172,7 @@ fn load_engine(dev: &Arc<Device>, a: Arch, dit: &Path, int8: bool) -> Result<Rc<
             Arch::Krea2 => Engine::Krea2(Krea2::load(dev.clone(), dit, int8)?),
             Arch::Flux2 => Engine::Flux2(Flux2::load(dev.clone(), dit, int8)?),
             Arch::Anima => Engine::Anima(Anima::load(dev.clone(), dit, int8)?),
-            Arch::Moss | Arch::Sdxl => bail!("{} runs through its own path", a.name()),
+            Arch::Moss | Arch::Sdxl | Arch::H3Image => bail!("{} runs through its own path", a.name()),
         })
     })
 }
@@ -189,6 +196,9 @@ fn init_kernels(dev: &Device) -> Result<()> {
 pub(crate) fn warm(cli: &Cli, a: Arch, dit: &Path) -> Result<()> {
     if a == Arch::Sdxl {
         return crate::sdxl::warm(cli, dit);
+    }
+    if a == Arch::H3Image {
+        return crate::h3::warm(cli, dit);
     }
     models::resolve(cli.text_encoder.clone(), te_spec(a, dit)?)?;
     let vae = models::resolve(cli.vae.clone(), vae_spec(a).context("VAE")?)?;
@@ -264,7 +274,7 @@ pub fn encode_texts(dev: &Arc<Device>, a: Arch, te_path: &Path, texts: &[String]
                 t5_ids.push(q);
             }
         }
-        Arch::Moss | Arch::Sdxl => unreachable!(),
+        Arch::Moss | Arch::Sdxl | Arch::H3Image => unreachable!(),
     }
     let taps: Vec<usize> = match a {
         Arch::Krea2 => crate::krea2::TAPS.to_vec(),

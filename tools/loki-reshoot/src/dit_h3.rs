@@ -5,6 +5,9 @@
 //! Port of ComfyUI `comfy/ldm/minimax/model.py` (MiniMaxH3Model.forward incl. the audio-carry conversion).
 //! Also runs FastH3 Omni (FastVideo's 8-step distilled finetune): same blocks, an int8 token refiner, a PDD bank of
 //! output heads (see `PddHeads`) and Video Sparse Attention (`crate::vsa`, with its `to_gate_compress` coarse gates).
+//! And MiniMax-H3-Image (`MiniMaxH3ImageModel`): the same stack without the audio stream ([text | reference images |
+//! target image], one latent frame), with a 6-head PDD bank distilled on the checkpoint's own sigma grid (`pdd_sigmas`
+//! in its metadata); see `forward_image`.
 //!
 //! Per block and forward:
 //!   phase 1 (row chunks of `chunk` rows): RMSNorm+adaLN+ConvRot int8 quant -> K|V int8 GEMM -> fused k RMSNorm +
@@ -119,8 +122,8 @@ pub struct Dit {
     fin_norm: Tensor,
     vout_w: Tensor,
     vout_b: Tensor,
-    aout_w: Tensor,
-    aout_b: Tensor,
+    /// audio output head (f32 [32, 5376] + bias); None for the image model
+    aout: Option<(Tensor, Tensor)>,
     /// FastH3 PDD head bank; vout_*/aout_* then hold the per-step blend
     pdd: Option<PddHeads>,
     /// VSA enabled (gates loaded): steps at sigma <= this run sparse
@@ -129,8 +132,8 @@ pub struct Dit {
     gates: Option<GateStream>,
     vproj_wt: Tensor, // f32 [96, 5376] (transposed)
     vproj_b: Tensor,
-    aproj_wt: Tensor, // f32 [32, 5376]
-    aproj_b: Tensor,
+    /// audio patch embedding f32 [32, 5376] + bias; None for the image model (no audio stream)
+    aproj: Option<(Tensor, Tensor)>,
     t_table: Vec<f32>, // [1025, 8]
     inv_freq: Vec<f32>,
     pub path: PathBuf,
@@ -144,6 +147,27 @@ struct PddHeads {
     video_b: Vec<f32>,
     audio_w: Vec<f32>,
     audio_b: Vec<f32>,
+    /// the decreasing sigma grid (n + 1 points) the heads were distilled on, when the checkpoint declares one
+    /// (MiniMax-H3-Image `pdd_sigmas`); else the shifted uniform grid of the video models
+    grid: Option<Vec<f64>>,
+}
+
+/// Head interval [start, stop) on an explicit decreasing `grid` (n + 1 points) for the step at `sigma` of `sigmas`: the
+/// grid points nearest to the step's sigma and to the next one (ComfyUI `FinalLayer.forward`).
+pub fn pdd_span_grid(grid: &[f64], sigmas: &[f64], sigma: f64) -> (usize, usize) {
+    let n = grid.len() - 1;
+    let i = (0..sigmas.len()).min_by(|&a, &b| (sigmas[a] - sigma).abs().total_cmp(&(sigmas[b] - sigma).abs())).unwrap_or(0);
+    let next = sigmas[(i + 1).min(sigmas.len() - 1)];
+    let at = |s: f64| (0..=n).min_by(|&a, &b| (grid[a] - s).abs().total_cmp(&(grid[b] - s).abs())).unwrap_or(0);
+    let start = at(sigma).min(n - 1);
+    (start, at(next).max(start + 1))
+}
+
+/// Blend weights of heads start..stop on an explicit grid: their dt, normalized.
+pub fn pdd_weights_grid(grid: &[f64], start: usize, stop: usize) -> Vec<f64> {
+    let dt: Vec<f64> = (start..stop).map(|k| grid[k] - grid[k + 1]).collect();
+    let sum: f64 = dt.iter().sum();
+    dt.iter().map(|d| d / sum).collect()
 }
 
 /// Head interval [start, stop) of an `n`-head PDD bank for the step at `sigma` of the schedule `sigmas`: the step's sigma
@@ -835,19 +859,27 @@ impl Dit {
         let fin_norm = l.bf16("final_layer.norm.weight")?;
         let heads = st.info("final_layer.video_out.weight")?.shape[0];
         ensure!(heads % 96 == 0, "unexpected final_layer.video_out rows {heads}");
-        let (vout_w, vout_b, aout_w, aout_b, pdd) = if heads == 96 {
-            (l.f32("final_layer.video_out.weight")?, l.f32("final_layer.video_out.bias")?, l.f32("final_layer.audio_out.weight")?, l.f32("final_layer.audio_out.bias")?, None)
+        // the image model has no audio stream
+        let audio = st.has("audio_patch_proj.weight");
+        // a checkpoint's own PDD grid (MiniMax-H3-Image: {"transformer": {"pdd_steps", "pdd_sigmas"}} in the metadata)
+        let grid: Option<Vec<f64>> = st
+            .metadata
+            .get("config")
+            .and_then(|c| serde_json::from_str::<serde_json::Value>(c).ok())
+            .and_then(|c| c["transformer"]["pdd_sigmas"].as_array().map(|a| a.iter().filter_map(|v| v.as_f64()).collect()));
+        let (vout_w, vout_b, aout, pdd) = if heads == 96 {
+            let aout = if audio { Some((l.f32("final_layer.audio_out.weight")?, l.f32("final_layer.audio_out.bias")?)) } else { None };
+            (l.f32("final_layer.video_out.weight")?, l.f32("final_layer.video_out.bias")?, aout, None)
         } else {
-            let p = PddHeads {
-                n: heads / 96,
-                video_w: st.f32s("final_layer.video_out.weight")?,
-                video_b: st.f32s("final_layer.video_out.bias")?,
-                audio_w: st.f32s("final_layer.audio_out.weight")?,
-                audio_b: st.f32s("final_layer.audio_out.bias")?,
-            };
-            ensure!(p.audio_w.len() == p.n * 32 * HIDDEN && p.audio_b.len() == p.n * 32, "PDD audio heads do not match the video heads");
-            crate::info!("  dit: PDD output heads x{}", p.n);
-            (Tensor::new(&dev, DType::F32, &[96, HIDDEN])?, Tensor::new(&dev, DType::F32, &[96])?, Tensor::new(&dev, DType::F32, &[32, HIDDEN])?, Tensor::new(&dev, DType::F32, &[32])?, Some(p))
+            let (audio_w, audio_b) = if audio { (st.f32s("final_layer.audio_out.weight")?, st.f32s("final_layer.audio_out.bias")?) } else { (Vec::new(), Vec::new()) };
+            let p = PddHeads { n: heads / 96, video_w: st.f32s("final_layer.video_out.weight")?, video_b: st.f32s("final_layer.video_out.bias")?, audio_w, audio_b, grid };
+            ensure!(!audio || (p.audio_w.len() == p.n * 32 * HIDDEN && p.audio_b.len() == p.n * 32), "PDD audio heads do not match the video heads");
+            if let Some(g) = &p.grid {
+                ensure!(g.len() == p.n + 1 && g.windows(2).all(|w| w[0] > w[1]), "pdd_sigmas: expected {} decreasing values, got {g:?}", p.n + 1);
+            }
+            crate::info!("  dit: PDD output heads x{}{}", p.n, if p.grid.is_some() { " (own sigma grid)" } else { "" });
+            let aout = if audio { Some((Tensor::new(&dev, DType::F32, &[32, HIDDEN])?, Tensor::new(&dev, DType::F32, &[32])?)) } else { None };
+            (Tensor::new(&dev, DType::F32, &[96, HIDDEN])?, Tensor::new(&dev, DType::F32, &[96])?, aout, Some(p))
         };
         let transpose = |name: &str, k: usize| -> Result<Tensor> {
             let w = st.f32s(name)?; // [N, k]
@@ -862,8 +894,7 @@ impl Dit {
         };
         let vproj_wt = transpose("video_patch_proj.weight", 96)?;
         let vproj_b = l.f32("video_patch_proj.bias")?;
-        let aproj_wt = transpose("audio_patch_proj.weight", 32)?;
-        let aproj_b = l.f32("audio_patch_proj.bias")?;
+        let aproj = if audio { Some((transpose("audio_patch_proj.weight", 32)?, l.f32("audio_patch_proj.bias")?)) } else { None };
         let t_table = st.f32s("adaln_t_table")?;
         ensure!(t_table.len() == 1025 * T_DIM, "unexpected adaln_t_table size");
         let inv_freq = st.f32s("rope.inv_freq")?;
@@ -890,15 +921,13 @@ impl Dit {
             fin_norm,
             vout_w,
             vout_b,
-            aout_w,
-            aout_b,
+            aout,
             pdd,
             vsa_max_sigma: vsa,
             gates,
             vproj_wt,
             vproj_b,
-            aproj_wt,
-            aproj_b,
+            aproj,
             t_table,
             inv_freq,
             path: path.to_path_buf(),
@@ -910,20 +939,38 @@ impl Dit {
         self.pdd.as_ref().map_or(1, |p| p.n)
     }
 
+    /// The image model (MiniMax-H3-Image): no audio stream, one latent frame, run with `forward_image`.
+    pub fn is_image(&self) -> bool {
+        self.aproj.is_none()
+    }
+
+    /// The decreasing sigma grid the PDD heads were distilled on, when the checkpoint declares one (the image model).
+    pub fn pdd_grid(&self) -> Option<&[f64]> {
+        self.pdd.as_ref().and_then(|p| p.grid.as_deref())
+    }
+
     /// Blend the PDD heads for the step at `sigma` into the output head tensors (once per step interval).
     fn set_pdd_heads(&self, run: &mut Run, sigma: f32) -> Result<()> {
         let Some(p) = &self.pdd else { return Ok(()) };
         ensure!(run.sigmas.len() >= 2, "PDD output heads need the sampler's sigma schedule (Run::sigmas)");
-        let span = pdd_span(p.n, &run.sigmas, sigma as f64, SHIFT_VIDEO as f64);
+        let span = match &p.grid {
+            Some(g) => pdd_span_grid(g, &run.sigmas, sigma as f64),
+            None => pdd_span(p.n, &run.sigmas, sigma as f64, SHIFT_VIDEO as f64),
+        };
         if run.head_span == Some(span) {
             return Ok(());
         }
         let as_bytes = |v: &[f32]| -> Vec<u8> { v.iter().flat_map(|x| x.to_le_bytes()).collect() };
-        for (w, b, rows, shift, tw, tb) in [
-            (&p.video_w, &p.video_b, 96, SHIFT_VIDEO, &self.vout_w, &self.vout_b),
-            (&p.audio_w, &p.audio_b, 32, SHIFT_AUDIO, &self.aout_w, &self.aout_b),
-        ] {
-            let (hw, hb) = pdd_blend(w, b, rows, HIDDEN, span.0, &pdd_weights(p.n, span.0, span.1, shift as f64));
+        let mut streams = vec![(&p.video_w, &p.video_b, 96, SHIFT_VIDEO, &self.vout_w, &self.vout_b)];
+        if let Some((aw, ab)) = &self.aout {
+            streams.push((&p.audio_w, &p.audio_b, 32, SHIFT_AUDIO, aw, ab));
+        }
+        for (w, b, rows, shift, tw, tb) in streams {
+            let wts = match &p.grid {
+                Some(g) => pdd_weights_grid(g, span.0, span.1),
+                None => pdd_weights(p.n, span.0, span.1, shift as f64),
+            };
+            let (hw, hb) = pdd_blend(w, b, rows, HIDDEN, span.0, &wts);
             self.dev.htod_at(tw.ptr, &as_bytes(&hw))?;
             self.dev.htod_at(tb.ptr, &as_bytes(&hb))?;
         }
@@ -979,7 +1026,12 @@ impl Dit {
     #[allow(clippy::too_many_arguments)]
     fn embed_map(&self, src: &Tensor, video: bool, t: usize, h: usize, w: usize, nrows: usize, in_scale: f32, out: u64, rowmap: u64) -> Result<()> {
         ensure!(src.dtype == DType::F32, "embed: latent must be f32");
-        let (wt, b, kf) = if video { (&self.vproj_wt, &self.vproj_b, 96) } else { (&self.aproj_wt, &self.aproj_b, 32) };
+        let (wt, b, kf) = if video {
+            (&self.vproj_wt, &self.vproj_b, 96)
+        } else {
+            let (w, b) = self.aproj.as_ref().context("audio embedding on a model without an audio stream")?;
+            (w, b, 32)
+        };
         if nrows == 0 {
             return Ok(());
         }
@@ -1129,7 +1181,11 @@ impl Dit {
         ensure!(inp.text_tags.len() == l, "text_tags length {} != text length {l}", inp.text_tags.len());
         let (lt, lh, lw, ta) = (inp.latent_t, inp.latent_h, inp.latent_w, inp.audio_t);
         ensure!(lh % 2 == 0 && lw % 2 == 0, "latent h/w must be even (got {lh}x{lw})");
-        ensure!(lt > 0 && ta > 0, "empty target");
+        if self.is_image() {
+            ensure!(lt == 1 && ta == 0, "the image model denoises one latent frame without audio (got {lt} frames, {ta} audio)");
+        } else {
+            ensure!(lt > 0 && ta > 0, "empty target");
+        }
 
         // ---------------- layout (PackedLayout)
         let (frame, w_grid) = frame_grid(lh, lw);
@@ -1474,13 +1530,27 @@ impl Dit {
     /// ComfyUI MiniMaxH3Model.forward(x=[video, carried audio], timestep=sigma*1000): writes the (negated)
     /// velocity for the video and for the carried audio variable.
     pub fn forward(&self, run: &mut Run, x_video: &Tensor, x_audio: &Tensor, sigma: f32, out_video: &Tensor, out_audio: &Tensor) -> Result<()> {
+        ensure!(!self.is_image(), "the image model runs with forward_image");
+        self.forward_av(run, x_video, Some((x_audio, out_audio)), sigma, out_video)
+    }
+
+    /// MiniMaxH3ImageModel.forward(x=[24, 1, h, w], timestep=sigma*1000): writes the (negated) velocity of the image
+    /// latent. Text and target follow t = 1 - sigma, reference images max(t, 0.999).
+    pub fn forward_image(&self, run: &mut Run, x: &Tensor, sigma: f32, out: &Tensor) -> Result<()> {
+        ensure!(self.is_image(), "forward_image needs the image model (this checkpoint has an audio stream)");
+        self.forward_av(run, x, None, sigma, out)
+    }
+
+    fn forward_av(&self, run: &mut Run, x_video: &Tensor, audio: Option<(&Tensor, &Tensor)>, sigma: f32, out_video: &Tensor) -> Result<()> {
         let dev = &self.dev;
         let pr = &self.prof;
         let (lt, lh, lw, ta) = (run.lt, run.lh, run.lw, run.audio_t);
         ensure!(x_video.numel() == 24 * lt * lh * lw && x_video.dtype == DType::F32, "x_video must be f32 [24,{lt},{lh},{lw}]");
-        ensure!(x_audio.numel() == 64 * ta && x_audio.dtype == DType::F32, "x_audio must be f32 [32,2,{ta}]");
         ensure!(out_video.numel() == x_video.numel() && out_video.dtype == DType::F32, "out_video shape");
-        ensure!(out_audio.numel() == x_audio.numel() && out_audio.dtype == DType::F32, "out_audio shape");
+        if let Some((x_audio, out_audio)) = audio {
+            ensure!(x_audio.numel() == 64 * ta && x_audio.dtype == DType::F32, "x_audio must be f32 [32,2,{ta}]");
+            ensure!(out_audio.numel() == x_audio.numel() && out_audio.dtype == DType::F32, "out_audio shape");
+        }
         let seq = run.seq;
 
         // ---- timesteps (f32 like torch) and adaLN tables
@@ -1497,7 +1567,9 @@ impl Dit {
         // ---- embed
         pr.time(dev, "embed", || {
             dev.dtod(run.x.ptr, run.prefix_x.ptr, run.prefix * HIDDEN * 2)?;
-            self.embed(x_audio, false, ta, 0, 0, 2 * ta, carry, run.x.ptr + (run.a0 * HIDDEN * 2) as u64)?;
+            if let Some((x_audio, _)) = audio {
+                self.embed(x_audio, false, ta, 0, 0, 2 * ta, carry, run.x.ptr + (run.a0 * HIDDEN * 2) as u64)?;
+            }
             match &run.vsa {
                 Some(v) => {
                     self.embed_map(x_video, true, lt, lh, lw, run.n_video, 1.0, run.x.ptr, v.vmap.ptr)?;
@@ -1699,7 +1771,11 @@ impl Dit {
         let coef = 1.0 + (audio_scale - 1.0) * s_a;
         pr.time(dev, "final", || {
             let vmap = run.vsa.as_ref().map_or(0, |v| v.vmap.ptr);
-            for (start, rows, video) in [(run.v0, run.n_video, true), (run.a0, 2 * ta, false)] {
+            let mut streams = vec![(run.v0, run.n_video, true)];
+            if audio.is_some() {
+                streams.push((run.a0, 2 * ta, false));
+            }
+            for (start, rows, video) in streams {
                 let cls_i = if video { 0 } else { 1 };
                 let shift = run.fmod.ptr + ((cls_i * 2) * HIDDEN * 4) as u64;
                 let scale = run.fmod.ptr + ((cls_i * 2 + 1) * HIDDEN * 4) as u64;
@@ -1716,8 +1792,14 @@ impl Dit {
                         0,
                         &[Arg::Ptr(src), Arg::I32(n as i32), Arg::I32(HIDDEN as i32), Arg::Ptr(self.fin_norm.ptr), Arg::F32(EPS), Arg::Ptr(shift), Arg::Ptr(scale), Arg::Ptr(run.big.ptr), Arg::Ptr(map)],
                     )?;
-                    let (w, bias, no, kind, t) = if video { (&self.vout_w, &self.vout_b, 96, 0, lt) } else { (&self.aout_w, &self.aout_b, 32, 1, ta) };
-                    let (yp, alpha, beta, out) = if video { (0u64, 0.0f32, 1.0f32, out_video) } else { (x_audio.ptr, 1.0 - audio_scale, coef, out_audio) };
+                    let (w, bias, no, kind, t) = match (video, &self.aout) {
+                        (false, Some((aw, ab))) => (aw, ab, 32, 1, ta),
+                        _ => (&self.vout_w, &self.vout_b, 96, 0, lt),
+                    };
+                    let (yp, alpha, beta, out) = match (video, audio) {
+                        (false, Some((x_audio, out_audio))) => (x_audio.ptr, 1.0 - audio_scale, coef, out_audio),
+                        _ => (0u64, 0.0f32, 1.0f32, out_video),
+                    };
                     dev.launch(
                         "k_h3_head",
                         (((n + 63) / 64) as u32, 1, 1),

@@ -758,8 +758,9 @@ impl TextEncoder {
         &self.dev
     }
 
-    /// Token / vision-block layout of the presentation (MiniMaxH3Tokenizer.tokenize_with_weights).
-    fn layout(&self, prompt: &str, items: &[RefItem]) -> Result<(Vec<Seg>, Vec<VisionBlockIn>)> {
+    /// Token / vision-block layout of the presentation (MiniMaxH3Tokenizer.tokenize_with_weights). `image_labels`: the
+    /// MiniMax-H3-Image presentation, whose pictures are labelled "Picture i: " instead of "<Picture i>: ".
+    fn layout(&self, prompt: &str, items: &[RefItem], image_labels: bool) -> Result<(Vec<Seg>, Vec<VisionBlockIn>)> {
         let mut segs = Vec::new();
         let mut vis = Vec::new();
         let tok = &self.tok;
@@ -774,7 +775,7 @@ impl TextEncoder {
                 RefItem::Image { w, h, rgb } => {
                     ensure!(rgb.len() == w * h * 3, "image buffer size mismatch");
                     ni += 1;
-                    add_text(&mut segs, &format!("<Picture {ni}>: "));
+                    add_text(&mut segs, &if image_labels { format!("Picture {ni}: ") } else { format!("<Picture {ni}>: ") });
                     let (hb, wb) = vision_size(*h, *w);
                     vis.push(VisionBlockIn { f0: vision_pixels(*w, *h, rgb, hb, wb), f1: None, hb, wb });
                     segs.push(Seg::Vision(vis.len() - 1));
@@ -817,7 +818,7 @@ impl TextEncoder {
 
     /// Token ids of the presentation with each vision block collapsed to one `-1` entry (for checks).
     pub fn tokenize(&self, prompt: &str, items: &[RefItem]) -> Result<Vec<i64>> {
-        let (segs, _) = self.layout(prompt, items)?;
+        let (segs, _) = self.layout(prompt, items, false)?;
         let mut out = Vec::new();
         for s in &segs {
             match s {
@@ -844,9 +845,28 @@ impl TextEncoder {
     }
 
     pub fn encode(&self, prompt: &str, items: &[RefItem]) -> Result<Conditioning> {
+        self.encode_with(prompt, items, false)
+    }
+
+    /// MiniMax-H3-Image conditioning: the pictures (`RefItem::Image` only) labelled "Picture i: ", then the prompt.
+    pub fn encode_image(&self, prompt: &str, images: &[RefItem]) -> Result<Conditioning> {
+        ensure!(images.iter().all(|i| matches!(i, RefItem::Image { .. })), "the image model takes picture references only");
+        self.encode_with(prompt, images, true)
+    }
+
+    /// Token ids of the MiniMax-H3-Image presentation (vision blocks collapsed to `-1`).
+    pub fn tokenize_image(&self, prompt: &str, images: &[RefItem]) -> Result<Vec<i64>> {
+        let (segs, _) = self.layout(prompt, images, true)?;
+        Ok(segs.iter().flat_map(|s| match s {
+            Seg::Text(t) => t.iter().map(|&v| v as i64).collect::<Vec<_>>(),
+            Seg::Vision(_) => vec![VISION_START as i64, -1, VISION_END as i64],
+        }).collect())
+    }
+
+    fn encode_with(&self, prompt: &str, items: &[RefItem], image_labels: bool) -> Result<Conditioning> {
         let dev = &self.dev;
         let t0 = std::time::Instant::now();
-        let (segs, vis_in) = self.layout(prompt, items)?;
+        let (segs, vis_in) = self.layout(prompt, items, image_labels)?;
         // ---- vision tower per block
         let mut vis = Vec::with_capacity(vis_in.len());
         for v in &vis_in {
@@ -1012,7 +1032,7 @@ impl TextEncoder {
 impl TextEncoder {
     /// Debug: vision-tower outputs (merged, 3 deepstack) as host f32 for every vision block of `items`.
     pub fn vision_features(&self, items: &[RefItem]) -> Result<Vec<(Vec<f32>, Vec<Vec<f32>>)>> {
-        let (_, vis_in) = self.layout("", items)?;
+        let (_, vis_in) = self.layout("", items, false)?;
         let mut out = Vec::new();
         for v in &vis_in {
             let patches = patchify(&v.f0, v.f1.as_ref().unwrap_or(&v.f0), v.hb, v.wb);

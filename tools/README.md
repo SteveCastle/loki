@@ -55,10 +55,10 @@ input and its path is printed, so the tools chain: `loki-retouch --preset restor
 
 | tool | does | model | dir |
 |---|---|---|---|
-| **loki-retouch** | edit images by prompt, upscale, restore, composite, wallpapers | Qwen Image 2.1 | [`loki-retouch/`](loki-retouch) |
-| **loki-reshoot** | reference images / videos / audio → video with generated sound | MiniMax H3, or FastH3 Omni (`--model fast`, 8 steps) | [`loki-reshoot/`](loki-reshoot) |
+| **loki-retouch** | edit images by prompt, upscale, restore, composite, wallpapers | Qwen Image 2.1, or MiniMax H3 Image (`--model h3`: up to 16 pictures, native 4-16 MP) | [`loki-retouch/`](loki-retouch) |
+| **loki-reshoot** | reference images / videos / audio → video with generated sound | MiniMax H3, or FastH3 Omni (`--model fast`, 8 steps); two-pass by default (low-res pass, learned latent upscale, refine) | [`loki-reshoot/`](loki-reshoot) |
 | **loki-segment** | concept / click / box segmentation of images, tracked roto masks of video (`--serve` for editors) | Meta SAM 3.1 | [`loki-segment/`](loki-segment) |
-| **loki-dream** | text -> image, img2img, inpainting, LoRAs, 8-step turbo (`--turbo`) | Kromoss (MOSS-Image fine-tune), Krea 2, FLUX.2 klein, Anima or SDXL (`--model FILE`, detected from the file) | [`loki-dream/`](loki-dream) |
+| **loki-dream** | text -> image, img2img, inpainting, LoRAs, 8-step turbo (`--turbo`) | Kromoss (MOSS-Image fine-tune), Krea 2, FLUX.2 klein, Anima, SDXL or MiniMax H3 Image (`--model FILE`, detected from the file; `--arch h3`, reference pictures with `--ref`) | [`loki-dream/`](loki-dream) |
 
 They share one set of conventions (streams, flags, exit codes, model discovery, and `--worker`, the resident mode that keeps
 models on the GPU between requests): see [`CONVENTIONS.md`](CONVENTIONS.md).

@@ -1,14 +1,14 @@
 ---
 name: loki-dream
-description: Generate images from text with the local loki-dream CLI (Kromoss / MOSS-Image by default, or a Krea 2, FLUX.2 klein, Anima or SDXL checkpoint via --model; Rust/CUDA, no Python/ComfyUI). Use when the user wants a new image from a prompt, several variations, a fast 8-step draft (--turbo), an img2img variation of an existing picture, inpainting a masked region, a LoRA applied, or a structured layout prompt (text and objects placed in boxes). Composes with loki-retouch / loki-segment / loki-reshoot through stdin/stdout.
+description: Generate images from text with the local loki-dream CLI (Kromoss / MOSS-Image by default, or a Krea 2, FLUX.2 klein, Anima, SDXL or MiniMax H3 Image checkpoint via --model / --arch; Rust/CUDA, no Python/ComfyUI). Use when the user wants a new image from a prompt, several variations, a fast 8-step draft (--turbo), a native 4-16 MP image or one built from up to 16 reference pictures (MiniMax H3 Image, --arch h3 -r FILE), an img2img variation of an existing picture, inpainting a masked region, a LoRA applied, or a structured layout prompt (text and objects placed in boxes). Composes with loki-retouch / loki-segment / loki-reshoot through stdin/stdout.
 ---
 
 # loki-dream: prompt in, image out
 
 `loki-dream` runs Kromoss (lodestones' full fine-tune of OpenMOSS MOSS-Image, 5B DiT) with the Qwen3.5-9B text encoder and
 the FLUX.2 small VAE, locally on the NVIDIA GPU (RTX 4090 class, 24 GB) in a standalone engine. `--model FILE` (alias `--dit`, a
-path or a bare file name in the model folders) swaps in any Krea 2, FLUX.2 klein (4B/9B), Anima or SDXL-architecture checkpoint instead: the
-architecture is detected from the file and its own text encoder, VAE, schedule and defaults follow (`--arch krea2|flux2|anima|sdxl`
+path or a bare file name in the model folders) swaps in any Krea 2, FLUX.2 klein (4B/9B), Anima, SDXL-architecture or MiniMax H3 Image checkpoint instead: the
+architecture is detected from the file and its own text encoder, VAE, schedule and defaults follow (`--arch krea2|flux2|anima|sdxl|h3`
 picks an architecture's default model). Other architectures (FLUX.1, SD 1.x/2.x, SDXL refiners, Qwen-Image, ...) are refused with their name. It is one of the `loki-`
 toolkit's small composable tools: `loki-retouch` edits images, `loki-segment` makes masks, `loki-reshoot` animates them.
 
@@ -32,6 +32,8 @@ toolkit's small composable tools: `loki-retouch` edits images, `loki-segment` ma
 |---|---|
 | one image | `loki-dream -p "a tabby cat holding a sign that says HELLO" -o cat.png` |
 | another model | `loki-dream --model krea2_turbo_fp8_scaled -p "..."` (Krea 2: photoreal), `--model flux-2-klein-4b` (FLUX.2 klein: fast, 4 steps), `--model anima-base-v1.0` (anime/illustration; tags like `masterpiece, best quality, safe, 1girl, ...`), any SDXL checkpoint by file (`--sampler`, `--scheduler`, `(word:1.2)` weighting) |
+| MiniMax H3 Image: big, detailed, good text | `loki-dream --arch h3 -P caption.txt` (2048x2048 default; `--size 4096x4096` or `--aspect 16:9 --megapixels 16` for its native ~16 MP; 6 steps, CFG 1, ~35-55 s cold). Give it a long, specific English caption of the whole image |
+| from reference pictures (H3) | `loki-dream --arch h3 -r person.png -r room.png -p "<Picture 1> reading in the armchair of <Picture 2>, ..."` (up to 16 `-r`, named `<Picture n>` in order; Picture 1's size is the default output) |
 | fast drafts (8 steps, ~10x faster) | `loki-dream --turbo --count 4 -o drafts/ -p "..."` |
 | best quality | default: 50 steps, CFG 3 (official settings) |
 | widescreen / portrait | `--aspect 16:9` or `--size 1344x768` (about 1 MP is the sweet spot; multiples of 16) |
@@ -45,6 +47,7 @@ toolkit's small composable tools: `loki-retouch` edits images, `loki-segment` ma
 ## Prompts
 - Describe the image (subject, setting, style, lighting, camera); quoted text in the prompt is rendered as text.
 - `--negative` only matters with CFG > 1 (not --turbo, not distilled Krea 2 / klein / Anima Turbo checkpoints, which run at CFG 1).
+- MiniMax H3 Image is distilled (6 steps, CFG 1): no `--cfg`, `--negative`, `--shift`, `--mask` or LoRAs. `--init` img2img works. Under 4 MP it draws at 4 MP and resamples. To change an existing picture rather than draw a new one from it, use `loki-retouch --model h3`.
 - Each model's defaults are its official ones (see --help MODELS); `--steps` / `--cfg` override them. `--cfg` is classic CFG
   everywhere (Krea 2's own "guidance 4.5" is `--cfg 5.5`).
 - Masks from loki-segment chain directly: `loki-segment -p sky -o sky.png photo.jpg && loki-dream --init photo.jpg --mask sky.png --strength 1 -p "a sky full of balloons"`.

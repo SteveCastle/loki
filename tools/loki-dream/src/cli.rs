@@ -1,5 +1,6 @@
-//! Command-line front end of loki-dream: text -> image with Kromoss (MOSS-Image), Krea 2, FLUX.2 klein or Anima, plus
-//! img2img, inpainting and (MOSS-Image) LoRAs. The diffusion model file decides the architecture (`arch::detect`).
+//! Command-line front end of loki-dream: text -> image with Kromoss (MOSS-Image), Krea 2, FLUX.2 klein, Anima, SDXL or
+//! MiniMax H3 Image, plus img2img, inpainting, (MOSS-Image) LoRAs and (H3) reference pictures. The diffusion model file
+//! decides the architecture (`arch::detect`).
 //!
 //! loki- toolkit conventions: results are written to files whose paths are printed on stdout (one per line), or one JSON
 //! object for the run with `--json`, or the PNG itself with `-o -`; progress and diagnostics go to stderr only (`-q`
@@ -43,6 +44,7 @@ MODELS (the diffusion model file decides the architecture; it is detected from t
   anima   Anima (base / aesthetic / turbo) Qwen3-0.6B + Qwen-Image VAE    30 steps CFG 4; turbo 10 steps CFG 1
   sdxl    SDXL and SDXL-architecture checkpoints (UNet, CLIP-L + bigG and VAE in one file; default: SDXL base 1.0)
                                                                           30 steps CFG 6; distilled 8 steps CFG 1
+  h3      MiniMax H3 Image (33B, 4-16 MP native) Qwen3-VL-32B + H3 VAE   6 steps CFG 1 (distilled; --ref pictures)
   Which variant a checkpoint is goes by its name: Krea 2 is turbo unless named raw/base (its fine-tunes are turbo-based),
   klein is distilled unless named base, Anima is base unless named turbo, SDXL is distilled when named lightning / turbo /
   hyper / dmd / lcm; --turbo forces the distilled settings and --steps / --cfg override any default. Other architectures
@@ -52,6 +54,9 @@ SIZE (default 1024x1024; the models work in multiples of 16 pixels, SDXL 32; abo
   --size WxH | --aspect W:H [--megapixels MP (default 1)] | --megapixels MP (square)
   A size that is not a multiple of 16 is generated at the nearest multiple and Lanczos-resampled to exactly what you
   asked (--snap keeps the multiple of 16). With --init and no size flag: the init image's own size.
+  MiniMax H3 Image works on a 32 px grid from 4 to ~22 MP: default 2048x2048 (with --ref: <Picture 1>'s size, short
+  edge 1024-2048), best around 16 MP (4096x4096, 4736x3552, 5024x3360, 5472x3072, 6272x2688 and their portraits;
+  --megapixels 16 with --aspect). Below 4 MP it draws at 4 MP and resamples down, like the official pipeline.
 
 SAMPLING
   Flow-matching Euler with each model's official schedule (MOSS-Image: shift 5 snapped to the training grid, the negative
@@ -69,6 +74,12 @@ IMG2IMG / INPAINT
   --mask MASK (with --init)  white = regenerate, black = keep, grey = in between; any size (resized to the init). The
                              kept area is re-imposed every step and composited back at full resolution.
 
+REFERENCE PICTURES (MiniMax H3 Image)
+  -r/--ref FILE (up to 16) are <Picture 1>, <Picture 2>, ... in the prompt: people, products, styles or layouts to draw
+  from (\"the woman from <Picture 1> holding the bag from <Picture 2>, on the street of <Picture 3>\"). The model reads
+  long, specific English descriptions of the whole image best. To change one picture (keep everything else), edit it
+  with loki-retouch --model h3. No CFG, negative prompt, --shift, --mask or LoRAs: it is distilled to 6 steps at CFG 1.
+
 LAYOUT PROMPTS (MOSS-Image)
   MOSS-Image understands a structured layout prompt: a compact JSON object given as the prompt, e.g.
   {\"summary\":{\"caption\":\"a poster for a jazz night\"},\"items\":[{\"label\":\"text\",\"caption\":\"title\",\"text\":\"BLUE NOTE\",
@@ -85,11 +96,13 @@ EXAMPLES
   PROG --arch anima -p \"masterpiece, best quality, 1girl, silver hair, night city\"
   PROG --init photo.jpg --mask sky.png --strength 1 -p \"a sky full of hot air balloons\"
   PROG --lora style.safetensors:0.8 -p \"...\"                             # any MOSS-Image LoRA (kohya/ComfyUI/diffusers keys)
+  PROG --arch h3 --size 4096x4096 -P long_caption.txt                    # MiniMax H3 Image, native 16 MP
+  PROG --arch h3 -r face.png -r jacket.png -p \"<Picture 1> wearing the jacket from <Picture 2>, studio portrait\"
   PROG --turbo -o - -p \"a red apple\" | loki-reshoot --animate - -d 5 -o apple.mp4
 ";
 
 #[derive(Parser, Debug)]
-#[command(version, about = "loki-dream: text-to-image on a standalone CUDA engine: Kromoss (MOSS-Image), Krea 2, FLUX.2 klein and Anima, each with its own text encoder and VAE. Text to image, img2img, inpainting, LoRAs (MOSS-Image), turbo. Part of the loki- toolkit.", after_help = HELP)]
+#[command(version, about = "loki-dream: text-to-image on a standalone CUDA engine: Kromoss (MOSS-Image), Krea 2, FLUX.2 klein, Anima, SDXL and MiniMax H3 Image, each with its own text encoder and VAE. Text to image, img2img, inpainting, LoRAs (MOSS-Image), reference pictures (H3), turbo. Part of the loki- toolkit.", after_help = HELP)]
 pub(crate) struct Cli {
     /// What to draw. Repeatable: several prompts in one run (models load once).
     #[arg(short, long)]
@@ -164,6 +177,10 @@ pub(crate) struct Cli {
     /// Inpainting mask for --init: white = regenerate, black = keep; soft edges respected; any size.
     #[arg(long, value_name = "MASK")]
     pub(crate) mask: Option<PathBuf>,
+    /// Reference picture (repeatable, up to 16; MiniMax H3 Image): the prompt calls them <Picture 1>, <Picture 2>, ...
+    /// in the order given (people, products, styles, layouts to draw from). Picture 1's size is the default output size.
+    #[arg(short = 'r', long = "ref", value_name = "FILE")]
+    pub(crate) refs: Vec<PathBuf>,
 
     /// Output PNG path, an existing folder, or `-` for the PNG on stdout.
     #[arg(short, long)]
@@ -186,19 +203,19 @@ pub(crate) struct Cli {
     /// GPU in bf16, else bf16).
     #[arg(long, value_name = "int8|bf16")]
     pub(crate) precision: Option<String>,
-    /// Diffusion model file (alias --model): Kromoss or a MOSS-Image fine-tune, a Krea 2, FLUX.2 klein or Anima
-    /// checkpoint (bf16, fp16, fp8 or int8 ConvRot). The architecture is detected from the file. A bare file name is
-    /// looked up in the models folders. Default: $LOKI_DREAM_DIT, else --arch's default model.
+    /// Diffusion model file (alias --model): Kromoss or a MOSS-Image fine-tune, a Krea 2, FLUX.2 klein, Anima, SDXL or
+    /// MiniMax H3 Image checkpoint (bf16, fp16, fp8 or int8 ConvRot). The architecture is detected from the file. A bare
+    /// file name is looked up in the models folders. Default: $LOKI_DREAM_DIT, else --arch's default model.
     #[arg(long, visible_alias = "model", short = 'm')]
     pub(crate) dit: Option<PathBuf>,
-    /// Architecture whose default model to use when no --model is given: moss (default), krea2, flux2, anima.
+    /// Architecture whose default model to use when no --model is given: moss (default), krea2, flux2, anima, sdxl, h3.
     /// With --model it must match the file.
     #[arg(long, value_name = "NAME")]
     pub(crate) arch: Option<String>,
-    /// Text encoder file (the architecture's own: Qwen3.5-9B, Qwen3-VL-4B, Qwen3-4B / 8B or Qwen3-0.6B).
+    /// Text encoder file (the architecture's own: Qwen3.5-9B, Qwen3-VL-4B, Qwen3-4B / 8B, Qwen3-0.6B or Qwen3-VL-32B).
     #[arg(long)]
     pub(crate) text_encoder: Option<PathBuf>,
-    /// VAE file (FLUX.2 small / full VAE or Qwen-Image VAE, by architecture).
+    /// VAE file (FLUX.2 small / full VAE, Qwen-Image VAE or the H3 Image VAE, by architecture).
     #[arg(long)]
     pub(crate) vae: Option<PathBuf>,
 
@@ -230,8 +247,42 @@ fn round_to(x: f64, align: usize) -> usize {
     (((x / align as f64).round() as usize) * align).max(align)
 }
 
-/// ((generated w, h), (delivered w, h)); generated sizes are multiples of `align` (16, SDXL 32).
-fn target_size(cli: &Cli, init: Option<(usize, usize)>, align: usize) -> Result<((usize, usize), (usize, usize))> {
+/// An architecture's canvas rules for `target_size`.
+pub(crate) struct Geometry {
+    /// generated sizes are multiples of this (16; SDXL and MiniMax H3 Image 32)
+    pub(crate) align: usize,
+    /// the size without any size flag or init image
+    pub(crate) default: (usize, usize),
+    /// --aspect without --megapixels
+    pub(crate) default_mp: f64,
+    /// largest output, in pixels
+    pub(crate) max_pixels: usize,
+    /// draw smaller requests on a canvas of at least this many pixels (ratio kept), then resample (MiniMax H3 Image)
+    pub(crate) min_canvas: usize,
+}
+
+impl Geometry {
+    pub(crate) fn of(a: Arch, refs: &[Rgb8]) -> Geometry {
+        match a {
+            Arch::H3Image => {
+                use loki_reshoot::h3image as h;
+                Geometry {
+                    align: h::CANVAS_MULTIPLE,
+                    default: refs.first().map(|r| h::ref_vae_size(r.w, r.h)).unwrap_or((h::DEFAULT_SIDE, h::DEFAULT_SIDE)),
+                    default_mp: (h::MIN_GENERATION_AREA as f64 / 1e6 * 10.0).round() / 10.0,
+                    max_pixels: h::MAX_PIXELS,
+                    min_canvas: h::MIN_GENERATION_AREA,
+                }
+            }
+            Arch::Sdxl => Geometry { align: 32, default: (1024, 1024), default_mp: 1.0, max_pixels: 16 << 20, min_canvas: 0 },
+            _ => Geometry { align: 16, default: (1024, 1024), default_mp: 1.0, max_pixels: 16 << 20, min_canvas: 0 },
+        }
+    }
+}
+
+/// ((generated w, h), (delivered w, h)); generated sizes are multiples of the geometry's `align`.
+fn target_size(cli: &Cli, init: Option<(usize, usize)>, geo: &Geometry) -> Result<((usize, usize), (usize, usize))> {
+    let align = geo.align;
     let round16 = |x: f64| round_to(x, align);
     ensure!(!(cli.size.is_some() && (cli.aspect.is_some() || cli.megapixels.is_some())), "use --size, or --aspect/--megapixels, not both");
     let out = if let Some(s) = &cli.size {
@@ -247,19 +298,24 @@ fn target_size(cli: &Cli, init: Option<(usize, usize)>, align: usize) -> Result<
             }
             None => init.map(|(w, h)| w as f64 / h as f64).unwrap_or(1.0),
         };
-        let mp = cli.megapixels.unwrap_or(1.0);
-        ensure!(mp > 0.0 && mp <= 16.0, "--megapixels must be in (0, 16]");
+        let mp = cli.megapixels.unwrap_or(geo.default_mp);
+        let max_mp = (geo.max_pixels as f64 / 1e6).floor();
+        ensure!(mp > 0.0 && mp <= max_mp, "--megapixels must be in (0, {max_mp}]");
         let w = (mp * 1e6 * ratio).sqrt();
         let (w, h) = (round16(w), round16(mp * 1e6 / w));
         (w, h)
     } else if let Some(i) = init {
         i
     } else {
-        (1024, 1024)
+        geo.default
     };
     ensure!(out.0 >= 64 && out.1 >= 64, "output size {}x{} is too small (64 px minimum)", out.0, out.1);
-    ensure!(out.0 * out.1 <= 16 << 20, "output size {}x{} is too large (16 megapixels maximum)", out.0, out.1);
-    let gen = (round16(out.0 as f64), round16(out.1 as f64));
+    ensure!(out.0 * out.1 <= geo.max_pixels, "output size {}x{} is too large ({:.0} megapixels maximum)", out.0, out.1, geo.max_pixels as f64 / 1e6);
+    let mut gen = (round16(out.0 as f64), round16(out.1 as f64));
+    if gen.0 * gen.1 < geo.min_canvas {
+        let s = (geo.min_canvas as f64 / (gen.0 * gen.1) as f64).sqrt();
+        gen = (round16(gen.0 as f64 * s), round16(gen.1 as f64 * s));
+    }
     Ok((gen, if cli.snap { gen } else { out }))
 }
 
@@ -309,7 +365,7 @@ pub(crate) enum ModelChoice {
 }
 
 /// The default models a bare --model name can download, by architecture.
-const DEFAULT_SPECS: [(Arch, &models::Spec); 7] = [
+const DEFAULT_SPECS: [(Arch, &models::Spec); 8] = [
     (Arch::Moss, &models::DIT_INT8),
     (Arch::Moss, &models::DIT_BF16),
     (Arch::Krea2, &models::KREA2_DIT),
@@ -317,6 +373,7 @@ const DEFAULT_SPECS: [(Arch, &models::Spec); 7] = [
     (Arch::Anima, &models::ANIMA_DIT),
     (Arch::Anima, &models::ANIMA_TURBO_DIT),
     (Arch::Sdxl, &models::SDXL_BASE),
+    (Arch::H3Image, &models::H3_IMAGE_DIT),
 ];
 
 /// A bare file name (no folder) that is one of the default models' own: what it would download.
@@ -383,6 +440,7 @@ fn default_spec(cli: &Cli, a: Arch) -> Result<&'static models::Spec> {
         Arch::Flux2 => &models::KLEIN_DIT,
         Arch::Anima => &models::ANIMA_DIT,
         Arch::Sdxl => &models::SDXL_BASE,
+        Arch::H3Image => &models::H3_IMAGE_DIT,
     })
 }
 
@@ -452,6 +510,8 @@ pub(crate) struct Plan {
     pub(crate) init_img: Option<Rgb8>,
     pub(crate) init_gen: Option<Rgb8>,
     pub(crate) mask_gen: Option<Mask>,
+    /// reference pictures (MiniMax H3 Image), `<Picture 1>` first
+    pub(crate) refs: Vec<Rgb8>,
     pub(crate) meta: Option<serde_json::Value>,
     pub(crate) dit: PathBuf,
     pub(crate) arch: Arch,
@@ -474,6 +534,9 @@ pub(crate) fn deliver(cli: &Cli, plan: &Plan, job: &Job, mut img: Rgb8, rec: &mu
     }
     if let Some(p) = &cli.mask {
         inputs_rec.push(serde_json::json!({"tag": "mask", "path": p.display().to_string()}));
+    }
+    for (i, (p, r)) in cli.refs.iter().zip(&plan.refs).enumerate() {
+        inputs_rec.push(serde_json::json!({"tag": format!("<Picture {}>", i + 1), "path": p.display().to_string(), "width": r.w, "height": r.h}));
     }
     rec.set("dit", plan.dit.file_name().map(|f| f.to_string_lossy().into_owned()))
         .set("width", ow)
@@ -617,8 +680,23 @@ fn run(prog: &'static str, argv: Vec<String>) -> Result<()> {
         ensure!(cli.loras.is_empty(), "--lora is supported for MOSS-Image models only ({} model given)", a.name());
         ensure!(cli.skip_layers.is_none(), "--skip-layers is a MOSS-Image setting ({} model given)", a.name());
     }
+    if a == Arch::H3Image {
+        ensure!(cfg == 1.0, "MiniMax H3 Image is distilled to CFG 1 (one pass per step, no negative prompt); drop --cfg");
+        ensure!(cli.shift.is_none(), "MiniMax H3 Image samples on its own distilled sigma grid; --shift does not apply");
+        ensure!(cli.mask.is_none(), "MiniMax H3 Image has no masked inpainting here; describe the change and pass the picture with --ref (or use loki-retouch, which edits with it)");
+        ensure!(cli.precision.as_deref().map_or(true, |p| p == "int8"), "MiniMax H3 Image runs its blocks in int8 (bf16 checkpoints are quantized as they load); --precision {} does not apply", cli.precision.as_deref().unwrap_or_default());
+        ensure!(cli.refs.len() <= loki_reshoot::h3image::MAX_REFS, "at most {} --ref pictures", loki_reshoot::h3image::MAX_REFS);
+    } else {
+        ensure!(cli.refs.is_empty(), "--ref (reference pictures) needs MiniMax H3 Image (--arch h3); {} takes no references", a.name());
+    }
     if cli.show_prompt {
-        let shown = |p: &str| -> Vec<String> { if a == Arch::Moss { vec![text_encoder::template(p)] } else { crate::engines::show_prompt(a, p) } };
+        let shown = |p: &str| -> Vec<String> {
+            match a {
+                Arch::Moss => vec![text_encoder::template(p)],
+                Arch::H3Image => vec![loki_reshoot::h3image::show_prompt(p, cli.refs.len())],
+                _ => crate::engines::show_prompt(a, p),
+            }
+        };
         for p in &prompts {
             for l in shown(p) {
                 crate::worker::out_line(&l);
@@ -641,7 +719,8 @@ fn run(prog: &'static str, argv: Vec<String>) -> Result<()> {
         Some(p) => Some(Rgb8::load(p)?),
         None => None,
     };
-    let ((gw, gh), (ow, oh)) = target_size(&cli, init_img.as_ref().map(|i| (i.w, i.h)), if a == Arch::Sdxl { 32 } else { 16 })?;
+    let refs: Vec<Rgb8> = cli.refs.iter().map(|p| Rgb8::load(p).with_context(|| format!("--ref {}", p.display()))).collect::<Result<_>>()?;
+    let ((gw, gh), (ow, oh)) = target_size(&cli, init_img.as_ref().map(|i| (i.w, i.h)), &Geometry::of(a, &refs))?;
     let init_gen = init_img.as_ref().map(|i| i.resize_lanczos(gw, gh));
     let mask_gen = match &cli.mask {
         Some(p) => Some(Mask::load(p)?.resize(gw, gh)),
@@ -697,10 +776,11 @@ fn run(prog: &'static str, argv: Vec<String>) -> Result<()> {
         }
     }
     let stdout_is_image = jobs.iter().any(|j| matches!(j.dest, Dest::Stdout));
-    let plan = Plan { prog, prompts, negative, steps, cfg, jobs, gen: (gw, gh), out: (ow, oh), init_img, init_gen, mask_gen, meta, dit, arch: a, stdout_is_image };
+    let plan = Plan { prog, prompts, negative, steps, cfg, jobs, gen: (gw, gh), out: (ow, oh), init_img, init_gen, mask_gen, refs, meta, dit, arch: a, stdout_is_image };
     match a {
         Arch::Moss => run_moss(&cli, &plan),
         Arch::Sdxl => crate::sdxl::run(&cli, &plan, distilled),
+        Arch::H3Image => crate::h3::run(&cli, &plan),
         _ => crate::engines::run(&cli, &plan, distilled),
     }
 }

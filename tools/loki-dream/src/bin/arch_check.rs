@@ -305,6 +305,7 @@ fn main() -> Result<()> {
                 }
                 Arch::Moss => bail!("use dream_check for MOSS-Image"),
                 Arch::Sdxl => bail!("SDXL is checked with the sdxl command"),
+                Arch::H3Image => bail!("MiniMax H3 Image is checked in loki-reshoot (dit_image_check, ivae_check, h3image_check)"),
             }
             dev.sync()?;
             println!("load + forwards {:.2}s", t0.elapsed().as_secs_f64());

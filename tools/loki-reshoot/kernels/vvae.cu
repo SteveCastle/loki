@@ -650,20 +650,22 @@ extern "C" __global__ void k_vv_qk_rope(f16* __restrict__ qkv, int M, int S, con
 namespace {
 DEVI int swz128(int row, int chunk) { return row * 128 + ((chunk ^ (row & 7)) << 4); }
 }
-extern "C" __global__ void __launch_bounds__(128) k_vv_flash_d64(const f16* __restrict__ qkv, f16* __restrict__ out, int S, float scale_log2) {
+// LDQ / LDO: row strides of qkv and out (32 heads: 6144 / 2048; the image decoder's 16 heads: 3072 / 1024)
+template <int LDQ, int LDO>
+DEVI void flash_d64_body(const f16* __restrict__ qkv, f16* __restrict__ out, int S, float scale_log2) {
     __shared__ __align__(128) uint8_t sQ[64 * 128];
     __shared__ __align__(128) uint8_t sK[2][64 * 128];
     __shared__ __align__(128) uint8_t sV[2][64 * 128];
     const int tid = threadIdx.x, warp = tid >> 5, lane = tid & 31;
     const int q0 = blockIdx.x * 64, h = blockIdx.y, b = blockIdx.z;
-    const f16* base = qkv + (int64_t)b * S * 6144 + h * 192;
+    const f16* base = qkv + (int64_t)b * S * LDQ + h * 192;
     // load Q tile (64 rows x 8 chunks): 512 chunks, 4 per thread
 #pragma unroll
     for (int i = 0; i < 4; ++i) {
         int id = tid + i * 128, row = id >> 3, ch = id & 7;
         int q = q0 + row;
         bool p = q < S;
-        cp_async_16(smem_u32(sQ + swz128(row, ch)), base + (int64_t)(p ? q : 0) * 6144 + ch * 8, p);
+        cp_async_16(smem_u32(sQ + swz128(row, ch)), base + (int64_t)(p ? q : 0) * LDQ + ch * 8, p);
     }
     auto load_kv = [&](int kv0, int st) {
 #pragma unroll
@@ -671,7 +673,7 @@ extern "C" __global__ void __launch_bounds__(128) k_vv_flash_d64(const f16* __re
             int id = tid + i * 128, row = id >> 3, ch = id & 7;
             int kk = kv0 + row;
             bool p = kk < S;
-            const f16* src = base + (int64_t)(p ? kk : 0) * 6144 + ch * 8;
+            const f16* src = base + (int64_t)(p ? kk : 0) * LDQ + ch * 8;
             cp_async_16(smem_u32(sK[st] + swz128(row, ch)), src + 64, p);
             cp_async_16(smem_u32(sV[st] + swz128(row, ch)), src + 128, p);
         }
@@ -791,12 +793,19 @@ extern "C" __global__ void __launch_bounds__(128) k_vv_flash_d64(const f16* __re
     for (int r = 0; r < 2; ++r) {
         int q = q0 + warp * 16 + g + r * 8;
         if (q >= S) continue;
-        f16* op = out + ((int64_t)b * S + q) * 2048 + h * 64;
+        f16* op = out + ((int64_t)b * S + q) * LDO + h * 64;
 #pragma unroll
         for (int nd = 0; nd < 8; ++nd) {
             *reinterpret_cast<f162*>(op + nd * 8 + t4 * 2) = __floats2half2_rn(o[nd][r * 2] * lrow_[r], o[nd][r * 2 + 1] * lrow_[r]);
         }
     }
+}
+
+extern "C" __global__ void __launch_bounds__(128) k_vv_flash_d64(const f16* __restrict__ qkv, f16* __restrict__ out, int S, float scale_log2) {
+    flash_d64_body<6144, 2048>(qkv, out, S, scale_log2);
+}
+extern "C" __global__ void __launch_bounds__(128) k_iv_flash_d64(const f16* __restrict__ qkv, f16* __restrict__ out, int S, float scale_log2) {
+    flash_d64_body<3072, 1024>(qkv, out, S, scale_log2);
 }
 
 // Place one decoded tile into the f32 canvas [F, H, W, 3] with the reference's blending:
@@ -865,4 +874,136 @@ extern "C" __global__ void k_vv_finalize(const float* __restrict__ canvas, int s
     v = v * pstd[ch] + pmean[ch];
     v = fminf(fmaxf(v, 0.f), 1.f);
     out[i] = (uint8_t)__float2int_rn(v * 255.f);
+}
+
+// ---------------------------------------------------------------------------------------------
+// MiniMax-H3-Image decoder (2D ViT: 1024 wide, 16 heads x 64, 2D rope over the first 32 head dims, 1 frame per latent).
+
+// Token embedding of one tile: z f32 [24, Hz, Wz] (normalized latent), rows [y0, y0+th), cols [x0, x0+tw).
+// Writes x f32 [S, 1024], S = th*tw + 5: patch tokens, 4 register tokens, 1 zero token (numerics as k_vv_embed).
+extern "C" __global__ void k_iv_embed(const float* __restrict__ z, int Hz, int Wz, int y0, int x0, int th, int tw,
+                                      const float* __restrict__ lmean, const float* __restrict__ lstd,
+                                      const float* __restrict__ pq_w, const float* __restrict__ pq_b, const float* __restrict__ xe_w,
+                                      const float* __restrict__ xe_b, const f16* __restrict__ regs, float* __restrict__ x) {
+    __shared__ float zin[24], zp[24];
+    const int tok = blockIdx.x;
+    const int np = th * tw;
+    float* xo = x + (int64_t)tok * 1024;
+    if (tok >= np) {
+        int rI = tok - np;
+        for (int c = threadIdx.x; c < 1024; c += blockDim.x) xo[c] = rI < 4 ? h2f(regs[rI * 1024 + c]) : 0.f;
+        return;
+    }
+    int yy = tok / tw, xx = tok - yy * tw;
+    if (threadIdx.x < 24) {
+        int c = threadIdx.x;
+        float v = rh(z[((int64_t)c * Hz + (y0 + yy)) * Wz + (x0 + xx)]);
+        v = rh(v * lstd[c]);
+        zin[c] = rh(v + lmean[c]);
+    }
+    __syncthreads();
+    if (threadIdx.x < 24) {
+        int o = threadIdx.x;
+        float a = pq_b[o];
+        for (int c = 0; c < 24; ++c) a += pq_w[o * 24 + c] * zin[c];
+        zp[o] = rh(a);
+    }
+    __syncthreads();
+    for (int o = threadIdx.x; o < 1024; o += blockDim.x) {
+        float a = xe_b[o];
+        const float* wr = xe_w + o * 24;
+#pragma unroll
+        for (int c = 0; c < 24; ++c) a += wr[c] * zp[c];
+        xo[o] = rh(a);
+    }
+}
+
+// RMSNorm (affine fp16 weight) or LayerNorm (+ fp16 bias) over rows of 1024: x f32 -> out fp16. 256 threads per row.
+extern "C" __global__ void k_iv_norm_rows(const float* __restrict__ x, f16* __restrict__ out, const f16* __restrict__ w,
+                                          const f16* __restrict__ b, int layernorm, float eps) {
+    __shared__ float red[32];
+    const int row = blockIdx.x;
+    float4 a = reinterpret_cast<const float4*>(x + (int64_t)row * 1024)[threadIdx.x];
+    float v[4] = {a.x, a.y, a.z, a.w};
+    float mean = 0.f;
+    if (layernorm) mean = block_sum(v[0] + v[1] + v[2] + v[3], red) / 1024.f;
+    float q = 0.f;
+#pragma unroll
+    for (int j = 0; j < 4; ++j) { float d = v[j] - mean; q += d * d; }
+    float r = rsqrtf(block_sum(q, red) / 1024.f + eps);
+    const int c0 = threadIdx.x * 4;
+    f162 o[2];
+#pragma unroll
+    for (int j = 0; j < 2; ++j) {
+        float y0 = (v[2 * j] - mean) * r * h2f(w[c0 + 2 * j]);
+        float y1 = (v[2 * j + 1] - mean) * r * h2f(w[c0 + 2 * j + 1]);
+        if (b) { y0 += h2f(b[c0 + 2 * j]); y1 += h2f(b[c0 + 2 * j + 1]); }
+        o[j] = __floats2half2_rn(y0, y1);
+    }
+    *reinterpret_cast<uint2*>(out + (int64_t)row * 1024 + c0) = *reinterpret_cast<uint2*>(o);
+}
+
+// In place on qkv fp16 [M, 16, 192] (q | k | v per head): RMSNorm (no affine) of q and k over 64 dims, then split-half
+// rope on the first 32 dims (dim d < 16 pairs with d + 16) with rope[(m % S)] = (cos, sin) x 16 pairs. One warp per (token, head).
+extern "C" __global__ void k_iv_qk_rope(f16* __restrict__ qkv, int M, int S, const float* __restrict__ rope, float eps) {
+    __shared__ float buf[8][64];
+    const int warp = threadIdx.x >> 5, lane = threadIdx.x & 31;
+    int64_t gw = (int64_t)blockIdx.x * 8 + warp;
+    if (gw >= (int64_t)M * 16) return;
+    const int m = (int)(gw / 16), h = (int)(gw % 16);
+    const float* rp = rope + (int64_t)(m % S) * 32;
+    for (int which = 0; which < 2; ++which) {
+        f16* p = qkv + (int64_t)m * 3072 + h * 192 + which * 64;
+        float a = h2f(p[lane]), b = h2f(p[lane + 32]);
+        float ss = warp_sum(a * a + b * b);
+        float r = rsqrtf(ss / 64.f + eps);
+        a = rh(a * r);
+        b = rh(b * r);
+        buf[warp][lane] = a;
+        buf[warp][lane + 32] = b;
+        __syncwarp();
+        // lanes 0..15: first halves of the pairs; 16..31: second halves; dims 32..63 pass through
+        float o0;
+        if (lane < 16) {
+            float c = rp[lane * 2], s = rp[lane * 2 + 1];
+            o0 = buf[warp][lane] * c - buf[warp][lane + 16] * s;
+        } else {
+            int pi = lane - 16;
+            float c = rp[pi * 2], s = rp[pi * 2 + 1];
+            o0 = buf[warp][lane] * c + buf[warp][pi] * s;
+        }
+        __syncwarp();
+        p[lane] = f2h(o0);
+        p[lane + 32] = f2h(b);
+    }
+}
+
+// Place one decoded tile into the f32 canvas [H, W, 3] with the reference's blending (k_vv_place_tile with one frame;
+// proj f32 [S, 768] rows of this tile, columns c*256 + (y%16)*16 + x%16).
+extern "C" __global__ void k_iv_place_tile(const float* __restrict__ proj, int th, int tw, float* __restrict__ canvas, int H,
+                                           int W, int Y0, int X0, const float* __restrict__ strip, int oy_max, int oy, int ox) {
+    const int TH = th * 16, TW = tw * 16;
+    int64_t i = (int64_t)blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= (int64_t)TH * TW) return;
+    int c = (int)(i % TW);
+    int r = (int)(i / TW);
+    int tok = (r >> 4) * tw + (c >> 4);
+    int col = (r & 15) * 16 + (c & 15);
+    const float* pr = proj + (int64_t)tok * 768 + col;
+    float v[3] = {pr[0], pr[256], pr[512]};
+    const int Y = Y0 + r, X = X0 + c;
+    if (r < oy) {
+        float wb = (float)r / (float)oy, wa = 1.f - wb;
+        const float* sp = strip + ((int64_t)r * W + X) * 3;
+#pragma unroll
+        for (int k = 0; k < 3; ++k) v[k] = sp[k] * wa + v[k] * wb;
+    }
+    float* cp = canvas + ((int64_t)Y * W + X) * 3;
+    if (c < ox) {
+        float wb = (float)c / (float)ox, wa = 1.f - wb;
+#pragma unroll
+        for (int k = 0; k < 3; ++k) v[k] = cp[k] * wa + v[k] * wb;
+    }
+#pragma unroll
+    for (int k = 0; k < 3; ++k) cp[k] = v[k];
 }

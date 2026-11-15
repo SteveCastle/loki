@@ -168,3 +168,19 @@ Rust (stable, MSVC), CUDA Toolkit 12.x (`nvcc`), Visual Studio 2022 C++ tools. `
 (`build.rs` compiles `kernels/*.cu` to sm_89 fatbins embedded in the binary; `cudarc` loads the driver dynamically).
 
 See `docs/NOTES.md` for the reference-code map, and `ref/` for the ComfyUI reference-dump scripts used to validate each component.
+
+## The H3 Image engine (used by loki-dream and loki-retouch)
+
+The crate is also the H3 family's engine library: `src/h3image.rs` runs **MiniMax H3 Image** (text to image and editing
+with up to 16 pictures, 6 PDD steps at CFG 1, native 4-16 MP) on the same DiT (`dit_h3`, `Dit::forward_image`: no audio
+stream, the checkpoint's own `pdd_sigmas` grid), the same Qwen3-VL-32B encoder (`te_h3`, `encode_image`: pictures labelled
+`Picture i: `) and the image VAE (`vae_image`: this crate's 3D encoder on one frame + a 2D ViT decoder). loki-dream
+(`--arch h3`) and loki-retouch (`--model h3`) link it as a path dependency and pass their worker cache in as a
+`h3image::Host`. Checks against ComfyUI 0.45 (`ref/ref_ivae.py`, `ref_dit_image.py`, `ref_e2e_image.py`; run from a ComfyUI
+>= 0.45 root with `LOKI_PYLIB` pointing at comfy-kitchen >= 0.2.41 when the embedded one is older):
+
+```
+cargo run --release --bin ivae_check -- ref_out/ivae                 # image VAE: decode 58.6 dB, encoder latents 0.3 % rel
+cargo run --release --bin dit_image_check -- ref_out/dit_image_hp    # DiT vs the high-precision reference (as close as ComfyUI's int8)
+cargo run --release --bin h3image_check -- --prompt "..." --width 1024 --height 1024 --seed 7 --out ours.png --compare comfy.png
+```

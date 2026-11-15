@@ -15,7 +15,7 @@ use half::f16;
 use std::path::Path;
 use std::sync::Arc;
 
-const CONV_SMEM: u32 = 4 * (256 + 128) * 32 * 2; // 96 KB
+pub(crate) const CONV_SMEM: u32 = 4 * (256 + 128) * 32 * 2; // 96 KB
 /// Pick the block-tile height: 256 rows (16 warps) unless that leaves fewer than ~2 waves of blocks.
 pub(crate) fn tile_cfg(m: usize, n: usize, sms: usize) -> (usize, u32, u32, &'static str) {
     let blocks256 = ((m + 255) / 256) * ((n + 127) / 128);
@@ -42,8 +42,22 @@ const FRAME_PRE_PAD: usize = (RATIO_T - CLIP_LEN % RATIO_T) % RATIO_T; // 3
 const TOKEN_OVERLAP: usize = (TOKENS_CHUNK - TOKEN_DROP % TOKENS_CHUNK) % TOKENS_CHUNK; // 2
 const FRAME_OVERLAP: usize = if TOKEN_OVERLAP * RATIO_T > FRAME_PRE_PAD { TOKEN_OVERLAP * RATIO_T - FRAME_PRE_PAD } else { 0 }; // 5
 
+/// H3 latent statistics (comfy `LATENTS_MEAN` / `LATENTS_STD`), for VAE files that do not carry them.
+pub const LATENTS_MEAN: [f32; 24] = [
+    0.858090341091156, -0.9606591463088989, 1.0661640167236328, -0.5090325474739075, -0.2727581858634949, -1.3675414323806763,
+    -0.2553254961967468, -0.26907554268836975, -0.5376840829849243, -0.0464097298681736, 0.6657370328903198, 0.19690127670764923,
+    -0.5460608005523682, -0.4035342037677765, -0.23683024942874908, 0.25928452610969543, -0.30133944749832153, 0.211341992020607,
+    -1.1206848621368408, 0.3581933379173279, -0.04225143790245056, 0.2604829967021942, 0.22864092886447906, 0.7056031823158264,
+];
+pub const LATENTS_STD: [f32; 24] = [
+    1.2223774194717407, 1.2767263650894165, 1.68317747116088865, 1.7549455165863037, 1.5636216402053833, 2.194143533706665,
+    0.96531379222869875, 1.05698859691619875, 0.841948926448822, 0.7729952931404114, 1.8955937623977661, 0.946841835975647,
+    0.7996809482574463, 0.44988900423049925, 0.7197399735450745, 0.69362932443618775, 2.961095094680786, 2.7694199085235595,
+    3.0496184825897215, 2.1088054180145265, 3.276226282119751, 3.1627357006073, 2.28168129920959475, 2.6127843856811525,
+];
+
 /// rope inverse frequencies exactly as the reference holds them (fp16 buffer): 1 / 100^(i/8), i = 0..8
-const INV_FREQ: [f32; 8] = [1.0, 0.5625, 0.316162109375, 0.1778564453125, 0.0999755859375, 0.056243896484375, 0.0316162109375, 0.0177764892578125];
+pub(crate) const INV_FREQ: [f32; 8] = [1.0, 0.5625, 0.316162109375, 0.1778564453125, 0.0999755859375, 0.056243896484375, 0.0316162109375, 0.0177764892578125];
 
 static PROF: std::sync::OnceLock<crate::cuda::Profiler> = std::sync::OnceLock::new();
 fn prof() -> &'static crate::cuda::Profiler {
@@ -54,7 +68,7 @@ pub fn profile_report() {
     prof().report();
 }
 
-fn rh(x: f32) -> f32 {
+pub(crate) fn rh(x: f32) -> f32 {
     f16::from_f32(x).to_f32()
 }
 
@@ -218,13 +232,14 @@ struct Vol {
 pub struct VideoVae {
     dev: Arc<Device>,
     enc: Encoder,
-    dec: Decoder,
-    lat_mean: Vec<f32>, // fp16-rounded
-    lat_std: Vec<f32>,
-    lat_mean_d: Tensor,
-    lat_std_d: Tensor,
-    pix_mean_d: Tensor,
-    pix_std_d: Tensor,
+    /// None for an encoder-only load (the MiniMax-H3-Image VAE pairs this encoder with its own decoder)
+    dec: Option<Decoder>,
+    pub(crate) lat_mean: Vec<f32>, // fp16-rounded
+    pub(crate) lat_std: Vec<f32>,
+    pub(crate) lat_mean_d: Tensor,
+    pub(crate) lat_std_d: Tensor,
+    pub(crate) pix_mean_d: Tensor,
+    pub(crate) pix_std_d: Tensor,
     /// max spatial tiles per decoder call
     pub max_batch: usize,
     /// fp16 accumulation inside each 32-wide K slab (promoted to f32 between slabs) for encoder convs / decoder GEMMs
@@ -296,6 +311,12 @@ impl<'a> Ld<'a> {
 
 impl VideoVae {
     pub fn load(dev: Arc<Device>, path: &Path) -> Result<VideoVae> {
+        Self::load_opts(dev, path, true)
+    }
+
+    /// `decoder`: false loads the encoder only (a file without the video decoder's weights). Files without latent
+    /// statistics (the H3-Image VAE) use the H3 constants, held at fp16 like the reference's buffers.
+    pub fn load_opts(dev: Arc<Device>, path: &Path, decoder: bool) -> Result<VideoVae> {
         let st = SafeTensors::open(path)?;
         let ld = Ld { st: &st, dev: &dev };
         dev.set_max_smem("k_vv_conv3d", CONV_SMEM)?;
@@ -343,6 +364,33 @@ impl VideoVae {
         };
 
         // ---------------- decoder
+        let dec = if decoder { Some(Self::load_decoder(&st, &dev)?) } else { None };
+        let (lat_mean, lat_std) = if st.has("latents_mean") {
+            (st.f32s("latents_mean")?, st.f32s("latents_std")?)
+        } else {
+            (LATENTS_MEAN.iter().map(|&v| rh(v)).collect(), LATENTS_STD.iter().map(|&v| rh(v)).collect())
+        };
+        // imagenet stats as the reference holds them (fp16 buffers)
+        let pm: Vec<f32> = [0.485f32, 0.456, 0.406].iter().map(|&v| rh(v)).collect();
+        let ps: Vec<f32> = [0.229f32, 0.224, 0.225].iter().map(|&v| rh(v)).collect();
+        Ok(VideoVae {
+            lat_mean_d: Tensor::from_f32(&dev, &lat_mean, &[24])?,
+            lat_std_d: Tensor::from_f32(&dev, &lat_std, &[24])?,
+            pix_mean_d: Tensor::from_f32(&dev, &pm, &[3])?,
+            pix_std_d: Tensor::from_f32(&dev, &ps, &[3])?,
+            lat_mean,
+            lat_std,
+            dev,
+            enc,
+            dec,
+            max_batch: 8,
+            hacc_enc: std::env::var("LOKI_VVAE_HACC").map(|v| v.contains('e')).unwrap_or(true),
+            hacc_dec: std::env::var("LOKI_VVAE_HACC").map(|v| v.contains('d')).unwrap_or(true),
+        })
+    }
+
+    fn load_decoder(st: &SafeTensors, dev: &Arc<Device>) -> Result<Decoder> {
+        let ld = Ld { st, dev };
         let mut blocks = Vec::with_capacity(LAYERS);
         for i in 0..LAYERS {
             let p = format!("decoder.transformer_blocks.{i}");
@@ -371,7 +419,7 @@ impl VideoVae {
                 scale2: ld.f32_dev(&format!("{p}.scale2"))?,
             });
         }
-        let dec = Decoder {
+        Ok(Decoder {
             pq_w: ld.f32_dev("post_quant_conv.weight")?,
             pq_b: ld.f32_dev("post_quant_conv.bias")?,
             xe_w: ld.f32_dev("decoder.x_embedder.weight")?,
@@ -382,26 +430,11 @@ impl VideoVae {
             norm_out_b: ld.f16_dev("decoder.norm_out.bias")?,
             proj_w: ld.f16_dev("decoder.proj_out.weight")?,
             proj_b: ld.f32_dev("decoder.proj_out.bias")?,
-        };
-        let lat_mean = st.f32s("latents_mean")?;
-        let lat_std = st.f32s("latents_std")?;
-        // imagenet stats as the reference holds them (fp16 buffers)
-        let pm: Vec<f32> = [0.485f32, 0.456, 0.406].iter().map(|&v| rh(v)).collect();
-        let ps: Vec<f32> = [0.229f32, 0.224, 0.225].iter().map(|&v| rh(v)).collect();
-        Ok(VideoVae {
-            lat_mean_d: Tensor::from_f32(&dev, &lat_mean, &[24])?,
-            lat_std_d: Tensor::from_f32(&dev, &lat_std, &[24])?,
-            pix_mean_d: Tensor::from_f32(&dev, &pm, &[3])?,
-            pix_std_d: Tensor::from_f32(&dev, &ps, &[3])?,
-            lat_mean,
-            lat_std,
-            dev,
-            enc,
-            dec,
-            max_batch: 8,
-            hacc_enc: std::env::var("LOKI_VVAE_HACC").map(|v| v.contains('e')).unwrap_or(true),
-            hacc_dec: std::env::var("LOKI_VVAE_HACC").map(|v| v.contains('d')).unwrap_or(true),
         })
+    }
+
+    fn dec(&self) -> &Decoder {
+        self.dec.as_ref().expect("video VAE loaded without its decoder")
     }
 
     /// Output frames of `decode` for `tl` latent frames (reference `decode_output_shape`).
@@ -509,6 +542,12 @@ impl VideoVae {
     /// t0..t0+t (indices >= tsrc repeat the last frame). Returns the raw moments (first 24 = mean) as
     /// host f32 [24, Tl, th/16, tw/16] after quant_conv, rounded to fp16 like the reference.
     pub fn encode_tile(&self, pix: &Tensor, tsrc: usize, hs: usize, ws: usize, t0: usize, t: usize, y0: usize, x0: usize, th: usize, tw: usize) -> Result<Vec<f32>> {
+        self.encode_tile_n(pix, tsrc, hs, ws, t0, t, y0, x0, th, tw, 24)
+    }
+
+    /// `encode_tile` keeping the first `nch` quant_conv channels (24 = mean, 48 = mean | logvar).
+    #[allow(clippy::too_many_arguments)]
+    pub fn encode_tile_n(&self, pix: &Tensor, tsrc: usize, hs: usize, ws: usize, t0: usize, t: usize, y0: usize, x0: usize, th: usize, tw: usize, nch: usize) -> Result<Vec<f32>> {
         let dev = &self.dev;
         let single = t == 1;
         let front = if single { 0 } else { 2 };
@@ -552,12 +591,12 @@ impl VideoVae {
         let (tl, lh, lw) = (o.tt, o.h, o.w);
         let raw: Vec<u16> = dev.dtoh_at(o.t.ptr, tl * lh * lw * 48)?;
         let raw: Vec<f32> = raw.into_iter().map(|b| f16::from_bits(b).to_f32()).collect();
-        // quant_conv (1x1, 48 -> 48), keep the first 24 (mean) channels: [24, tl, lh, lw]
+        // quant_conv (1x1, 48 -> 48), keep the first nch channels: [nch, tl, lh, lw]
         let np = tl * lh * lw;
-        let mut out = vec![0f32; 24 * np];
+        let mut out = vec![0f32; nch * np];
         for p in 0..np {
             let hp = &raw[p * 48..(p + 1) * 48];
-            for o in 0..24 {
+            for o in 0..nch {
                 let w = &self.enc.quant_w[o * 48..(o + 1) * 48];
                 let mut a = self.enc.quant_b[o];
                 for c in 0..48 {
@@ -571,6 +610,12 @@ impl VideoVae {
 
     /// Reference `tiled_encode` of one clip (mean channels only) -> [24, tl, H/16, W/16]
     fn encode_clip(&self, pix: &Tensor, tsrc: usize, h: usize, w: usize, t0: usize, t: usize) -> Result<(Vec<f32>, usize)> {
+        self.encode_clip_n(pix, tsrc, h, w, t0, t, 24)
+    }
+
+    /// Reference `tiled_encode` of one clip, `nch` channels of the moments -> [nch, tl, H/16, W/16]
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn encode_clip_n(&self, pix: &Tensor, tsrc: usize, h: usize, w: usize, t0: usize, t: usize, nch: usize) -> Result<(Vec<f32>, usize)> {
         let (yi, yl, yo) = split_tiles(h);
         let (xi, xl, xo) = split_tiles(w);
         let mut tiles: Vec<Vec<Vec<f32>>> = Vec::new();
@@ -578,8 +623,8 @@ impl VideoVae {
         for i in 0..yi.len() {
             let mut row = Vec::new();
             for j in 0..xi.len() {
-                let v = self.encode_tile(pix, tsrc, h, w, t0, t, yi[i], xi[j], yl[i], xl[j])?;
-                tl = v.len() / (24 * (yl[i] / RATIO) * (xl[j] / RATIO));
+                let v = self.encode_tile_n(pix, tsrc, h, w, t0, t, yi[i], xi[j], yl[i], xl[j], nch)?;
+                tl = v.len() / (nch * (yl[i] / RATIO) * (xl[j] / RATIO));
                 row.push(v);
             }
             tiles.push(row);
@@ -587,7 +632,7 @@ impl VideoVae {
         let (hl, wl) = (h / RATIO, w / RATIO);
         let lyo: Vec<usize> = yo.iter().map(|o| o / RATIO).collect();
         let lxo: Vec<usize> = xo.iter().map(|o| o / RATIO).collect();
-        let mut out = vec![0f32; 24 * tl * hl * wl];
+        let mut out = vec![0f32; nch * tl * hl * wl];
         let wts = |p: usize, e: usize| -> (f32, f32) {
             let wb = rh(p as f32 / e as f32);
             (rh(1.0 - wb), wb)
@@ -602,7 +647,7 @@ impl VideoVae {
                 let tw = xl[j] / RATIO;
                 let keep_w = if j + 1 < xi.len() { tw - lxo[j] } else { tw };
                 let cur = &tiles[i][j];
-                for c in 0..24 {
+                for c in 0..nch {
                     for f in 0..tl {
                         for r in 0..keep_h {
                             for q in 0..keep_w {
@@ -770,7 +815,7 @@ impl VideoVae {
             prof().time(dev, "norm", || dev.launch("k_vv_norm_rows", (m as u32, 1, 1), (256, 1, 1), 0, &[Arg::Ptr(src.ptr), Arg::Ptr(xn.ptr), Arg::Ptr(w.ptr), Arg::Ptr(b.map(|t| t.ptr).unwrap_or(0)), Arg::I32(b.is_some() as i32), Arg::F32(eps)]))
         };
         let scale_log2 = 0.125f32 * std::f32::consts::LOG2_E;
-        for blk in &self.dec.blocks {
+        for blk in &self.dec().blocks {
             norm(x, &blk.norm1, None)?;
             self.gemm(&xn, m, DIM, &blk.qkv_w, &blk.qkv_b, 0, &qkv, None, None)?;
             prof().time(dev, "qk_rope", || dev.launch("k_vv_qk_rope", (((m * HEADS + 7) / 8) as u32, 1, 1), (256, 1, 1), 0, &[Arg::Ptr(qkv.ptr), Arg::I32(m as i32), Arg::I32(s as i32), Arg::Ptr(rope.ptr), Arg::F32(eps)]))?;
@@ -783,9 +828,9 @@ impl VideoVae {
         drop(qkv);
         drop(hb);
         drop(att);
-        norm(x, &self.dec.norm_out_w, Some(&self.dec.norm_out_b))?;
+        norm(x, &self.dec().norm_out_w, Some(&self.dec().norm_out_b))?;
         let proj = Tensor::new(dev, DType::F32, &[m, 3072])?;
-        self.gemm(&xn, m, DIM, &self.dec.proj_w, &self.dec.proj_b, 1, &proj, None, None)?;
+        self.gemm(&xn, m, DIM, &self.dec().proj_w, &self.dec().proj_b, 1, &proj, None, None)?;
         Ok(proj)
     }
 
@@ -800,7 +845,7 @@ impl VideoVae {
             &[
                 Arg::Ptr(z.ptr), Arg::I32(tz as i32), Arg::I32(hz as i32), Arg::I32(wz as i32), Arg::I32(t0 as i32), Arg::I32(y0 as i32), Arg::I32(x0 as i32),
                 Arg::I32(tc as i32), Arg::I32(th as i32), Arg::I32(tw as i32), Arg::Ptr(self.lat_mean_d.ptr), Arg::Ptr(self.lat_std_d.ptr),
-                Arg::Ptr(self.dec.pq_w.ptr), Arg::Ptr(self.dec.pq_b.ptr), Arg::Ptr(self.dec.xe_w.ptr), Arg::Ptr(self.dec.xe_b.ptr), Arg::Ptr(self.dec.regs.ptr),
+                Arg::Ptr(self.dec().pq_w.ptr), Arg::Ptr(self.dec().pq_b.ptr), Arg::Ptr(self.dec().xe_w.ptr), Arg::Ptr(self.dec().xe_b.ptr), Arg::Ptr(self.dec().regs.ptr),
                 Arg::Ptr(x.ptr + (row0 * DIM * 4) as u64),
             ],
         )
@@ -904,6 +949,7 @@ impl VideoVae {
     /// z: f32 [24,Tl,hl,wl] normalized latent (device). Streams decoded RGB u8 frames [n,H,W,3] (host) to `sink`
     /// in temporal order as they finish; returns total frames.
     pub fn decode(&self, z: &Tensor, tl: usize, hl: usize, wl: usize, sink: &mut dyn FnMut(&[u8], usize) -> Result<()>) -> Result<usize> {
+        ensure!(self.dec.is_some(), "this VAE was loaded without its video decoder");
         ensure!(z.dtype == DType::F32 && z.numel() == 24 * tl * hl * wl, "decode: z must be f32 [24, tl, hl, wl]");
         let z = z.reshape(&[24, tl, hl, wl]);
         let dev = &self.dev;

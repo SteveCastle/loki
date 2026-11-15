@@ -1,8 +1,8 @@
 # loki-retouch
 
 **AI image editing from the command line.** Change the content of a photo with a text instruction, upscale it
-faithfully, restore it, composite several images, or outpaint it into a 4K wallpaper, with **Qwen Image 2.1**, as a
-single self-contained binary. No ComfyUI, no Python, no PyTorch: the whole inference engine (int8/bf16/fp8
+faithfully, restore it, composite several images, or outpaint it into a 4K wallpaper, with **Qwen Image 2.1** (or
+**MiniMax H3 Image** with `--model h3`: up to 16 pictures, native 4-16 MP), as a single self-contained binary. No ComfyUI, no Python, no PyTorch: the whole inference engine (int8/bf16/fp8
 tensor-core kernels, flash attention, VAE convolutions) is written from scratch in CUDA and driven from Rust.
 The only runtime dependency is the NVIDIA driver.
 
@@ -11,6 +11,7 @@ loki-retouch -p "make it night, with rain" photo.jpg          # edit content   -
 loki-retouch --upscale 2 small.jpg                            # faithful 2x    -> small_up.png
 loki-retouch --preset 4kify photo.jpg                         # restore + outpaint to a 4K wallpaper
 loki-retouch -p "put the jacket of <image2> on <image1>" -r jacket.png me.png
+loki-retouch --model h3 -p "<image1> at night in the rain, same framing" --long-edge 4096 photo.jpg   # MiniMax H3 Image
 ```
 
 ## Part of the loki- toolkit
@@ -20,7 +21,7 @@ chain with each other and with ordinary Unix tools, and are easy for agents to d
 
 | tool | does | engine |
 |---|---|---|
-| **loki-retouch** (this repo) | image editing, upscaling, restoration, compositing | Qwen Image 2.1 |
+| **loki-retouch** (this repo) | image editing, upscaling, restoration, compositing | Qwen Image 2.1, MiniMax H3 Image |
 | [loki-reshoot](../loki-reshoot) | reference images / videos / audio -> video with sound | MiniMax H3 |
 
 The shared conventions (also see `../CONVENTIONS.md`):
@@ -117,6 +118,42 @@ binary; interrupted downloads resume on the next run.
 | `--vae`          | `qwen_image_2.1_vae_bf16.safetensors`       |
 
 The int8 files are ComfyUI's "int8 ConvRot" format (per-row int8 with a 256-wide Hadamard rotation).
+
+## Second model: MiniMax H3 Image (`--model h3`)
+
+`--model h3` edits with **MiniMax H3 Image** instead: MiniMax's open 33.1B DiT (text to image and editing in one
+checkpoint, distilled to 6 steps at CFG 1) with the Qwen3-VL-32B conditioning encoder of the H3 family and its own image
+VAE, run by loki-reshoot's H3 engine (linked as a library; the same DiT, encoder and kernels as its video model). What it
+adds over Qwen Image 2.1:
+
+- **up to 16 pictures** per edit: the input is `<Picture 1>` and every `-r` adds `<Picture 2>`, `<Picture 3>`, ...;
+  `<imageN>` tags in prompts and presets are translated, so commands written for Qwen Image work unchanged;
+- **native 4-16 MP output**: `--long-edge 4096`, `--megapixels 16`, `--upscale 2` on a 2K photo run in one pass;
+- **6 steps**: a 4 MP edit samples in ~4 s once the models are loaded (~35-50 s cold on a 24 GB card, where the 15 GB
+  text encoder and the 21 GB DiT load in turn; several inputs share one load of each).
+
+```
+loki-retouch --model h3 -p "Make <image1> a rainy night street, neon reflections on the wet asphalt, same framing" photo.jpg
+loki-retouch --model h3 -p "The man from <image1> sits in the armchair of the bookshop in <image2>, reading" -r shop.png me.png
+loki-retouch --model h3 --long-edge 4096 -p "Restore <image1>: remove the scratches and grain, same framing" old.jpg
+```
+
+Sizing follows the official pipeline: the output keeps the input's size (or what a size flag / preset says), drawn on a
+32 px grid of at least 4 MP and Lanczos-resampled to exactly that size (`--snap` keeps the drawn canvas). The pictures are
+given to the text encoder at a 1024 px short edge and to the DiT as VAE latents at a 1024-2048 px short edge (ComfyUI's
+`MiniMaxH3ImageConditioning`). Long, specific English descriptions of the result work best. Not with `--model h3`:
+`--shift` and `--ref-resolution` (Qwen Image settings); the presets were tuned on Qwen Image but run on either model.
+An H3 Image checkpoint given with `--dit` selects the model by itself.
+
+| flag | file | from | size |
+|---|---|---|---|
+| `--dit` | `minimax_h3_image_pruned_int8_convrot.safetensors` | [Comfy-Org/MiniMax-H3-Image](https://huggingface.co/Comfy-Org/MiniMax-H3-Image) | 21.0 GB |
+| `--text-encoder` | `qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors` (shared with loki-reshoot) | Comfy-Org/MiniMax-H3-Image | 15.7 GB |
+| `--vae` | `minimax_h3_image_vae_fp16.safetensors` | Comfy-Org/MiniMax-H3-Image | 1.2 GB |
+
+Validation (ComfyUI 0.45's own implementation, scripts and checks in loki-reshoot's `ref/` and `src/bin/`): the same
+edit prompt, picture and seed give the same result as ComfyUI (22.3 dB PSNR; differences are int8 rounding carried
+through the steps), the image VAE decodes at 58.6 dB.
 
 ## Building
 

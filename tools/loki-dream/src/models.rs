@@ -36,6 +36,12 @@ pub const KLEIN9B_TE: Spec = Spec { repo: "Comfy-Org/Flux-2-Klein-9B", what: "Qw
 pub const FLUX2_VAE: Spec = Spec { repo: "Comfy-Org/Flux-2-Klein-4B", what: "FLUX.2 VAE", patterns: &["flux2-vae.safetensors", "flux2_vae.safetensors"], hf_path: "split_files/vae/flux2-vae.safetensors", size_gb: 0.34 };
 
 // ---- SDXL (stabilityai/stable-diffusion-xl-base-1.0: one file with the UNet, both text encoders and the VAE)
+// ---- MiniMax H3 Image (Comfy-Org/MiniMax-H3-Image), run by loki-reshoot's H3 engine
+pub const H3_IMAGE_DIT: Spec = Spec { repo: "Comfy-Org/MiniMax-H3-Image", what: "MiniMax H3 Image diffusion model (int8)", patterns: &["minimax_h3_image_pruned_int8", "minimax_h3_image*int8"], hf_path: "diffusion_models/minimax_h3_image_pruned_int8_convrot.safetensors", size_gb: 21.0 };
+/// The H3 family's Qwen3-VL-32B conditioning encoder (NVFP4 + AWQ; the same file loki-reshoot uses)
+pub const H3_TE: Spec = Spec { repo: "Comfy-Org/MiniMax-H3-Image", what: "Qwen3-VL-32B (MiniMax H3) text encoder", patterns: &["qwen3vl_32b_minimax_h3_nvfp4", "qwen3vl_32b*minimax*nvfp4"], hf_path: "text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors", size_gb: 15.7 };
+pub const H3_IMAGE_VAE: Spec = Spec { repo: "Comfy-Org/MiniMax-H3-Image", what: "MiniMax H3 Image VAE", patterns: &["minimax_h3_image_vae"], hf_path: "vae/minimax_h3_image_vae_fp16.safetensors", size_gb: 1.2 };
+
 pub const SDXL_BASE: Spec = Spec { repo: "stabilityai/stable-diffusion-xl-base-1.0", what: "SDXL base 1.0 checkpoint", patterns: &["sd_xl_base_1.0", "sd_xl_base", "sdxl_base"], hf_path: "sd_xl_base_1.0.safetensors", size_gb: 6.9 };
 
 // ---- Anima (circlestone-labs/Anima)

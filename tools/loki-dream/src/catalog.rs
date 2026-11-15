@@ -17,8 +17,8 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 /// The architectures' default models, in the order they are offered.
-fn default_specs() -> [(Arch, &'static Spec); 5] {
-    [(Arch::Moss, &models::DIT_INT8), (Arch::Krea2, &models::KREA2_DIT), (Arch::Flux2, &models::KLEIN_DIT), (Arch::Anima, &models::ANIMA_DIT), (Arch::Sdxl, &models::SDXL_BASE)]
+fn default_specs() -> [(Arch, &'static Spec); 6] {
+    [(Arch::Moss, &models::DIT_INT8), (Arch::Krea2, &models::KREA2_DIT), (Arch::Flux2, &models::KLEIN_DIT), (Arch::Anima, &models::ANIMA_DIT), (Arch::Sdxl, &models::SDXL_BASE), (Arch::H3Image, &models::H3_IMAGE_DIT)]
 }
 
 /// How a checkpoint stores its big weights: the dtype of most 2D weight bytes (int8 ConvRot, fp8, nvfp4, bf16, ...).
@@ -96,6 +96,8 @@ fn entry(path: &Path, a: Arch, st: Option<&SafeTensors>, local: bool, download: 
         // MOSS-Image: --turbo applies the DMD2 LoRA; the other architectures have distilled checkpoints instead
         "turbo": a == Arch::Moss,
         "loras": a == Arch::Moss,
+        // reference pictures (--ref) the model takes: MiniMax H3 Image's <Picture n>
+        "references": if a == Arch::H3Image { loki_reshoot::h3image::MAX_REFS } else { 0 },
         "local": local,
         "text_encoder": te,
         // SDXL: both inside the checkpoint (null)
@@ -162,7 +164,7 @@ pub fn list() -> Value {
 
 /// The catalog as a table for a terminal.
 pub fn table(v: &Value) -> Vec<String> {
-    let mut lines = vec![format!("{:<46} {:<13} {:<9} {:<6} {:>5} {:>4}  {}", "model (--model NAME)", "architecture", "variant", "format", "steps", "cfg", "status")];
+    let mut lines = vec![format!("{:<46} {:<16} {:<9} {:<6} {:>5} {:>4}  {}", "model (--model NAME)", "architecture", "variant", "format", "steps", "cfg", "status")];
     for m in v["models"].as_array().into_iter().flatten() {
         let missing: Vec<String> = ["text_encoder", "vae"]
             .iter()
@@ -178,7 +180,7 @@ pub fn table(v: &Value) -> Vec<String> {
         };
         let def = if m["file"] == v["default"] { " (default)" } else { "" };
         lines.push(format!(
-            "{:<46} {:<13} {:<9} {:<6} {:>5} {:>4}  {}{}",
+            "{:<46} {:<16} {:<9} {:<6} {:>5} {:>4}  {}{}",
             m["file"].as_str().unwrap_or_default().trim_end_matches(".safetensors"),
             m["architecture_name"].as_str().unwrap_or_default(),
             if m["distilled"] == true { "distilled" } else { "base" },

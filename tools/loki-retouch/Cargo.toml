@@ -22,6 +22,8 @@ rand = "0.8"
 rand_distr = "0.4"
 indicatif = "0.17"
 ureq = "2"
+# the H3 family engine (MiniMax H3 Image): DiT, Qwen3-VL-32B conditioning encoder and image VAE
+loki-reshoot = { path = "../loki-reshoot" }
 
 [build-dependencies]
 anyhow = "1"

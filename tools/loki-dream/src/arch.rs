@@ -1,6 +1,6 @@
 //! Diffusion-model architecture detection from a checkpoint's tensor names.
 //!
-//! loki-dream runs five architectures; the diffusion model file decides which one, so `--dit` (or `--model`) can point at
+//! loki-dream runs six architectures; the diffusion model file decides which one, so `--dit` (or `--model`) can point at
 //! any checkpoint and the matching text encoder, VAE and sampler follow. Detection only reads the safetensors header.
 //! Checkpoints of other architectures are named when recognised (FLUX.1, Qwen-Image, SDXL, ...) and refused.
 use crate::safetensors::SafeTensors;
@@ -19,6 +19,8 @@ pub enum Arch {
     Anima,
     /// SDXL and SDXL-architecture checkpoints (UNet, CLIP-L + OpenCLIP bigG and the VAE in one file)
     Sdxl,
+    /// MiniMax H3 Image (33B single-stream DiT, 6-step PDD): Qwen3-VL-32B + the H3 Image VAE, run by loki-reshoot's engine
+    H3Image,
 }
 
 impl Arch {
@@ -29,6 +31,7 @@ impl Arch {
             Arch::Flux2 => "FLUX.2 klein",
             Arch::Anima => "Anima",
             Arch::Sdxl => "SDXL",
+            Arch::H3Image => "MiniMax H3 Image",
         }
     }
     /// The short id used on the command line and in generation records.
@@ -39,6 +42,7 @@ impl Arch {
             Arch::Flux2 => "flux2",
             Arch::Anima => "anima",
             Arch::Sdxl => "sdxl",
+            Arch::H3Image => "h3",
         }
     }
     pub fn parse(s: &str) -> Result<Arch> {
@@ -48,12 +52,13 @@ impl Arch {
             "flux2" | "flux2klein" | "klein" | "flux" => Arch::Flux2,
             "anima" => Arch::Anima,
             "sdxl" | "xl" => Arch::Sdxl,
+            "h3" | "h3image" | "minimax" | "minimaxh3" | "minimaxh3image" => Arch::H3Image,
             o => bail!("unknown architecture {o:?} (supported: {})", SUPPORTED),
         })
     }
 }
 
-pub const SUPPORTED: &str = "MOSS-Image (Kromoss), Krea 2, FLUX.2 klein, Anima, SDXL";
+pub const SUPPORTED: &str = "MOSS-Image (Kromoss), Krea 2, FLUX.2 klein, Anima, SDXL, MiniMax H3 Image";
 
 /// Prefixes some exporters put in front of the diffusion model's own tensor names.
 pub const PREFIXES: [&str; 4] = ["model.diffusion_model.", "diffusion_model.", "model.", ""];
@@ -77,6 +82,12 @@ pub fn detect_names(has: &dyn Fn(&str) -> bool, any: &dyn Fn(&str) -> bool) -> R
     }
     if with("net.llm_adapter.embed.weight") || with("llm_adapter.embed.weight") {
         return Ok(Arch::Anima);
+    }
+    if loki_reshoot::h3image::is_h3_image(has) {
+        return Ok(Arch::H3Image);
+    }
+    if loki_reshoot::h3image::is_h3_video(has) {
+        bail!("this is a MiniMax H3 audio-video model (video with sound: loki-reshoot runs it); loki-dream runs MiniMax H3 Image");
     }
     if has("model.diffusion_model.input_blocks.0.0.weight") && has("model.diffusion_model.label_emb.0.0.weight") {
         if (has("conditioner.embedders.1.model.token_embedding.weight") || has("conditioner.embedders.1.transformer.text_model.embeddings.token_embedding.weight"))
@@ -151,6 +162,8 @@ mod tests {
             "first_stage_model.decoder.conv_in.weight",
         ];
         assert_eq!(det(&xl).unwrap(), Arch::Sdxl);
+        assert_eq!(det(&["video_patch_proj.weight", "condition_proj.weight", "adaln_t_table"]).unwrap(), Arch::H3Image);
+        assert!(det(&["video_patch_proj.weight", "condition_proj.weight", "audio_patch_proj.weight"]).unwrap_err().to_string().contains("loki-reshoot"));
         assert!(det(&xl[..2]).unwrap_err().to_string().contains("refiner"));
     }
 
@@ -168,6 +181,8 @@ mod tests {
         assert_eq!(Arch::parse("FLUX.2").unwrap(), Arch::Flux2);
         assert_eq!(Arch::parse("krea-2").unwrap(), Arch::Krea2);
         assert_eq!(Arch::parse("SDXL").unwrap(), Arch::Sdxl);
+        assert_eq!(Arch::parse("MiniMax-H3-Image").unwrap(), Arch::H3Image);
+        assert_eq!(Arch::parse("h3").unwrap(), Arch::H3Image);
         assert!(Arch::parse("sd3").is_err());
     }
 }

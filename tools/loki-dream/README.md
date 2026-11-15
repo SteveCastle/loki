@@ -10,7 +10,9 @@ It also runs four other architectures, each with its own text encoder, VAE and s
 (`--model FILE`; the architecture is detected from the checkpoint): **Krea 2** (12B, Qwen3-VL-4B + Qwen-Image VAE),
 **FLUX.2 klein** (4B / 9B, Qwen3-4B / 8B + FLUX.2 VAE), **Anima** (2B Cosmos-Predict2 with an LLM adapter, Qwen3-0.6B
 + Qwen-Image VAE) and **SDXL** (any SDXL-architecture single-file checkpoint: UNet, CLIP-L + OpenCLIP bigG and VAE in one
-file). See [Other architectures](#other-architectures-krea-2-flux2-klein-anima) and [SDXL](#sdxl).
+file). And **MiniMax H3 Image** (33B, native 4-16 MP, 6 steps, up to 16 reference pictures, Qwen3-VL-32B + the H3 Image
+VAE), run by loki-reshoot's H3 engine. See [Other architectures](#other-architectures-krea-2-flux2-klein-anima),
+[SDXL](#sdxl) and [MiniMax H3 Image](#minimax-h3-image).
 
 ```
 loki-dream -p "a tabby cat holding a sign that says KROMOSS"            # -> dream_<seed>.png (50 steps, CFG 3)
@@ -21,16 +23,18 @@ loki-dream --model krea2_turbo_fp8_scaled -p "a portrait of an old fisherman at 
 loki-dream --model flux-2-klein-4b -p "a red apple on a wooden table"                            # FLUX.2 klein, 4 steps
 loki-dream --arch anima -p "masterpiece, best quality, safe, 1girl, silver hair, cherry blossoms"  # Anima 1.0
 loki-dream --model my_sdxl_checkpoint -p "a (red:1.2) vintage car, golden hour" --negative "blurry"   # any SDXL checkpoint
+loki-dream --arch h3 --size 4096x4096 -P long_caption.txt                                       # MiniMax H3 Image, 16 MP
+loki-dream --arch h3 -r person.png -r room.png -p "<Picture 1> reading in the armchair of <Picture 2>"
 ```
 
 ## Part of the loki- toolkit
 
 | tool | does | engine |
 |---|---|---|
-| [loki-retouch](../loki-retouch) | image editing, upscaling, restoration, compositing | Qwen Image 2.1 |
+| [loki-retouch](../loki-retouch) | image editing, upscaling, restoration, compositing | Qwen Image 2.1, MiniMax H3 Image |
 | [loki-reshoot](../loki-reshoot) | reference images / videos / audio -> video with sound | MiniMax H3 |
 | [loki-segment](../loki-segment) | concept / click / box segmentation, tracked roto of video | SAM 3.1 |
-| **loki-dream** (this tool) | text -> image, img2img, inpainting, LoRAs | Kromoss (MOSS-Image), Krea 2, FLUX.2 klein, Anima, SDXL |
+| **loki-dream** (this tool) | text -> image, img2img, inpainting, LoRAs, reference pictures | Kromoss (MOSS-Image), Krea 2, FLUX.2 klein, Anima, SDXL, MiniMax H3 Image |
 
 Shared conventions (`../CONVENTIONS.md`): stdout carries only results (the path of every image, one per line;
 `--json` one object; `-o -` the PNG). Progress, timings and warnings go to stderr (`-q` silences them). Exit status is 0 ok,
@@ -184,6 +188,40 @@ noise (`torch.randn([1, 4, H/8, W/8])` from the seed); `euler_ancestral`'s per-s
 so ancestral runs are reproducible here but not seed-for-seed equal to ComfyUI's GPU noise. Not for SDXL (yet): LoRAs,
 embeddings (`embedding:`), the refiner.
 
+## MiniMax H3 Image
+
+`--arch h3` (or `--model` with a MiniMax-H3-Image checkpoint) runs **MiniMax H3 Image**: MiniMax's open 33.1B single-stream
+DiT (the H3 audio-video model without its audio stream) distilled to **6 steps at CFG 1**, with the **Qwen3-VL-32B**
+conditioning encoder of the H3 family and its own image VAE (the H3 3D-CNN encoder + a 24-layer 2D ViT decoder). It draws
+**natively at 4-16 MP**, renders text well, and takes **up to 16 reference pictures** (`--ref`, the prompt's `<Picture 1>`,
+`<Picture 2>`, ...). The engine is loki-reshoot's (`loki_reshoot::h3image`, linked as a library), so the DiT, text encoder
+and attention kernels are the ones validated there for the video model.
+
+```
+loki-dream --arch h3 -P caption.txt                                          # 2048x2048, ~35 s cold on a 4090
+loki-dream --arch h3 --size 4096x4096 -p "..."                               # native 16 MP, ~55 s cold
+loki-dream --arch h3 --aspect 16:9 --megapixels 16 -p "..."                  # 5472x3072-class
+loki-dream --arch h3 -r face.png -r jacket.png -p "<Picture 1> wearing the jacket from <Picture 2>, studio portrait"
+loki-dream --arch h3 --init photo.jpg --strength 0.6 -p "the same street as a watercolor"
+```
+
+| | |
+|---|---|
+| defaults | 6 steps, CFG 1, `euler` on ComfyUI's `simple` schedule over the checkpoint's PDD sigma grid (`pdd_sigmas` in its metadata), one DiT pass per step |
+| size | 32 px grid; default 2048x2048, or with `--ref` Picture 1's size (short edge 1024-2048); best around 16 MP (4096x4096, 4736x3552, 5024x3360, 5472x3072, 6272x2688 and portraits); up to ~22 MP. Requests under 4 MP are drawn at 4 MP and Lanczos-resampled down (the official pipeline's `min_generation_area`) |
+| `--ref` | up to 16 pictures; the text encoder sees each at a 1024 px short edge, the DiT a VAE latent at 1024-2048 px (ComfyUI `MiniMaxH3ImageConditioning`) |
+| `--init` / `--strength` | img2img like ComfyUI's KSampler denoise (the tail of a longer schedule on the PDD grid; 0.5 starts at sigma 0.75) |
+| prompts | no chat template: `Picture i: <vision block>` per reference, then the prompt as given (`--show-prompt`). Long, specific English captions of the whole image work best (the official prompt expander turns short requests into such captions) |
+| not supported | CFG / negative prompt / `--shift` (distilled), `--mask`, LoRAs. Edits of one picture: `loki-retouch --model h3` |
+| noise | the seed's `torch.randn` on the CPU like ComfyUI, so a seed matches ComfyUI's run |
+
+Which checkpoint: the release's pruned int8 ConvRot DiT (`minimax_h3_image_pruned_int8_convrot`, 21 GB) is the default
+and the one validated; its int8 ConvRot weights are the engine's native format. The pruned bf16 file (40 GB) also loads
+(quantized to int8 ConvRot as it loads, slower). The W4A8 file and the community P-H3-Image (a fine-tune of the H3 video
+model with a Qwen3-VL-4B encoder and the video VAE) are not supported. Memory on a 24 GB card: the text encoder (15 GB)
+and the DiT (21 GB) load in turn; with `--count N` / several prompts every prompt is encoded first, so each model loads
+once per run.
+
 ## Models
 
 Found next to `loki-dream.exe`, in a `models/` folder next to it, in `$LOKI_MODELS` (a path list) or `./models`; missing
@@ -225,6 +263,9 @@ folders in `$LOKI_MODELS`.
 | anima | diffusion model (`--arch` default) | `anima-base` (Anima 1.0; `anima-turbo-v1.1`, the distilled 10-step one, downloads when named) | [circlestone-labs/Anima](https://huggingface.co/circlestone-labs/Anima) | 4.2 GB |
 | anima | text encoder | `qwen_3_06b_base` | circlestone-labs/Anima | 1.2 GB |
 | sdxl | checkpoint (`--arch` default; text encoders and VAE inside) | `sd_xl_base_1.0` | [stabilityai/stable-diffusion-xl-base-1.0](https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0) | 6.9 GB |
+| h3 | diffusion model (`--arch` default) | `minimax_h3_image_pruned_int8_convrot` (`minimax_h3_image*int8`) | [Comfy-Org/MiniMax-H3-Image](https://huggingface.co/Comfy-Org/MiniMax-H3-Image) | 21.0 GB |
+| h3 | text encoder (Qwen3-VL-32B, NVFP4 + AWQ; the same file loki-reshoot uses) | `qwen3vl_32b_minimax_h3_nvfp4_awq` | Comfy-Org/MiniMax-H3-Image | 15.7 GB |
+| h3 | VAE | `minimax_h3_image_vae_fp16` | Comfy-Org/MiniMax-H3-Image | 1.2 GB |
 
 Which klein text encoder a run needs is read from the model (`txt_in` width: 7680 = 4B, 12288 = 9B). The Qwen3 tokenizer
 (151k BPE, shared by all three) and Anima's T5 tokenizer (SentencePiece Unigram with its precompiled normalizer) are
@@ -416,6 +457,16 @@ Whole images at a fixed seed, PSNR vs the official pipeline's image:
 | Krea 2 Turbo, 768², 8 steps | 43.4 dB (int8) |
 | Anima base, 768², 30 steps, CFG 4 | 25.5 dB (bf16; same composition, the MOSS-Image range above) |
 
+### MiniMax H3 Image
+
+Validated against ComfyUI 0.45's own implementation (`comfy/ldm/minimax`, `MiniMaxH3ImageConditioning`) with the reference
+scripts in loki-reshoot (`ref/ref_ivae.py`, `ref_dit_image.py`, `ref_e2e_image.py`; checks `ivae_check`, `dit_image_check`,
+`h3image_check`): the image VAE decodes at 58.6 dB PSNR (encoder latents 0.3 % relative error, the posterior noise drawn
+exactly like torch), the DiT output matches a high-precision reference as closely as ComfyUI's own int8 path does (6-8 %
+relative, cos 0.997 at the first steps of a synthetic case), the 6-step schedule is ComfyUI's to 1e-7, and the same prompt
+and seed give the same picture as ComfyUI (text to image 20.9 dB, an edit with a reference picture 22.3 dB PSNR; the
+differences are int8 rounding carried through the steps).
+
 ## Performance (RTX 4090, Windows, model files in the OS cache)
 
 | 1024x1024 | sampling | end to end | peak VRAM (above the desktop) |
@@ -429,6 +480,8 @@ Whole images at a fixed seed, PSNR vs the official pipeline's image:
 | FLUX.2 klein 9B (fp8 file, int8), 4 steps | 1.0 s | 5.2 s | |
 | Anima base (bf16), 30 steps, CFG 4 | 8.6 s | 11.1 s | |
 | SDXL (fp16 file, bf16), 30 steps, CFG 6 | 5.8 s (0.09 s per UNet pass) | 16.7 s (checkpoint read cold) | |
+| MiniMax H3 Image (int8), 6 steps, 2048x2048 (4 MP) | 4.2 s (0.7 s per DiT pass) | 35 s (text encoder 15 GB + DiT 21 GB loaded in turn) | 22 GB |
+| MiniMax H3 Image (int8), 6 steps, 4096x4096 (16 MP) | 23 s | 55 s | 22 GB |
 
 Fixed costs per run: text encoder 2.7-2.9 s (14 GB of bf16 weights streamed), DiT upload 1.1 s (int8) / 2.0 s (bf16),
 LoRA prep 0.4 s, VAE decode 0.2 s. `--count N` and several prompts pay them once. At 1024² the int8 GEMMs run at 320-360

@@ -1,6 +1,6 @@
 ---
 name: loki-retouch
-description: Edit, upscale, restore or composite images with the local loki-retouch CLI (Qwen Image 2.1, Rust/CUDA, no ComfyUI). Use when the user wants to change the content of a photo with a text instruction, upscale or restore an image, combine several images, outpaint, or make a 4K/phone wallpaper from a photo (--preset 4kify), or wants a quick image-editing building block in a pipeline. Composes with loki-reshoot (images -> video) through stdin/stdout.
+description: Edit, upscale, restore or composite images with the local loki-retouch CLI (Qwen Image 2.1, or MiniMax H3 Image with --model h3; Rust/CUDA, no ComfyUI). Use when the user wants to change the content of a photo with a text instruction, upscale or restore an image, combine several images (up to 16 with --model h3), make a native 4-16 MP edit, outpaint, or make a 4K/phone wallpaper from a photo (--preset 4kify), or wants a quick image-editing building block in a pipeline. Composes with loki-reshoot (images -> video) through stdin/stdout.
 ---
 
 # loki-retouch: image in, edited image out
@@ -41,6 +41,7 @@ small, composable tools: see the sibling `loki-reshoot` (references -> video wit
 | 4K desktop wallpaper | `loki-retouch --preset 4kify photo.jpg` → `photo_4k.png` (3840x2160); `--preset 4kify-phone` → 1296x2800 |
 | frames of a clip | `loki-retouch --preset 4kify --seq -o out frames/` (one seed, framing pinned) |
 | batch | `loki-retouch -q --preset restore -o outdir "shots/*.jpg"` (result paths on stdout) |
+| MiniMax H3 Image instead | `--model h3` on any of the above: up to 16 pictures (input = `<image1>`/`<Picture 1>`, then each `-r`), native 4-16 MP (`--long-edge 4096`), 6 steps; `<imageN>` tags are translated. Best for multi-picture compositions, identity-keeping edits and big outputs. Write a specific English description of the result |
 
 ## Sizes (default: same as the input)
 `--size same|WxH`, `--scale F` (each side, ratio kept), `--width/--height/--long-edge PX`, `--megapixels MP`, `--upscale [N]`. A preset's own size
@@ -57,6 +58,6 @@ pixels (4K ≈ 100 s end to end; 512x640 ≈ 15 s including ~10 s of model loadi
 
 ## Check the result and iterate
 - Open the PNG (or build a before/after montage) and look; compare sizes with `python -c "from PIL import Image; print(Image.open(p).size)"`.
-- Different outcome: change `--seed N` (default 0, incremented per input), then `--steps` (default 25), then the wording. The engine is slightly
+- Different outcome: change `--seed N` (default 0, incremented per input), then `--steps` (default 25; `--model h3`: 6), then the wording, then the other `--model`. The engine is slightly
   nondeterministic run to run (~44 dB PSNR between identical runs), so tiny pixel differences are normal.
 - Errors: "allocating ... OUT_OF_MEMORY" → free the GPU or lower `--size`/`--scale`; "unknown preset" → `--list-presets`.
