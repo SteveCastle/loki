@@ -26,6 +26,7 @@ const signature = (p: Predicate) =>
     p.textWeight ?? '',
     p.nodes ?? [],
     p.blendMode ?? '',
+    p.limit ?? '',
   ]);
 
 const pendingPredicates = (query: Query, settled: Query): Predicate[] => {

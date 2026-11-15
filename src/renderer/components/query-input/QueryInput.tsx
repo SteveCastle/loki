@@ -2,7 +2,14 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { useMeaningMode } from '../../hooks/useMeaningMode';
 import { mediaUrl } from '../../platform';
 import type { Query, Predicate, BlendNode } from '../../query/types';
-import { predicateKey } from '../../query/types';
+import {
+  predicateKey,
+  isSimilarityPredicate,
+  similarityLimit,
+  SIMILARITY_LIMIT,
+  SIMILARITY_LIMIT_MAX,
+  SIMILARITY_LIMIT_STEP,
+} from '../../query/types';
 import { effectiveBlendNodes } from '../../query/reducer';
 import { displayTagLabel } from '../../tag-display';
 import { TYPE_GLYPH } from './query-history-section';
@@ -13,6 +20,13 @@ import intersect from '../../../../assets/intersect.svg';
 import selective from '../../../../assets/selective.svg';
 import './query-input.css';
 
+/** A widened chip's cap, compactly: 2000 -> "2k", 12500 -> "12.5k". */
+export function formatLimit(n: number): string {
+  if (n < 1000) return String(n);
+  const k = n / 1000;
+  return `${Number.isInteger(k) ? k : k.toFixed(1)}k`;
+}
+
 interface QueryInputProps {
   query: Query;
   textValue: string;
@@ -21,6 +35,8 @@ interface QueryInputProps {
   onRemovePredicate: (key: string) => void;
   onToggleExclude: (key: string) => void;
   onSetPredicateJoin: (key: string, join: 'AND' | 'OR') => void;
+  // Similarity chips: widen the result cap by SIMILARITY_LIMIT_STEP.
+  onWidenPredicate?: (key: string) => void;
   // Blend an image predicate (similar/clip) with text. When supplied, hovering
   // an image chip opens a popover with a text input and an image↔text weight
   // slider; commits patch the predicate in place (text: '' clears the blend).
@@ -105,6 +121,7 @@ export default function QueryInput({
   onRemovePredicate,
   onToggleExclude,
   onSetPredicateJoin,
+  onWidenPredicate,
   onUpdatePredicateBlend,
   onAddBlendNode,
   onRemoveBlendNode,
@@ -477,6 +494,28 @@ export default function QueryInput({
                     </span>
                   )}
                 </span>
+                {onWidenPredicate && isSimilarityPredicate(p) && (
+                  <button
+                    type="button"
+                    className="query-chip-widen"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onWidenPredicate(key);
+                    }}
+                    disabled={similarityLimit(p) >= SIMILARITY_LIMIT_MAX}
+                    title={`${p.exclude ? 'Excluding' : 'Showing'} the ${similarityLimit(
+                      p
+                    ).toLocaleString()} most similar · click for ${SIMILARITY_LIMIT_STEP.toLocaleString()} more`}
+                    aria-label={`Widen to the ${(
+                      similarityLimit(p) + SIMILARITY_LIMIT_STEP
+                    ).toLocaleString()} most similar`}
+                  >
+                    {similarityLimit(p) > SIMILARITY_LIMIT && (
+                      <span className="query-chip-widen-count">{formatLimit(similarityLimit(p))}</span>
+                    )}
+                    +
+                  </button>
+                )}
                 <button
                   className="query-chip-remove"
                   onClick={(e) => {

@@ -506,6 +506,22 @@ func resolveFilterPaths(deps *Dependencies, preds []Predicate, mode string) (tas
 	return allow, rows.Err()
 }
 
+// maxVisualCandidateLimit bounds a widened similarity chip: past this the
+// "top N most similar" is effectively the whole library anyway.
+const maxVisualCandidateLimit = 1_000_000
+
+// predicateLimit is a visual predicate's candidate cap: its own Limit when
+// set (clamped to maxVisualCandidateLimit), else def.
+func predicateLimit(p Predicate, def int) int {
+	if p.Limit <= 0 {
+		return def
+	}
+	if p.Limit > maxVisualCandidateLimit {
+		return maxVisualCandidateLimit
+	}
+	return p.Limit
+}
+
 func lokiMediaQueryHandler(deps *Dependencies) http.HandlerFunc {
 	type queryRequest struct {
 		Predicates []Predicate `json:"predicates"`
@@ -569,6 +585,8 @@ func lokiMediaQueryHandler(deps *Dependencies) http.HandlerFunc {
 				}
 				var hits []tasks.SimilarHit
 				var err error
+				// The chip's own cap (widened 1000 at a time), else the default.
+				limit := predicateLimit(req.Predicates[i], visualCandidateLimit)
 				// An image predicate carrying text becomes a blended query: one
 				// combined vector ((1-w)*image + w*text) cosine-scanned once,
 				// rather than two independently-resolved path sets.
@@ -580,12 +598,12 @@ func lokiMediaQueryHandler(deps *Dependencies) http.HandlerFunc {
 						var terms []tasks.QueryTerm
 						terms, err = compositeTerms(tasks.QueryTerm{Kind: "path", Value: val, Weight: 1}, req.Predicates[i])
 						if err == nil {
-							hits, err = searchComposite(r.Context(), deps.DB, req.Predicates[i], terms, visualCandidateLimit, allow)
+							hits, err = searchComposite(r.Context(), deps.DB, req.Predicates[i], terms, limit, allow)
 						}
 					} else if blendText != "" {
-						hits, err = tasks.SearchByPathAndText(r.Context(), deps.DB, val, blendText, blendTextWeight(req.Predicates[i].TextWeight), visualCandidateLimit, allow)
+						hits, err = tasks.SearchByPathAndText(r.Context(), deps.DB, val, blendText, blendTextWeight(req.Predicates[i].TextWeight), limit, allow)
 					} else {
-						hits, err = tasks.SimilarByPathOrEmbed(r.Context(), deps.DB, tasks.ActiveEmbedModel().ID, val, visualCandidateLimit, allow)
+						hits, err = tasks.SimilarByPathOrEmbed(r.Context(), deps.DB, tasks.ActiveEmbedModel().ID, val, limit, allow)
 					}
 				case "clip":
 					// A captured screen region: the value is a PNG data URL.
@@ -595,12 +613,12 @@ func lokiMediaQueryHandler(deps *Dependencies) http.HandlerFunc {
 							var terms []tasks.QueryTerm
 							terms, err = compositeTerms(tasks.QueryTerm{Kind: "image", Image: image, Weight: 1}, req.Predicates[i])
 							if err == nil {
-								hits, err = searchComposite(r.Context(), deps.DB, req.Predicates[i], terms, visualCandidateLimit, allow)
+								hits, err = searchComposite(r.Context(), deps.DB, req.Predicates[i], terms, limit, allow)
 							}
 						} else if blendText != "" {
-							hits, err = tasks.SearchByImageAndText(r.Context(), deps.DB, image, blendText, blendTextWeight(req.Predicates[i].TextWeight), visualCandidateLimit, allow)
+							hits, err = tasks.SearchByImageAndText(r.Context(), deps.DB, image, blendText, blendTextWeight(req.Predicates[i].TextWeight), limit, allow)
 						} else {
-							hits, err = tasks.SearchByImage(r.Context(), deps.DB, image, visualCandidateLimit, allow)
+							hits, err = tasks.SearchByImage(r.Context(), deps.DB, image, limit, allow)
 						}
 					}
 				case "face":
@@ -611,10 +629,10 @@ func lokiMediaQueryHandler(deps *Dependencies) http.HandlerFunc {
 					if strings.HasPrefix(val, "data:") {
 						var image []byte
 						if image, err = decodeImageDataURL(val); err == nil {
-							faceHits, err = tasks.SearchFacesByImage(r.Context(), deps.DB, image, visualCandidateLimit, allow)
+							faceHits, err = tasks.SearchFacesByImage(r.Context(), deps.DB, image, limit, allow)
 						}
 					} else {
-						faceHits, err = tasks.SearchFacesByMediaPath(r.Context(), deps.DB, val, visualCandidateLimit, allow)
+						faceHits, err = tasks.SearchFacesByMediaPath(r.Context(), deps.DB, val, limit, allow)
 					}
 					hits = tasks.FaceHitsToMediaHits(faceHits)
 				default: // "visual": free-text → image search, composable like similar/clip
@@ -622,10 +640,10 @@ func lokiMediaQueryHandler(deps *Dependencies) http.HandlerFunc {
 						var terms []tasks.QueryTerm
 						terms, err = compositeTerms(tasks.QueryTerm{Kind: "text", Value: val, Weight: 1}, req.Predicates[i])
 						if err == nil {
-							hits, err = searchComposite(r.Context(), deps.DB, req.Predicates[i], terms, visualCandidateLimit, allow)
+							hits, err = searchComposite(r.Context(), deps.DB, req.Predicates[i], terms, limit, allow)
 						}
 					} else {
-						hits, err = tasks.SearchByText(r.Context(), deps.DB, val, visualCandidateLimit, allow)
+						hits, err = tasks.SearchByText(r.Context(), deps.DB, val, limit, allow)
 					}
 				}
 				if err != nil {

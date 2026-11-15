@@ -509,6 +509,12 @@ export default function Taxonomy() {
                 data: { key, join },
               })
             }
+            onWidenPredicate={(key) =>
+              libraryService.send({
+                type: 'WIDEN_PREDICATE',
+                data: { key },
+              })
+            }
             onUpdatePredicateBlend={(key, patch) =>
               libraryService.send({
                 type: 'UPDATE_PREDICATE_BLEND',

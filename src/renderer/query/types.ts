@@ -75,6 +75,27 @@ export interface Predicate {
   //     component at once, zeroing in on what they have in common (five
   //     football photos surface footballs, not one photo's grassy park).
   blendMode?: 'blend' | 'shared';
+  // Similarity predicates ('similar'/'visual'/'clip'/'face'): how many of the
+  // most similar items the search returns. Undefined = SIMILARITY_LIMIT (the
+  // server's default); the chip's widen button adds SIMILARITY_LIMIT_STEP.
+  limit?: number;
+}
+
+/** Results a similarity chip returns until widened (the server's default cap). */
+export const SIMILARITY_LIMIT = 1000;
+/** How much one press of a chip's widen button adds. */
+export const SIMILARITY_LIMIT_STEP = 1000;
+/** The server's ceiling for a widened chip. */
+export const SIMILARITY_LIMIT_MAX = 1_000_000;
+
+/** Whether a predicate is resolved by embedding similarity (and so has a result cap). */
+export function isSimilarityPredicate(p: Predicate): boolean {
+  return p.type === 'similar' || p.type === 'visual' || p.type === 'clip' || p.type === 'face';
+}
+
+/** A similarity predicate's result cap. */
+export function similarityLimit(p: Predicate): number {
+  return p.limit && p.limit > 0 ? p.limit : SIMILARITY_LIMIT;
 }
 
 export interface Query {

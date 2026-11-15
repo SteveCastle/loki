@@ -1,6 +1,6 @@
 // src/renderer/query/reducer.ts
 import type { BlendNode, Predicate, Query } from './types';
-import { predicateKey } from './types';
+import { predicateKey, isSimilarityPredicate, similarityLimit, SIMILARITY_LIMIT_MAX, SIMILARITY_LIMIT_STEP } from './types';
 
 export function addPredicate(q: Query, p: Predicate): Query {
   const key = predicateKey(p);
@@ -253,6 +253,17 @@ export function updatePredicateBlend(
       }
       return next;
     }),
+  };
+}
+
+// Widen a similarity chip by one step (SIMILARITY_LIMIT_STEP more results).
+export function widenPredicate(q: Query, key: string): Query {
+  return {
+    predicates: q.predicates.map((x) =>
+      predicateKey(x) === key && isSimilarityPredicate(x)
+        ? { ...x, limit: Math.min(SIMILARITY_LIMIT_MAX, similarityLimit(x) + SIMILARITY_LIMIT_STEP) }
+        : x
+    ),
   };
 }
 

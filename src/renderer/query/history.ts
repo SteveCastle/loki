@@ -37,6 +37,8 @@ export function queryStateKey(q: Query): string {
       p.textWeight ?? null,
       (p.nodes ?? []).map((n) => [n.kind, n.value, n.weight ?? 1, !!n.negative]),
       p.blendMode ?? 'blend',
+      // only when widened, so keys recorded before chips had a limit still match
+      ...(p.limit ? [p.limit] : []),
     ])
   );
 }

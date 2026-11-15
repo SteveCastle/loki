@@ -24,6 +24,7 @@ import {
   toggleExclude,
   applyTagClick,
   setPredicateJoin,
+  widenPredicate,
   updatePredicateBlend,
   addBlendNode,
   removeBlendNode,
@@ -995,6 +996,19 @@ const queryMutationOn = {
         // In-place refresh: the list recognizes the upcoming setLibrary by
         // this loadId and preserves scroll (same contract as
         // DELETED_ASSIGNMENT).
+        preserveScrollFromLoadId: context.libraryLoadId,
+      };
+    }),
+  },
+  // A similarity chip's "+1000": the same search, more results. The top of
+  // the list is unchanged (results stay score-ordered), so keep the scroll.
+  WIDEN_PREDICATE: {
+    target: 'runningQuery',
+    actions: assign<LibraryState, AnyEventObject>((context, event) => {
+      const q = widenPredicate(context.query, event.data.key);
+      return {
+        query: q,
+        dbQuery: { tags: tagsFromQuery(q) },
         preserveScrollFromLoadId: context.libraryLoadId,
       };
     }),

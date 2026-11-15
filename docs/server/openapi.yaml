@@ -1475,6 +1475,15 @@ components:
             `shared`) combines all terms into one centroid vector. `shared` scores candidates
             against every positive term at once (must match all), finding what the positive terms
             have in common.
+        limit:
+          type: integer
+          minimum: 0
+          maximum: 1000000
+          default: 1000
+          description: >-
+            For `similar`, `visual`, `clip` and `face`: how many of the most similar items the
+            predicate resolves to. Missing or 0 means 1000; larger values widen the result set (the
+            viewer's chip raises it 1000 at a time), capped at 1000000.
     MediaQueryBlendNode:
       type: object
       required:

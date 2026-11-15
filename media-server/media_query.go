@@ -2,6 +2,7 @@
 package main
 
 import (
+	"encoding/json"
 	"strings"
 
 	"github.com/stevecastle/shrike/media"
@@ -37,9 +38,17 @@ type Predicate struct {
 	// one combined centroid vector (average-of-similarities semantics);
 	// "shared" = must-match-all (tasks.SearchBySharedConcept), which zeroes in
 	// on what the positive nodes have in common.
-	BlendMode string   `json:"blendMode"`
-	Resolved  []string `json:"-"` // visual predicates (similar/visual/clip): paths resolved by the handler before BuildMediaQuery
+	BlendMode string `json:"blendMode"`
+	// Limit (similar/visual/clip/face) caps how many of the most similar
+	// items the predicate resolves to; 0 = the default (1000). The chip's
+	// "widen" button raises it 1000 at a time.
+	Limit    int      `json:"limit,omitempty"`
+	Resolved []string `json:"-"` // visual predicates (similar/visual/clip): paths resolved by the handler before BuildMediaQuery
 }
+
+// inListMax is the largest resolved similarity set bound as individual IN
+// parameters; bigger sets (a widened chip) go in as one json_each array.
+const inListMax = 1000
 
 // Columns returned for the library list. media.description is intentionally
 // NOT selected (large text the list view doesn't use; the detail view fetches
@@ -163,16 +172,25 @@ func clauseFor(p Predicate, params *[]any) string {
 			}
 			return "(1=0)"
 		}
-		ph := make([]string, len(p.Resolved))
-		for i, rp := range p.Resolved {
-			ph[i] = "?"
-			*params = append(*params, rp)
+		var set string
+		if len(p.Resolved) > inListMax {
+			// A widened similarity set can pass SQLite's bound-variable cap
+			// (32766): bind it as ONE JSON array instead.
+			b, _ := json.Marshal(p.Resolved)
+			*params = append(*params, string(b))
+			set = "SELECT value FROM json_each(?)"
+		} else {
+			ph := make([]string, len(p.Resolved))
+			for i, rp := range p.Resolved {
+				ph[i] = "?"
+				*params = append(*params, rp)
+			}
+			set = strings.Join(ph, ", ")
 		}
-		placeholders := strings.Join(ph, ", ")
 		if p.Exclude {
-			return "(media.path NOT IN (" + placeholders + "))"
+			return "(media.path NOT IN (" + set + "))"
 		}
-		return "(media.path IN (" + placeholders + "))"
+		return "(media.path IN (" + set + "))"
 	}
 	return ""
 }

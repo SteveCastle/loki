@@ -207,6 +207,9 @@ export default function CommandPaletteSearch({
             data: { key, join: j },
           })
         }
+        onWidenPredicate={(key) =>
+          libraryService.send({ type: 'WIDEN_PREDICATE', data: { key } })
+        }
         onUpdatePredicateBlend={(key, patch) =>
           libraryService.send({
             type: 'UPDATE_PREDICATE_BLEND',

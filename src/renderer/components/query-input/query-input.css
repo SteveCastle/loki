@@ -355,6 +355,40 @@
   opacity: 1;
 }
 
+/* Similarity chips: "+" widens the result cap by 1000 (the count shows once
+   widened). Sits between the label and the remove button. */
+.query-chip-widen {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 9px;
+  color: inherit;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  padding: 2px 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  opacity: 0.75;
+  flex: none;
+}
+
+.query-chip-widen:hover:not(:disabled) {
+  opacity: 1;
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.query-chip-widen:disabled {
+  cursor: default;
+  opacity: 0.35;
+}
+
+.query-chip-widen-count {
+  font-weight: 500;
+  opacity: 0.85;
+}
+
 .query-input-field input {
   flex: 1 1 0;
   height: 30px;
