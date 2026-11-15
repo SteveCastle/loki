@@ -36,6 +36,7 @@ function mediaContext(extra) {
   const context = {
     ...model, playing: true, audioState: {}, drivenEval: noop,
     loopSrc: (t, len) => t % len, clipSlots: new Map(), slotOwners: new Map(), audioCtx: null,
+    loopMix: { src: null },
     document, $: () => document.body, applyAudioPrefsTo: noop,
     uploadVideoFrame: noop, isScrubbing: () => false,
     fx: { device: { createTexture: () => ({ createView: () => ({}), destroy: noop }) } },
@@ -88,6 +89,19 @@ test('dropping a bin asset over an occupied row creates a separate track at the 
   }
 });
 
+test('trim to a clip that ends mid-frame keeps its exact end (no black sliver, no short cycle)', () => {
+  const { comp, timeline } = setup();
+  const loop = { id: 'loop', kind: 'audio', start: 0, dur: 3.7537, props: {} };
+  comp.tracks.push({ clips: [loop] });
+  timeline._clipMenu(10, 10, loop);
+  [...document.querySelectorAll('.ctx-item')]
+    .find((row) => row.textContent === 'Trim comp length to clip').click();
+  assert.equal(comp.dur, 3.7537);
+  // The last rendered frame still falls inside the clip.
+  assert.ok(model.lastFrame(comp) < 3.7537);
+  assert.equal(model.activeClips(comp, model.lastFrame(comp)).length, 1);
+});
+
 test('trim uses the right-clicked clip endpoint and survives updates, saving, undo and redo', () => {
   const { comp, history, host, timeline } = setup();
   const short = { id: 'short', kind: 'audio', start: 2, dur: 4, props: {} };
@@ -137,6 +151,7 @@ test('hide and mute independently control preview visuals and preview/export aud
       clock: { t: 1, perf: 0 }, performance: { now: () => 0 },
       requestAnimationFrame: noop, fx: { inputTexture: {}, render: noop },
       offlineJob: null, rotoJob: null, loopJob: null, trimPreviewT: null, rotoEdit: null, idleFrame: () => false,
+      loopMix: { src: null }, syncLoopMix: noop, looping: true, exportMode: false,
       compFrame: (t) => Math.round(t * 30),
       renderSplats: noop, renderDepths: noop, prepareMotionBlur: noop,
       prepareMasks: noop, prepareMediaFx: (t, clips) => { visualClips = clips; },

@@ -1268,7 +1268,10 @@ export class Timeline {
         label: 'Trim comp length to clip',
         action: () => {
           this.host.history.record(comp, () => {
-            comp.dur = Math.max(1 / comp.fps, quantize(clipEnd(clip), comp.fps));
+            // The clip's exact end, not the nearest frame: rounding up left a
+            // sliver past the clip (a black flash before every loop wrap),
+            // rounding down cut a loop's cycle short (a skip at the wrap).
+            comp.dur = Math.max(1 / comp.fps, clipEnd(clip));
             // Keep this endpoint through model updates and export fitting.
             comp.autoDuration = false;
           });

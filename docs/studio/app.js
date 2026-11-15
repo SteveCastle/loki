@@ -69,6 +69,7 @@ import { LAYER_ICONS, clipIcon, shapeIconCanvas } from './icons.js';
 import { Muxer as WebMMuxer, ArrayBufferTarget } from './vendor/webm-muxer.mjs';
 import { Muxer as MP4Muxer, ArrayBufferTarget as MP4Target } from './vendor/mp4-muxer.mjs';
 import { Timeline, fmtTimecode, fmtSpeed, showMenu } from './timeline.js';
+import { LOOP_GOOD, seamScore, scoreLoopSeams, blendPlan, blendWeight, loopChannel } from './loop-seams.js';
 import { makeShaderEditor, CHEAT_HTML } from './shader-editor.js';
 import * as roto from './roto.js';
 import * as rotoSam from './roto-sam.js';
@@ -219,6 +220,10 @@ let masksLoaded = false;
 let tCur = 0;
 let playing = false;
 let looping = true;
+// Gapless looped preview sound (see syncLoopMix); declared up here because
+// pause()/setTime() reach it.
+const LOOP_MIX_MAX_SEC = 180;
+const loopMix = { key: '', buf: null, building: false, src: null, gain: null, t0: 0, len: 0 };
 let clock = { perf: 0, t: 0 };
 let timeline = null;
 
@@ -393,7 +398,10 @@ let scrubUntil = 0;   // paused setTime marks a short scrub window
 
 function setTime(t) {
   tCur = clamp(quantize(t, comp.fps), 0, lastFrame(comp));
-  if (playing) clock = { perf: performance.now(), t: tCur };
+  if (playing) {
+    clock = { perf: performance.now(), t: tCur };
+    stopLoopMix();   // restarts from the new position on the next tick
+  }
   else scrubUntil = performance.now() + 150;
   timeline?.updatePlayhead();
 }
@@ -442,6 +450,7 @@ function play() {
 
 function pause() {
   playing = false;
+  stopLoopMix();
   tCur = clamp(quantize(tCur, comp.fps), 0, lastFrame(comp));
 }
 
@@ -458,27 +467,40 @@ function tick() {
   }
 
   if (playing) {
-    tCur = clock.t + (performance.now() - clock.perf) / 1000;
+    if (loopMix.src) {
+      // Looping on the mix: its audio clock is the master, so picture and
+      // sound stay locked however many times the comp wraps.
+      tCur = loopMixTime();
+      clock = { perf: performance.now(), t: tCur };
+    } else {
+      tCur = clock.t + (performance.now() - clock.perf) / 1000;
+    }
     if (tCur >= comp.dur) {
       if (exportMode) {
         finishExport();
         tCur = lastFrame(comp);
         pause();
       } else if (looping) {
-        tCur = 0;
-        clock = { perf: performance.now(), t: 0 };
+        // Keep the overshoot: dropping it lost up to a display frame per
+        // wrap, which piled up as drift against the sound.
+        tCur %= comp.dur;
+        clock = { perf: performance.now(), t: tCur };
       } else {
         tCur = lastFrame(comp);
         pause();
       }
     }
+    syncLoopMix();
   }
 
   if (idleFrame(performance.now())) return;
 
   // While a trim handle is being dragged, render the frame at the cut
   // point instead of the playhead (the playhead UI itself stays put).
-  const t = trimPreviewT ?? tCur;
+  // Past the comp's last frame (a comp whose end isn't a whole frame) the
+  // picture holds that frame, as the export does: rendering the sliver
+  // after a clip that ends mid-frame showed black just before every wrap.
+  const t = trimPreviewT ?? (playing ? Math.min(tCur, lastFrame(comp)) : tCur);
   const activeMedia = activeClips(comp, t, 'media');
   const activeAudio = activeClips(comp, t, 'audio');
   syncMedia(t, activeMedia, activeAudio);
@@ -564,9 +586,13 @@ function audioEntries(includeMuted) {
   return out;
 }
 
-function audioDriveKey() {
+function audioDriveKey() { return audioMixKey(true); }
+
+/** Fingerprint of everything that shapes the comp's audio mix (muted
+ * tracks included or not). */
+function audioMixKey(includeMuted) {
   const parts = [comp.dur, comp.fps];
-  for (const { clip, asset } of audioEntries(true)) {
+  for (const { clip, asset } of audioEntries(includeMuted)) {
     const vol = clip.props.volume;
     const remap = clipTimeRemap(clip);
     parts.push(asset.id, clip.start, clip.dur, clip.in, clipRate(clip),
@@ -867,7 +893,7 @@ function syncMediaElement(asset, slot, track, clip, t) {
   // the Web Audio mixer up, level and effects live in the clip's chain
   // and the element runs wide open; without it, fall back to the
   // element's own volume (no effects, but still audible).
-  el.muted = !!audioState.muted || !!track.muted;
+  el.muted = !!audioState.muted || !!track.muted || !!loopMix.src;
   const clipVol = clip.props.volume
     ? clamp(drivenEval(clip.props.volume, t - clip.start, t) / 100, 0, 1) : 1;
   const chain = slot.audioNode ? audioChainFor(clip) : null;
@@ -2741,6 +2767,78 @@ function setAudioPrefs({ muted, volume }) {
   updateAudioUI();
 }
 
+/* ---- gapless looped preview sound ------------------------------------
+ * Media elements can't loop a comp cleanly: wrapping makes every element
+ * seek back, and a seek always drops a slice of sound — an audible skip
+ * each cycle. While the transport loops a comp of a sane length, the
+ * sound instead comes from the export's own offline mix of the comp,
+ * played on a looping AudioBufferSourceNode (sample-exact at the wrap),
+ * and the picture follows that audio clock. The elements keep playing for
+ * their frames, muted. An edit re-renders the mix in the background; the
+ * old one plays until the new one lands. Until the first mix exists (or
+ * for long comps, or with looping off) the elements play the sound. */
+
+function stopLoopMix() {
+  if (!loopMix.src) return;
+  try { loopMix.src.stop(); } catch {}
+  loopMix.src.disconnect();
+  loopMix.src = null;
+}
+
+/** Comp time now, by the mix's clock (what is being heard, latency aside). */
+function loopMixTime() {
+  const heard = audioCtx.currentTime - (audioCtx.outputLatency || audioCtx.baseLatency || 0);
+  const t = (heard - loopMix.t0) % loopMix.len;
+  return t < 0 ? t + loopMix.len : t;
+}
+
+function syncLoopMix() {
+  const wanted = playing && looping && !exportMode && audioCtx?.state === 'running'
+    && comp.dur > 0.1 && comp.dur <= LOOP_MIX_MAX_SEC;
+  if (!wanted) { stopLoopMix(); return; }
+  const key = audioMixKey(false);
+  if (key !== loopMix.key && !loopMix.building) {
+    loopMix.building = true;
+    renderCompAudio()
+      .then((buf) => {
+        if (audioMixKey(false) !== key) return;   // edited again meanwhile: next tick rebuilds
+        loopMix.buf = buf;
+        loopMix.key = key;
+        stopLoopMix();   // swap in at the current position
+      })
+      .catch((e) => {
+        console.warn('slangfx: looped preview mix failed, elements play the sound:', e);
+        loopMix.buf = null;
+        loopMix.key = key;
+      })
+      .finally(() => { loopMix.building = false; });
+  }
+  if (!loopMix.buf) return;
+  if (!loopMix.gain) {
+    loopMix.gain = audioCtx.createGain();
+    loopMix.gain.connect(masterGain);
+  }
+  loopMix.gain.gain.value = audioState.muted ? 0 : 1;
+  if (loopMix.src) return;
+  const len = Math.min(comp.dur, loopMix.buf.duration);
+  if (len < 0.05) return;
+  const src = audioCtx.createBufferSource();
+  src.buffer = loopMix.buf;
+  src.loop = true;
+  src.loopStart = 0;
+  src.loopEnd = len;
+  src.connect(loopMix.gain);
+  // Start a beat ahead so the first sample lands where the picture will be.
+  const lead = 0.03;
+  const latency = audioCtx.outputLatency || audioCtx.baseLatency || 0;
+  const off = (((tCur + lead) % len) + len) % len;
+  const when = audioCtx.currentTime + lead;
+  src.start(when, off);
+  loopMix.t0 = when - off + latency;
+  loopMix.len = len;
+  loopMix.src = src;
+}
+
 function ensureAudio() {
   if (!audioCtx) {
     try {
@@ -3413,18 +3511,20 @@ function openRetimeDialog(clips) {
  * PLUS how different their successors are — the successor term is what
  * carries motion across the cut instead of just matching a pose. Scores
  * read against the clip's own median frame-to-frame change, so 1.00× is
- * literally "as smooth as ordinary playback". Among seams that pass as
- * invisible the LONGEST loop wins — a perfect two-frame match is still
- * a stutter. Applying sets clip.in + clip.loopSpan; the clip then
- * cycles that region for however long it is stretched, preview and
- * export alike.
+ * literally "as smooth as ordinary playback". Scoring, choice and the seam
+ * blend live in loop-seams.js. Applying sets clip.in + clip.loopSpan; the
+ * clip then cycles that region for however long it is stretched, preview
+ * and export alike. With "Blend the seam" on, Use bakes the loop into a
+ * new video instead (bakeSeamlessLoop): the last frames crossfade into the
+ * footage's own run-up to the first, and the audio does the same, so even
+ * an imperfect seam (a generated clip's exposure drift) wraps cleanly.
  * =================================================================== */
 
 const LOOP_FEAT_W = 32;          // thumbnail size: enough for composition,
 const LOOP_FEAT_H = 18;          // blind to compression noise
 const LOOP_MAX_SAMPLES = 300;    // coarse cap — ≤10s clips are frame-exact
 const LOOP_MIN_SRC = 0.4;        // shortest loop worth offering (source s)
-const LOOP_GOOD = 1.25;          // seams at/below this read as invisible
+const LOOP_BLEND_SEC = 0.33;     // seam crossfade baked by "Blend the seam"
 
 let loopJob = null;   // { cancel } while a finder walk owns the seeks
 
@@ -3496,60 +3596,17 @@ async function sampleLoopFeatures(asset, times, onProgress, job = loopJob) {
   return out;
 }
 
-function sadRGB(a, b) {
-  let s = 0;
-  for (let k = 0; k < a.length; k++) { const d = a[k] - b[k]; s += d < 0 ? -d : d; }
-  return s;
-}
-
-/** Score every (i, j) seam and keep a diverse handful, best first. */
-async function scoreLoopSeams(feats, step, minLoopSrc, onProgress) {
-  const N = feats.length;
-  const consec = [];
-  for (let k = 0; k + 1 < N; k++) consec.push(sadRGB(feats[k], feats[k + 1]));
-  consec.sort((x, y) => x - y);
-  // Median inter-frame change; floored so a locked-off shot (≈0 motion)
-  // doesn't blow the ratio up — under a luma level per pixel nothing shows.
-  const base = Math.max(consec[consec.length >> 1] || 0, feats[0].length);
-  const minGap = Math.max(2, Math.round(minLoopSrc / step));
-  const pairs = [];
-  for (let i = 0; i + 1 < N; i++) {
-    for (let j = i + minGap; j + 1 < N; j++)
-      pairs.push({
-        i, j,
-        r: (sadRGB(feats[i], feats[j]) + sadRGB(feats[i + 1], feats[j + 1])) / (2 * base),
-      });
-    onProgress?.(i + 1, N);
-    if ((i & 15) === 15) await nextTask();
-  }
-  pairs.sort((a, b) => a.r - b.r);
-  // Near-duplicate seams (a frame either side of a better one) add nothing.
-  const rad = Math.max(2, Math.round(N * 0.04));
-  const picked = [];
-  for (const p of pairs) {
-    if (picked.length >= 12) break;
-    if (picked.some((q) => Math.abs(q.i - p.i) < rad && Math.abs(q.j - p.j) < rad)) continue;
-    picked.push(p);
-  }
-  // The editor's rule: among invisible seams take the LONGEST loop; only
-  // when nothing passes fall back to "least visible".
-  picked.sort((a, b) => {
-    const ga = a.r <= LOOP_GOOD;
-    if (ga !== (b.r <= LOOP_GOOD)) return ga ? -1 : 1;
-    return ga ? (b.j - b.i) - (a.j - a.i) : a.r - b.r;
-  });
-  return { picked: picked.slice(0, 5), base };
-}
-
 /** Re-search a coarse candidate at frame granularity: fine grids around
  * both ends, best pair wins. Returns { ta, tb, r } or null on cancel. */
 async function refineLoopSeam(asset, cand, step, base, range, minLoopSrc, onProgress, job = loopJob) {
   const fine = Math.max(1 / comp.fps, (2 * step) / 24);
+  // ±step around the coarse cut, plus the seam window's two frames either
+  // side (the motion terms) — clamped to the source, not the clip.
+  const srcLen = asset.duration || range[1];
   const grid = (t0) => {
     const ts = [];
-    for (let t = Math.max(range[0], t0 - step); t <= Math.min(range[1], t0 + step) + 1e-9; t += fine)
-      ts.push(t);
-    ts.push(ts[ts.length - 1] + fine);   // successor sample for the motion term
+    for (let t = t0 - step - 2 * fine; t <= t0 + step + 2 * fine + 1e-9; t += fine)
+      if (t >= 0 && t <= srcLen - 1 / 60) ts.push(t);
     return ts;
   };
   const gridA = grid(cand.ta);
@@ -3560,13 +3617,179 @@ async function refineLoopSeam(asset, cand, step, base, range, minLoopSrc, onProg
   const B = await sampleLoopFeatures(asset, gridB, (d) => onProgress?.(gridA.length + d, total), job);
   if (!B) return null;
   let best = null;
-  for (let u = 0; u + 1 < A.length; u++)
-    for (let v = 0; v + 1 < B.length; v++) {
+  for (let u = 0; u < A.length; u++)
+    for (let v = 0; v < B.length; v++) {
       if (gridB[v] - gridA[u] < minLoopSrc) continue;
-      const r = (sadRGB(A[u], B[v]) + sadRGB(A[u + 1], B[v + 1])) / (2 * base);
-      if (!best || r < best.r) best = { ta: gridA[u], tb: gridB[v], r };
+      if (gridA[u] < range[0] - 1e-6 || gridB[v] > range[1] + 1e-6) continue;
+      const r = seamScore(A, u, B, v, base);
+      if (r !== null && (!best || r < best.r)) best = { ta: gridA[u], tb: gridB[v], r };
     }
   return best ?? cand;
+}
+
+/**
+ * Bake the loop [ta, tb) of a video asset into a new video asset whose
+ * wrap is blended (see loop-seams.js): frames are re-sampled at the comp's
+ * fps over the loop, the seam crossfades over LOOP_BLEND_SEC into the
+ * footage just outside the loop, and the audio gets the matching
+ * equal-power crossfade. Returns { asset, span, blend } or null on cancel.
+ */
+/** The source's own frame rate, measured from presented frames during a
+ * short muted play (rVFC mediaTime deltas, median, snapped to a standard
+ * rate). Baking at the comp's rate instead would duplicate or drop source
+ * frames — a judder every few frames. null when it can't be measured. */
+async function measureVideoFps(el, from) {
+  if (!('requestVideoFrameCallback' in HTMLVideoElement.prototype) || document.hidden) return null;
+  const wasMuted = el.muted;
+  el.muted = true;
+  await seekElExact(el, from);
+  const times = [];
+  try {
+    await new Promise((resolve) => {
+      const guard = setTimeout(resolve, 2000);
+      const onFrame = (_now, meta) => {
+        times.push(meta.mediaTime);
+        if (times.length >= 25) { clearTimeout(guard); resolve(); return; }
+        el.requestVideoFrameCallback(onFrame);
+      };
+      el.requestVideoFrameCallback(onFrame);
+      el.play().catch(() => { clearTimeout(guard); resolve(); });
+    });
+  } finally {
+    el.pause();
+    el.muted = wasMuted;
+  }
+  const d = [];
+  for (let k = 1; k < times.length; k++) if (times[k] > times[k - 1]) d.push(times[k] - times[k - 1]);
+  if (d.length < 4) return null;
+  d.sort((a, b) => a - b);
+  // Mean of the undropped deltas: mediaTime is often rounded to the ms, so
+  // one delta can't tell 24 from 23.976, the average of many can.
+  const med = d[d.length >> 1];
+  const kept = d.filter((x) => x < med * 1.5);
+  const fps = kept.length / kept.reduce((a, b) => a + b, 0);
+  const std = [23.976, 24, 25, 29.97, 30, 48, 50, 59.94, 60];
+  const snap = std.reduce((best, s) => (Math.abs(s - fps) < Math.abs(best - fps) ? s : best));
+  if (Math.abs(snap - fps) / snap < 0.015) return snap;
+  return fps > 5 && fps < 241 ? Math.round(fps * 1000) / 1000 : null;
+}
+
+async function bakeSeamlessLoop(asset, ta, tb, job, prog) {
+  const el = asset.el;
+  if (!el.paused) el.pause();
+  prog('measuring the frame rate…');
+  const fps = (await measureVideoFps(el, ta)) ?? comp.fps;
+  const srcLen = asset.duration || el.duration;
+  const n = Math.max(2, Math.round((tb - ta) * fps));
+  const dt = (tb - ta) / n;
+  const pre = Math.floor(ta / dt + 1e-6);
+  const post = Math.floor((srcLen - 1 / 60 - tb) / dt);
+  const plan = blendPlan(n, Math.round(LOOP_BLEND_SEC / dt), pre, Math.max(0, post));
+  const W = el.videoWidth || asset.w;
+  const H = el.videoHeight || asset.h;
+  // MP4 (H.264) wants even sizes; anything it can't take goes to WebM.
+  let fmt = VIDEO_FORMATS.mp4;
+  let codec = W % 2 || H % 2 ? null : await supportedCodec(fmt, W, H, fps);
+  if (!codec) {
+    fmt = VIDEO_FORMATS.webm;
+    codec = await supportedCodec(fmt, W, H, fps);
+  }
+  if (!codec) throw new Error(`this browser cannot encode ${W}×${H} video`);
+
+  // A hair past each sample time, so a seek never lands on the frame before.
+  const at = (k) => clamp(ta + k * dt + 1e-3, 0, srcLen - 1 / 60);
+  const grab = async (t) => {
+    if (Math.abs(el.currentTime - t) > 1e-4 || el.readyState < 2) await seekElExact(el, t);
+  };
+
+  // Audio first (the muxer takes it before video, as the export does).
+  let audioBuf = null;
+  if (typeof AudioEncoder !== 'undefined') {
+    prog('blending the sound…');
+    const src = await decodeAssetAudio(asset).catch(() => null);
+    if (src) {
+      const sr = src.sampleRate;
+      const a = Math.round(ta * sr);
+      const len = Math.round(n * dt * sr);
+      const b = a + len;
+      const F = Math.round(plan.K * dt * sr);
+      const side = plan.side === 'pre' && a - F >= 0 ? 'pre'
+        : plan.side === 'post' && b + F <= src.length ? 'post' : null;
+      if (b <= src.length) {
+        audioBuf = new AudioBuffer({ length: len, numberOfChannels: src.numberOfChannels, sampleRate: sr });
+        for (let c = 0; c < src.numberOfChannels; c++)
+          audioBuf.copyToChannel(loopChannel(src.getChannelData(c), a, b, side ? F : 0, side), c);
+      }
+    }
+  }
+
+  const muxer = fmt.makeMuxer(
+    { codec, width: W, height: H, fps: fmt === VIDEO_FORMATS.mp4 && !Number.isInteger(fps) ? undefined : fps },
+    audioBuf && { channels: audioBuf.numberOfChannels, sampleRate: audioBuf.sampleRate },
+  );
+  if (audioBuf) {
+    await encodeAudioTrack(muxer, audioBuf, job, fmt.audio);
+    if (job.error) throw job.error;
+  }
+
+  // The footage mixed in at the seam, decoded up front (only K frames).
+  const cnv = new OffscreenCanvas(W, H);
+  const c2 = cnv.getContext('2d');
+  const others = new Map();
+  try {
+    for (let k = 0; k < n; k++) {
+      const { other, w } = blendWeight(k, n, plan);
+      if (!w) continue;
+      if (job.cancel) return null;
+      await grab(at(k + other));
+      others.set(k, await createImageBitmap(el));
+    }
+    const encoder = new VideoEncoder({
+      output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
+      error: (e) => { job.error = e; job.cancel = true; },
+    });
+    try {
+      encoder.configure({ codec, width: W, height: H, bitrate: EXPORT_BITRATE, framerate: fps, ...(fmt.encoderExtra ?? {}) });
+      const frameUs = 1e6 / fps;
+      for (let k = 0; k < n; k++) {
+        if (job.cancel) return null;
+        await grab(at(k));
+        c2.globalAlpha = 1;
+        c2.drawImage(el, 0, 0, W, H);
+        const o = others.get(k);
+        if (o) {
+          c2.globalAlpha = blendWeight(k, n, plan).w;
+          c2.drawImage(o, 0, 0, W, H);
+        }
+        const frame = new VideoFrame(cnv, { timestamp: Math.round(k * frameUs), duration: Math.round(frameUs) });
+        try { encoder.encode(frame, { keyFrame: k % Math.round(2 * fps) === 0 }); } finally { frame.close(); }
+        while (encoder.encodeQueueSize > 8)
+          await new Promise((r) => encoder.addEventListener('dequeue', r, { once: true }));
+        if ((k & 3) === 3) prog(`baking the loop: frame ${k + 1}/${n}…`);
+      }
+      if (job.error) throw job.error;
+      await encoder.flush();
+    } finally {
+      if (encoder.state !== 'closed') try { encoder.close(); } catch {}
+    }
+  } finally {
+    for (const b of others.values()) b.close();
+  }
+  muxer.finalize();
+
+  const stem = asset.name.replace(/\.[^.]+$/, '');
+  const file = new File([muxer.target.buffer], `${stem} (loop).${fmt.ext}`, { type: fmt.mime });
+  prog('adding the loop to the media bin…');
+  const looped = await createAsset(file);
+  idbSet(`asset:${looped.id}`, file)
+    .catch((e) => setStatus(`⚠ could not store ${file.name}: it will be missing after a reload (${e?.message ?? e})`));
+  ensureScrubProxy(looped);
+  renderMediaBin();
+  scheduleSave();
+  const blend = plan.side
+    ? `${plan.K}-frame crossfade into the footage ${plan.side === 'pre' ? 'before the start' : 'after the end'}`
+    : 'no room to blend';
+  return { asset: looped, span: n / fps, blend };
 }
 
 const loopSeamWord = (r) => (r <= LOOP_GOOD ? 'invisible' : r <= 2.5 ? 'subtle' : 'visible');
@@ -3649,6 +3872,9 @@ async function openLoopFinder(clip, mode = null) {
       <h3>Find seamless loop — ${clip.name}</h3>
       <p class="retime-hint" id="lf-status">analyzing…</p>
       <div class="loop-cands" id="lf-cands"></div>
+      ${asset.kind === 'video' ? `<label class="retime-hint loop-blend" title="Bakes the loop into a new video in the media bin: the last frames crossfade into the footage just before the loop's start, and the sound crossfades too, so the wrap is seamless even when the cut isn't perfect. Off: the clip cycles the original footage with a hard cut.">
+        <input type="checkbox" id="lf-blend" checked> Blend the seam: bakes a new loop video with a ${Math.round(LOOP_BLEND_SEC * 1000)} ms crossfade (picture and sound)
+      </label>` : ''}
       <div class="modal-actions">
         <span class="retime-hint" id="lf-note" style="flex:1"></span>
         <button class="btn" id="lf-cancel">Cancel</button>
@@ -3729,15 +3955,36 @@ async function openLoopFinder(clip, mode = null) {
       if (job.cancel) return;
       if (fine) final = fine;
     }
+    let baked = null;
+    if (wrap.querySelector('#lf-blend')?.checked) {
+      btn.disabled = true;
+      job.busy = true;   // the bake owns the element's seeks too
+      try {
+        baked = await bakeSeamlessLoop(asset, final.ta, final.tb, job, prog);
+      } catch (e) {
+        console.error('loop bake failed:', e);
+        prog(`blending failed (${e.message}); untick "Blend the seam" to use a plain cut`);
+        btn.disabled = false;
+        return;
+      } finally {
+        job.busy = false;
+      }
+      if (!baked || job.cancel) return;
+    }
     touched = true;
-    const span = final.tb - final.ta;
+    const span = baked ? baked.span : final.tb - final.ta;
     // End the clip exactly on a cycle boundary: whole loops read as
     // seamless, a partial tail ends mid-motion. Nearest multiple of the
     // clip's current length, never less than one full cycle.
     const cycle = span / rate;
     const cycles = Math.max(1, Math.round(clip.dur / cycle));
     history.record(comp, () => {
-      clip.in = final.ta;
+      if (baked) {
+        clip.assetId = baked.asset.id;
+        clip.in = 0;
+      } else {
+        clip.in = final.ta;
+      }
       clip.loopSpan = span;
       delete clip.loopMode;
       delete clip.loopPhase;
@@ -3747,7 +3994,7 @@ async function openLoopFinder(clip, mode = null) {
     close();
     setTime(clamp(clip.start, 0, lastFrame(comp)));
     setStatus(`${clip.name}: cycles a ${span.toFixed(2)}s loop (seam ${loopSeamWord(final.r)}, `
-      + `${final.r.toFixed(2)}×) — sized to ${cycles} ${cycles === 1 ? 'cycle' : 'cycles'}, `
+      + `${final.r.toFixed(2)}×${baked ? `, ${baked.blend}` : ''}) — sized to ${cycles} ${cycles === 1 ? 'cycle' : 'cycles'}, `
       + `stretch the clip to repeat more`);
   };
 
@@ -3764,8 +4011,12 @@ async function openLoopFinder(clip, mode = null) {
     if (!feats || job.cancel) return;
     const minLoopSrc = Math.max(LOOP_MIN_SRC, 3 * step);
     prog('scoring seams…');
-    const { picked, base } = await scoreLoopSeams(feats, step, minLoopSrc,
-      (d, t) => prog(`scoring seams ${d}/${t}…`));
+    const { picked, base } = await scoreLoopSeams(feats, Math.max(2, Math.round(minLoopSrc / step)),
+      async (d, t) => {
+        if ((d & 15) !== 15) return;
+        prog(`scoring seams ${d}/${t}…`);
+        await nextTask();
+      });
     if (job.cancel) return;
     if (!picked.length) {
       prog('no workable seam — the footage never revisits itself');
