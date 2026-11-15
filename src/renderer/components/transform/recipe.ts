@@ -53,8 +53,12 @@ function knownSettings(raw: Json): Partial<TransformSettings> {
     const want = BASE_SETTINGS[k];
     if (k === 'manualPrompt') {
       if (v === null || typeof v === 'string') out[k] = v;
+    } else if (k === 'retouchModel') {
+      if (v === 'qwen' || v === 'h3') out[k] = v;
     } else if (k === 'reshootModel') {
       if (v === 'h3' || v === 'fast') out[k] = v;
+    } else if (k === 'reshootPasses') {
+      if (v === 1 || v === 2) out[k] = v;
     } else if (k === 'aspect') {
       if (v === 'square' || v === 'landscape' || v === 'portrait' || v === 'custom') out[k] = v;
     } else if (k === 'pinned') {
@@ -148,7 +152,9 @@ function fromRetouch(rec: Json, args: string[]): RebuiltTask | null {
     const ratio = src && typeof src.width === 'number' && typeof rec.width === 'number' ? rec.width / src.width : 2;
     s.scale = SCALES.reduce((b, x) => (Math.abs(x - ratio) < Math.abs(b - ratio) ? x : b), 2);
   }
-  s.quality = nearestQuality('retouch', rec.steps);
+  // MiniMax H3 Image runs its own fixed steps: the quality (which picks Qwen Image's steps) stays at its default.
+  if (rec.model_id === 'h3' || argValue(args, '--model') === 'h3') s.retouchModel = 'h3';
+  else s.quality = nearestQuality('retouch', rec.steps);
   if (typeof rec.seed === 'number') s.seed = rec.seed;
   s.pinned = id === 'edit' ? carriedPins(id, inputPaths(rec)) : [];
   if (id === 'edit' && !s.prompt) return null;
@@ -162,6 +168,7 @@ function fromReshoot(rec: Json, args: string[]): RebuiltTask | null {
   if (id === 'alive') {
     s.describe = typeof rec.describe === 'string' ? rec.describe : '';
     if (rec.shake === 'none' || rec.shake === 'subtle' || rec.shake === 'handheld') s.shake = rec.shake;
+    s.loop = rec.loop === true;
     // The extra direction given with --animate (the record's prompt is the whole expanded one).
     s.prompt = (argValue(args, '--prompt', '-p') || '').trim();
   } else {
@@ -176,6 +183,8 @@ function fromReshoot(rec: Json, args: string[]): RebuiltTask | null {
   // An extra model (the record names the file it ran): not H3's or FastH3's own.
   if (typeof rec.dit === 'string' && rec.dit && !/minimax_h3_ref2va|fasth3_omniref/i.test(rec.dit)) s.reshootFile = rec.dit;
   if (rec.ref_image_size === 'max') s.refSize = 'max';
+  // Records from before two-pass generation carry no `passes`: they ran one pass.
+  s.reshootPasses = rec.passes === 2 ? 2 : 1;
   s.noAudio = rec.audio === false;
   s.keepSoundtrack = !hasArg(args, '--no-video-audio');
   if (typeof rec.seed === 'number') s.seed = rec.seed;

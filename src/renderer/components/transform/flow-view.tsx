@@ -4,6 +4,7 @@ import { DREAM_ENABLED } from '../../features';
 import {
   DREAM_ASPECTS,
   FAST_STEPS,
+  H3_IMAGE_STEPS,
   INTENTS,
   MAX_DURATION,
   MIN_DURATION,
@@ -45,6 +46,8 @@ import {
   type EngineId,
   type IntentKind,
   type Quality,
+  type ReshootPasses,
+  type RetouchModel,
   type Shake,
   type TransformSettings,
 } from './intents';
@@ -944,6 +947,16 @@ const ASPECT_OPTIONS: Array<SegOption<DreamAspect>> = [
   { value: 'custom', label: 'Custom' },
 ];
 
+const PASSES_OPTIONS: Array<SegOption<ReshootPasses>> = [
+  { value: 2, label: 'Two-pass', sub: 'best quality' },
+  { value: 1, label: 'One pass', sub: 'faster' },
+];
+
+const RETOUCH_MODEL_OPTIONS: Array<SegOption<RetouchModel>> = [
+  { value: 'qwen', label: 'Qwen Image', sub: 'default' },
+  { value: 'h3', label: 'MiniMax H3', sub: `${H3_IMAGE_STEPS} steps, up to 16 MP` },
+];
+
 const MODEL_OPTIONS: Array<SegOption<string>> = [
   { value: 'h3', label: 'H3', sub: 'best quality' },
   { value: 'fast', label: 'Fast', sub: `${FAST_STEPS} steps, ~4x faster` },
@@ -1254,6 +1267,10 @@ function ShapeView(props: FlowViewProps & { def: ReturnType<typeof intentById> }
                 ]}
               />
             </Field>
+            <label className="ts-check" title="The clip ends exactly on the photo again: every movement is a cycle that settles back and the camera drifts back to its start, so the last frame flows into the first">
+              <input type="checkbox" checked={s.loop} onChange={(e) => onSettings({ loop: e.target.checked })} />
+              Seamless loop <small style={{ opacity: 0.7 }}>ends where it starts, plays forever without a jump</small>
+            </label>
           </>
         )}
 
@@ -1316,6 +1333,17 @@ function ShapeView(props: FlowViewProps & { def: ReturnType<typeof intentById> }
           </Field>
         )}
 
+        {isRetouch && (
+          <Field label="Model">
+            <Segmented<RetouchModel> label="Model" value={s.retouchModel} options={RETOUCH_MODEL_OPTIONS} onChange={(v) => onSettings({ retouchModel: v })} />
+            {s.retouchModel === 'h3' ? (
+              <p className="ts-note">
+                MiniMax H3 Image: sees up to 16 pictures, keeps faces and products well, and paints natively at 4–16 MP. It works best with a specific description of the result.
+              </p>
+            ) : null}
+          </Field>
+        )}
+
         {isReshoot && (
           <Field label="Model">
             <Segmented<string>
@@ -1327,10 +1355,21 @@ function ShapeView(props: FlowViewProps & { def: ReturnType<typeof intentById> }
           </Field>
         )}
 
+        {isReshoot && (
+          <Field label="Passes">
+            <Segmented<ReshootPasses> label="Passes" value={s.reshootPasses} options={PASSES_OPTIONS} onChange={(v) => onSettings({ reshootPasses: v })} />
+            {s.reshootPasses === 2 ? (
+              <p className="ts-note">A quick low-resolution take, a learned upscale, then a short refine at full size: sharper detail and steadier backgrounds. The sound comes from the first take.</p>
+            ) : null}
+          </Field>
+        )}
+
         {isDream && dreamRecipe(s) === 'distilled' ? (
           <p className="ts-note">
             This model is distilled: it always runs its own {dreamStepsFor(s)} steps without guidance, so there is no quality setting and no “Avoid” prompt.
           </p>
+        ) : isRetouch && s.retouchModel === 'h3' ? (
+          <p className="ts-note">MiniMax H3 Image always runs the {H3_IMAGE_STEPS} steps it was distilled for: there is no quality setting.</p>
         ) : !isReshoot || s.reshootModel !== 'fast' ? (
           <Field label="Quality">
             <Segmented<Quality>
@@ -1716,12 +1755,15 @@ function ReviewView(props: FlowViewProps & { def: ReturnType<typeof intentById> 
                 }`
               : def.engine === 'reshoot' && s.reshootModel === 'fast'
                 ? 'fast model'
+              : def.engine === 'retouch' && s.retouchModel === 'h3'
+                ? 'MiniMax H3 model'
                 : `${qualityLabel(def.engine, s.quality)} quality`}{' '}
             ({plan.steps} steps) ·{' '}
             {s.seedMode === 'fixed' ? `seed ${s.seed}` : 'random seed'}
             {def.id === 'reimagine' ? ` · strength ${strengthOf(s).toFixed(2)}` : ''}
             {s.variations > 1 ? ` · ${Math.min(s.variations, maxVariations(def.id))} variations` : ''}
             {def.id === 'alive' && !manual ? ` · camera ${s.shake === 'none' ? 'locked' : s.shake}` : ''}
+            {def.id === 'alive' && !manual && s.loop ? ' · seamless loop' : ''}
           </dd>
           <dt>Time</dt>
           <dd>

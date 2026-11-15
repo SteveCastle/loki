@@ -310,6 +310,11 @@ type Config struct {
 	// folder. Empty = the engine's default (Kromoss).
 	DreamModel string `json:"dreamModel,omitempty"`
 
+	// RetouchModel is loki-retouch's editing model when a job names none:
+	// "qwen" (Qwen Image 2.1, the engine's default) or "h3" (MiniMax H3
+	// Image: up to 16 pictures, native 4-16 MP, 6 steps). Empty = qwen.
+	RetouchModel string `json:"retouchModel,omitempty"`
+
 	// ReshootModels are extra diffusion models for loki-reshoot (finetunes
 	// with the same MiniMax H3 architecture), offered beside H3 and FastH3
 	// Omni as a per-job choice (the reshoot task's `dit` option, passed as

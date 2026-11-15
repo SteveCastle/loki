@@ -288,10 +288,16 @@ describe('TransformFlowView', () => {
     expect(screen.getByRole('radio', { name: /^gone.*not on this server/ })).toBeTruthy();
   });
 
-  it('shape (image): no Model control', () => {
-    render(<TransformFlowView {...baseProps({ intent: 'upscale', phase: 'shape', settings: settingsFor('upscale') })} />);
-    expect(screen.queryByRole('radiogroup', { name: 'Model' })).toBeNull();
+  it('shape (image): the Model control picks MiniMax H3, which hides Quality', () => {
+    const props = baseProps({ intent: 'upscale', phase: 'shape', settings: settingsFor('upscale') });
+    const { rerender } = render(<TransformFlowView {...props} />);
+    expect(screen.getByRole('radio', { name: /^Qwen Image/ }).getAttribute('aria-checked')).toBe('true');
     expect(screen.getByRole('radiogroup', { name: 'Quality' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('radio', { name: /^MiniMax H3/ }));
+    expect(props.onSettings).toHaveBeenCalledWith({ retouchModel: 'h3' });
+    rerender(<TransformFlowView {...baseProps({ intent: 'upscale', phase: 'shape', settings: { ...settingsFor('upscale'), retouchModel: 'h3' } })} />);
+    expect(screen.queryByRole('radiogroup', { name: 'Quality' })).toBeNull();
+    expect(screen.getByText(/always runs the 6 steps/)).toBeTruthy();
   });
 
   it('review: summarises, warns about the GPU queue and runs', () => {

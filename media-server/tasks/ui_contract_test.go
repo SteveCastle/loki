@@ -84,6 +84,17 @@ func TestUIContractRetouch(t *testing.T) {
 		lacks(t, a, "--preset")
 	})
 
+	t.Run("model h3 is passed on and runs its own 6 steps by default", func(t *testing.T) {
+		a := uiRetouchArgs(map[string]string{"model": "h3", "prompt": "make <image1> snowy", "steps": "6"}, "in.png", nil)
+		has(t, a, "--model", "h3")
+		has(t, a, "--steps", "6")
+		a = uiRetouchArgs(map[string]string{"model": "h3", "prompt": "x"}, "in.png", nil)
+		has(t, a, "--steps", "6")
+		a = uiRetouchArgs(map[string]string{"prompt": "x", "steps": "25"}, "in.png", nil)
+		lacks(t, a, "--model")
+		has(t, a, "--steps", "25")
+	})
+
 	t.Run("combine and frame time are parsed from the UI's string flags", func(t *testing.T) {
 		j := &jobqueue.Job{Arguments: uiFieldsToArgs(map[string]string{"prompt": "put <image2> into <image1>", "combine": "1", "time": "12.346", "steps": "25"})}
 		p := retouchParamsFromOptions(ParseOptions(j, retouchOptions))

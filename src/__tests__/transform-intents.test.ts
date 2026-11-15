@@ -22,6 +22,7 @@ import {
   stepsFor,
   stepsForSettings,
   FAST_STEPS,
+  H3_IMAGE_STEPS,
   tokenIssues,
   usesReferences,
 } from '../renderer/components/transform/intents';
@@ -157,6 +158,14 @@ describe('buildJobs: reshoot', () => {
     expect(r.jobs[0].input).toBe('reshoot "C:/media/photo.jpg"');
     expect(r.jobs[0].fields).toMatchObject({ animate: '1', describe: 'a woman in a sunlit room', shake: 'handheld', duration: '5', steps: '20' });
     expect(r.jobs[0].fields.noaudio).toBeUndefined();
+    expect(r.jobs[0].fields.loop).toBeUndefined();
+  });
+
+  it('alive sends loop only when the toggle is on (and not with a hand-written prompt)', () => {
+    const s = { ...settingsFor('alive'), describe: 'a cat on a sill', loop: true };
+    expect(buildJobs('alive', s, [IMG], fixed).jobs[0].fields).toMatchObject({ animate: '1', loop: '1' });
+    const manual = { ...s, manualPrompt: 'my own prompt' };
+    expect(buildJobs('alive', manual, [IMG], fixed).jobs[0].fields.loop).toBeUndefined();
   });
 
   it('direct needs a prompt and sends all references in one job', () => {
@@ -207,6 +216,16 @@ describe('the fast video model (FastH3 Omni)', () => {
     expect(buildJobs('direct', { ...settingsFor('direct'), prompt: 'x' }, [IMG], fixed).jobs[0].fields.dit).toBeUndefined();
   });
 
+  it('video runs are two-pass by default; Fast sends passes=1; image runs never get passes', () => {
+    expect(settingsFor('direct').reshootPasses).toBe(2);
+    expect(buildJobs('direct', { ...settingsFor('direct'), prompt: 'x' }, [IMG], fixed).jobs[0].fields.passes).toBe('2');
+    const one = buildJobs('alive', { ...settingsFor('alive'), describe: 'x', reshootPasses: 1 }, [IMG, IMG2], fixed);
+    expect(one.jobs.map((j) => j.fields.passes)).toEqual(['1', '1']);
+    expect(buildJobs('restore', settingsFor('restore'), [IMG], fixed).jobs[0].fields.passes).toBeUndefined();
+    expect(runSummary('alive', { ...settingsFor('alive'), describe: 'a dog' })).toContain('two-pass');
+    expect(runSummary('alive', { ...settingsFor('alive'), describe: 'a dog', reshootPasses: 1 })).toContain('one pass');
+  });
+
   it('the model never touches image runs', () => {
     expect(stepsForSettings('retouch', { quality: 'balanced', reshootModel: 'fast' })).toBe(25);
     const f = buildJobs('restore', { ...settingsFor('restore'), reshootModel: 'fast' }, [IMG], fixed).jobs[0].fields;
@@ -226,6 +245,28 @@ describe('the fast video model (FastH3 Omni)', () => {
   it('the last-run summary names the model instead of a quality', () => {
     expect(runSummary('alive', { ...settingsFor('alive'), describe: 'a dog', reshootModel: 'fast' })).toContain('fast model');
     expect(runSummary('alive', { ...settingsFor('alive'), describe: 'a dog' })).toContain('balanced');
+  });
+});
+
+describe('image-edit model (retouch)', () => {
+  const fixed = { random: () => 0.5 };
+  it('Qwen Image is the default and is not named in the job', () => {
+    expect(settingsFor('edit').retouchModel).toBe('qwen');
+    const f = buildJobs('restore', settingsFor('restore'), [IMG], fixed).jobs[0].fields;
+    expect(f.model).toBeUndefined();
+    expect(f.steps).toBe('25');
+  });
+
+  it('MiniMax H3 is named and runs its own fixed steps, whatever the quality', () => {
+    const s = { ...settingsFor('edit'), prompt: 'make <image1> snowy', retouchModel: 'h3' as const, quality: 'fine' as const };
+    const f = buildJobs('edit', s, [IMG, IMG2], fixed).jobs[0].fields;
+    expect(f.model).toBe('h3');
+    expect(f.steps).toBe(String(H3_IMAGE_STEPS));
+    expect(stepsForSettings('retouch', s)).toBe(H3_IMAGE_STEPS);
+    expect(runSummary('edit', s)).toContain('MiniMax H3');
+    const plan = planFor('edit', s, [IMG], { width: 1024, height: 1024 });
+    expect(plan.retouchModel).toBe('h3');
+    expect(estimateSeconds(plan)).toBeGreaterThan(30);
   });
 });
 

@@ -58,6 +58,12 @@ export type Quality = 'draft' | 'balanced' | 'fine';
  * (FastH3 Omni, distilled for exactly FAST_STEPS steps: ~4-5x faster sampling with sparse attention, maybe lower quality).
  */
 export type ReshootModel = 'h3' | 'fast';
+/**
+ * Which loki-retouch model edits an image: `qwen` (Qwen Image 2.1, the engine's default; Quality picks its steps) or
+ * `h3` (MiniMax H3 Image: up to 16 pictures, native 4-16 MP, distilled for exactly H3_IMAGE_STEPS steps).
+ */
+export type RetouchModel = 'qwen' | 'h3';
+export type ReshootPasses = 1 | 2;
 export type SizeMode = 'same' | 'scale' | 'custom';
 export type Shake = 'none' | 'subtle' | 'handheld';
 export type WallpaperTarget = 'desktop' | 'phone';
@@ -137,9 +143,13 @@ export interface TransformSettings {
   /** How many alternatives to queue (different seeds). */
   variations: number;
   shake: Shake;
+  /** Animate: a seamless loop (the clip ends on the photo again; loki-reshoot --loop). */
+  loop: boolean;
   /** Seconds of video. */
   duration: number;
   refSize: 'match' | 'max';
+  /** Image-edit model (retouch only): Qwen Image 2.1 or MiniMax H3 Image. */
+  retouchModel: RetouchModel;
   /** Video model (reshoot only): its recipe (steps), and the engine's own file unless reshootFile names another. */
   reshootModel: ReshootModel;
   /**
@@ -147,6 +157,11 @@ export interface TransformSettings {
    * reshootModel holds its recipe.
    */
   reshootFile: string;
+  /**
+   * Video passes (reshoot only): 2 = best quality (a low-resolution pass, a learned latent upscale, then a short refine
+   * at the output size); 1 = fast (one pass at the output size).
+   */
+  reshootPasses: ReshootPasses;
   noAudio: boolean;
   keepSoundtrack: boolean;
   /** What the picture should not have (Generate, Reimagine; the turbo quality ignores it). */
@@ -207,10 +222,13 @@ export const BASE_SETTINGS: TransformSettings = {
   seed: 0,
   variations: 1,
   shake: 'subtle',
+  loop: false,
   duration: 5,
   refSize: 'match',
+  retouchModel: 'qwen',
   reshootModel: 'h3',
   reshootFile: '',
+  reshootPasses: 2,
   noAudio: false,
   keepSoundtrack: true,
   pinned: [],
@@ -425,10 +443,12 @@ export function runSummary(id: IntentId, s: TransformSettings): string {
   } else if (id === 'reimagine') parts.push(`strength ${strengthOf(s)}`);
   else parts.push(`${s.duration.toFixed(1).replace(/\.0$/, '')} s`);
   if (engine === 'reshoot' && s.reshootFile) parts.push(reshootFileLabel(s.reshootFile));
+  else if (engine === 'retouch' && s.retouchModel === 'h3') parts.push('MiniMax H3');
   else if (engine === 'dream') {
     if (s.dreamModel) parts.push(dreamModelName(s));
     parts.push(dreamQualityLabel(s));
   } else parts.push(engine === 'reshoot' && s.reshootModel === 'fast' ? 'fast model' : qualityLabel(engine, s.quality));
+  if (engine === 'reshoot') parts.push(s.reshootPasses === 1 ? 'one pass' : 'two-pass');
   if (s.variations > 1) parts.push(`${s.variations} variations`);
   if (s.seedMode === 'fixed') parts.push(`seed ${s.seed}`);
   const refs = pinnable(id) ? (s.pinned || []).length : 0;
@@ -661,14 +681,21 @@ export function stepsFor(engine: EngineId, q: Quality): number {
 /** The fast video model (FastH3 Omni) is distilled for exactly this many steps, whatever the quality. */
 export const FAST_STEPS = 8;
 
+/** MiniMax H3 Image (retouch --model h3) is distilled for exactly this many steps, whatever the quality. */
+export const H3_IMAGE_STEPS = 6;
+
 /** The step count a run of these settings uses: the quality's, except the fast video model's fixed count. */
 /** An extra video model's file, shown without its extension (when the server's label is not at hand). */
 export function reshootFileLabel(file: string): string {
   return file.replace(/^.*[\\/]/, '').replace(/\.safetensors$/i, '');
 }
 
-export function stepsForSettings(engine: EngineId, s: Pick<TransformSettings, 'quality' | 'reshootModel'> & Partial<DreamRecipeFields>): number {
+export function stepsForSettings(
+  engine: EngineId,
+  s: Pick<TransformSettings, 'quality' | 'reshootModel'> & Partial<DreamRecipeFields> & Partial<Pick<TransformSettings, 'retouchModel'>>
+): number {
   if (engine === 'dream') return dreamStepsFor(s);
+  if (engine === 'retouch' && s.retouchModel === 'h3') return H3_IMAGE_STEPS;
   return engine === 'reshoot' && s.reshootModel === 'fast' ? FAST_STEPS : stepsFor(engine, s.quality);
 }
 
@@ -954,6 +981,8 @@ export function buildJobs(
         if (s.sizeMode === 'scale' && s.scale > 0 && s.scale !== 1) put(f, 'scale', s.scale);
         if (s.sizeMode === 'custom' && parseSize(s.customSize)) put(f, 'size', s.customSize.replace(/\s+/g, '').replace(/[×X]/, 'x'));
       }
+      // Only H3 is named: Qwen Image is the engine's default, so its jobs run on engines from before --model.
+      if (s.retouchModel === 'h3') put(f, 'model', 'h3');
       put(f, 'steps', steps);
       put(f, 'seed', seed);
       // One run: targets[0] is <image1>, the others ride along as <image2>… (loki-retouch --ref).
@@ -983,6 +1012,7 @@ export function buildJobs(
     put(f, 'dit', s.reshootFile.trim());
     put(f, 'duration', Math.min(MAX_DURATION, Math.max(MIN_DURATION, s.duration)));
     put(f, 'steps', steps);
+    put(f, 'passes', s.reshootPasses === 1 ? 1 : 2);
     put(f, 'seed', seed);
     if (s.refSize === 'max') put(f, 'refsize', 'max');
     put(f, 'noaudio', s.noAudio);
@@ -999,6 +1029,7 @@ export function buildJobs(
           put(f, 'animate', true);
           put(f, 'describe', s.describe.trim());
           put(f, 'shake', s.shake);
+          put(f, 'loop', s.loop);
           put(f, 'prompt', s.prompt.trim());
         }
         common(f, seed);
@@ -1093,6 +1124,8 @@ export interface Plan {
   steps: number;
   /** loki-dream's turbo mode (no classifier-free guidance: half the work per step). */
   turbo?: boolean;
+  /** loki-retouch's model. */
+  retouchModel?: RetouchModel;
 }
 
 const SUFFIX: Record<string, string> = {
@@ -1159,7 +1192,7 @@ export function planFor(
   }
   const preset = retouchPreset(id, s);
   const suffix = id === 'angle' && preset ? `_${preset}` : SUFFIX[preset] || '_edit';
-  const out: Plan = { jobCount, outputs, outputName: `${stem(first)}${suffix}.png`, engine: 'retouch', steps };
+  const out: Plan = { jobCount, outputs, outputName: `${stem(first)}${suffix}.png`, engine: 'retouch', steps, retouchModel: s.retouchModel };
   if (id === 'wallpaper') {
     const [w, h] = s.wallpaperTarget === 'phone' ? [1296, 2800] : [3840, 2160];
     out.outWidth = w;
@@ -1191,6 +1224,8 @@ export function estimateSeconds(plan: Plan): number {
   }
   if (plan.engine === 'retouch') {
     const mp = plan.outWidth && plan.outHeight ? (plan.outWidth * plan.outHeight) / 1e6 : 1;
+    // MiniMax H3 Image: ~30 s of model loading (two big models in turn), then draws at least 4 MP.
+    if (plan.retouchModel === 'h3') return 30 + plan.steps * 0.18 * Math.max(mp, 4.2);
     return 12 + plan.steps * 0.4 * mp;
   }
   const w = plan.outWidth || 768;

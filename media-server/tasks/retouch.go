@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/stevecastle/shrike/appconfig"
 	"github.com/stevecastle/shrike/jobqueue"
 	"github.com/stevecastle/shrike/mediaext"
 	"github.com/stevecastle/shrike/platform"
@@ -22,7 +23,8 @@ import (
 // --- retouch (loki-retouch) ---
 //
 // Wraps the standalone `loki-retouch` CLI (Qwen Image 2.1 image editing:
-// edit by prompt, upscale, restore, composite, wallpaper presets). Shaped like
+// edit by prompt, upscale, restore, composite, wallpaper presets; or MiniMax
+// H3 Image with the `model` option / Config.RetouchModel = "h3"). Shaped like
 // the ffmpeg media-altering tasks: one new `<name><suffix>.png` per input
 // beside the original (or in the workflow temp dir when chained), registered
 // as an output file so downstream steps and the library pick it up. Videos
@@ -43,7 +45,15 @@ var retouchEnginePresets = []string{"", "4kify", "4kify-phone", "upscale", "rest
 
 var retouchPresetChoices = append(append([]string{}, retouchEnginePresets...), retouchViewIDs()...)
 
+// retouchModels are the `model` option's values: "" = Config.RetouchModel,
+// else the engine's default (Qwen Image 2.1).
+var retouchModels = []string{"", "qwen", "h3"}
+
+// retouchH3Steps is MiniMax H3 Image's distilled step count (its default).
+const retouchH3Steps = 6
+
 var retouchOptions = []TaskOption{
+	{Name: "model", Label: "Model", Type: "enum", Choices: retouchModels, Default: "", Description: "Editing model: qwen (Qwen Image 2.1) or h3 (MiniMax H3 Image: up to 16 pictures, native 4-16 MP output, 6 steps); empty = the server's retouchModel setting, else qwen"},
 	{Name: "preset", Label: "Preset", Type: "enum", Choices: retouchPresetChoices, Default: "", Description: "4kify (3840x2160 wallpaper), 4kify-phone (1296x2800), upscale (faithful super-resolution), restore (denoise/deblock at the same size); camera angles: front-high, front-low, right-45/90/135, reverse, left-135/90/45, each also -high / -low (re-photograph the subject from that orbit position); empty = plain edit by prompt"},
 	{Name: "prompt", Label: "Prompt", Type: "string", Default: "", Description: "Edit instruction (replaces the preset's prompt). <image1> is the input, <image2>... the references"},
 	{Name: "append", Label: "Append to Prompt", Type: "string", Default: "", Description: "Text appended to the final prompt (extends a preset)"},
@@ -51,7 +61,7 @@ var retouchOptions = []TaskOption{
 	{Name: "size", Label: "Size", Type: "string", Default: "", Description: "Output size WxH, or 'same' for the input's size; empty = default"},
 	{Name: "longedge", Label: "Long Edge", Type: "number", Default: 0.0, Description: "Output long edge in pixels, ratio kept; 0 = default"},
 	{Name: "snap", Label: "Snap to 16", Type: "bool", Default: false, Description: "Deliver the model's native multiple-of-16 size instead of resampling to the exact size"},
-	{Name: "steps", Label: "Steps", Type: "number", Default: 25.0, Description: "Sampling steps (4-80; more is slower)"},
+	{Name: "steps", Label: "Steps", Type: "number", Default: 0.0, Description: "Sampling steps; 0 = the model's own (Qwen Image 25, 4-80; MiniMax H3 Image 6, 1-80)"},
 	{Name: "seed", Label: "Seed", Type: "number", Default: -1.0, Description: "Noise seed; -1 = random (logged)"},
 	{Name: "refs", Label: "Reference Images", Type: "string", Default: "", Description: "Extra reference images (<image2>, <image3>...), one absolute path per line"},
 	{Name: "combine", Label: "Combine Inputs", Type: "bool", Default: false, Description: "With several input images: the first is <image1>, the rest become references, one output"},
@@ -64,6 +74,8 @@ var retouchOptions = []TaskOption{
 // retouchParams is the normalized (defaulted, clamped) option set of one
 // retouch run. Seed < 0 means "pick one" (see resolveSeed).
 type retouchParams struct {
+	// Model is the engine's --model: "" (Qwen Image, its default) or "h3".
+	Model    string
 	Preset   string
 	Prompt   string
 	Append   string
@@ -154,6 +166,7 @@ func retouchParamsFromOptions(opts map[string]any) retouchParams {
 	if p.Preset == "none" {
 		p.Preset = ""
 	}
+	p.Model = retouchModel(optString(opts, "model"))
 	// A camera-angle preset is its prompt; an explicit prompt replaces it.
 	if v, ok := retouchViewByID(p.Preset); ok && p.Prompt == "" {
 		p.Prompt = v.Prompt()
@@ -166,10 +179,17 @@ func retouchParamsFromOptions(opts map[string]any) retouchParams {
 		p.LongEdge = int(le)
 	}
 	steps := int(optFloat(opts, "steps"))
-	if steps == 0 {
-		steps = 25
+	if p.Model == "h3" {
+		if steps <= 0 {
+			steps = retouchH3Steps
+		}
+		p.Steps = clampInt(steps, 1, 80)
+	} else {
+		if steps == 0 {
+			steps = 25
+		}
+		p.Steps = clampInt(steps, 4, 80)
 	}
-	p.Steps = clampInt(steps, 4, 80)
 	p.Seed = int64(optFloat(opts, "seed"))
 	if _, ok := opts["seed"]; !ok {
 		p.Seed = -1
@@ -179,6 +199,21 @@ func retouchParamsFromOptions(opts map[string]any) retouchParams {
 		p.Time = 0
 	}
 	return p
+}
+
+// retouchModel resolves a job's model choice: its own, else the server's
+// retouchModel setting. Qwen Image (the engine's default) is "", so its jobs
+// keep running on engines from before --model.
+func retouchModel(job string) string {
+	m := strings.ToLower(strings.TrimSpace(job))
+	if m == "" {
+		m = strings.ToLower(strings.TrimSpace(appconfig.Get().RetouchModel))
+	}
+	switch m {
+	case "h3", "minimax", "minimax-h3", "minimax-h3-image":
+		return "h3"
+	}
+	return ""
 }
 
 // resolveSeed returns seed unchanged when >= 0, otherwise a random seed in
@@ -224,6 +259,9 @@ func formatFloatArg(f float64) string {
 // prompt is read from it (--prompt-file) instead of passed inline.
 func buildRetouchArgs(p retouchParams, input string, refs []string, output, promptFile string) []string {
 	var args []string
+	if p.Model != "" {
+		args = append(args, "--model", p.Model)
+	}
 	if p.Preset != "" && !isRetouchView(p.Preset) {
 		args = append(args, "--preset", p.Preset)
 	}

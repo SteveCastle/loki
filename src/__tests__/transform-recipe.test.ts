@@ -85,6 +85,14 @@ describe('rebuilding a task from a stamped recipe', () => {
     expect(rec(undefined).settings.reshootModel).toBe('h3');
   });
 
+  test('the image-edit model is restored from a recipe or from the engine record', () => {
+    const rec = (retouchModel: unknown) => taskFromRecord(recordWith({ kind: 'loki-transform', v: 1, intent: 'restore', settings: { retouchModel } }))!;
+    expect(rec('h3').settings.retouchModel).toBe('h3');
+    expect(rec('flux').settings.retouchModel).toBe('qwen');
+    const bare = { loki: 1, tool: 'loki-retouch', version: '0.1.0', args: ['--model', 'h3', '--preset', 'restore', 'in.png'], preset: 'restore', model_id: 'h3', steps: 6 };
+    expect(taskFromRecord(bare)!.settings).toMatchObject({ retouchModel: 'h3', quality: 'balanced' });
+  });
+
   test('a recipe for an intent this version does not know falls back to the engine fields', () => {
     const rec = { ...recordWith({ kind: 'loki-transform', v: 9, intent: 'teleport', settings: {} }), args: ['--preset', 'restore', 'in.png'], preset: 'restore', steps: 25 };
     expect(taskFromRecord(rec)).toMatchObject({ intent: 'restore', approximate: true });
@@ -124,7 +132,9 @@ describe('rebuilding from an older record (no recipe)', () => {
     const base = { loki: 1, tool: 'loki-reshoot', steps: 32, seed: 3, seconds: 5.208, audio: true, ref_image_size: 'max' };
     const alive = taskFromRecord({ ...base, animate: true, describe: 'a dog on a porch', shake: 'handheld', prompt: '<long expanded prompt>', args: ['--animate', IMG, '--describe=a dog on a porch', '--prompt=it yawns', '-d', '5'], inputs: [{ tag: '<Picture 1>', path: IMG }] })!;
     expect(alive).toMatchObject({ intent: 'alive', approximate: true });
-    expect(alive.settings).toMatchObject({ describe: 'a dog on a porch', shake: 'handheld', prompt: 'it yawns', duration: 5, quality: 'fine', refSize: 'max', pinned: [] });
+    expect(alive.settings).toMatchObject({ describe: 'a dog on a porch', shake: 'handheld', loop: false, prompt: 'it yawns', duration: 5, quality: 'fine', refSize: 'max', pinned: [] });
+    const looped = taskFromRecord({ ...base, animate: true, describe: 'a cat', shake: 'none', loop: true, prompt: '<p>', args: ['--animate', IMG, '--loop'], inputs: [{ tag: '<Picture 1>', path: IMG }] })!;
+    expect(looped.settings).toMatchObject({ loop: true, shake: 'none' });
     const direct = taskFromRecord({ ...base, audio: false, prompt: 'She dances to <Audio 1>', args: ['--prompt=She dances to <Audio 1>', '--no-video-audio', '-i', IMG, '-a', AUD], inputs: [{ tag: '<Picture 1>', path: IMG }, { tag: '<Audio 1>', path: AUD }] })!;
     expect(direct.settings).toMatchObject({ prompt: 'She dances to <Audio 1>', duration: 5.25, noAudio: true, keepSoundtrack: false, pinned: [AUD] });
   });
@@ -267,6 +277,17 @@ describe('the video model file', () => {
     const rerun = rerunFromRecord(recordWith(meta, 'loki-reshoot'))!;
     expect(rerun.task.settings).toMatchObject({ reshootModel: 'fast', reshootFile: 'turbo.safetensors' });
     expect(buildJobs('direct', rerun.task.settings, rerun.paths).jobs[0].fields.dit).toBe('turbo.safetensors');
+  });
+
+  test('the passes choice rides in the recipe; a record without one ran a single pass', () => {
+    const s: TransformSettings = { ...settingsFor('direct'), prompt: 'a dance', reshootPasses: 1 };
+    const meta = recipeOf(buildJobs('direct', s, [IMG], { recipe: true }).jobs[0].fields);
+    const rerun = rerunFromRecord(recordWith(meta, 'loki-reshoot'))!;
+    expect(rerun.task.settings.reshootPasses).toBe(1);
+    expect(buildJobs('direct', rerun.task.settings, rerun.paths).jobs[0].fields.passes).toBe('1');
+    const rec = (extra: Record<string, unknown>) => taskFromRecord({ loki: 1, tool: 'loki-reshoot', steps: 20, prompt: 'p', args: ['--prompt=p', '-i', IMG], inputs: [{ path: IMG }], ...extra })!;
+    expect(rec({}).settings.reshootPasses).toBe(1);
+    expect(rec({ passes: 2 }).settings.reshootPasses).toBe(2);
   });
 
   test("an older record's dit names an extra model; H3's and FastH3's own files do not", () => {
