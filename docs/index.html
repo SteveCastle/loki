@@ -916,9 +916,9 @@
             <p>
               The viewer can find the faces in your library, group them
               into people, and let you name, curate, and search by them.
-              It works on photographs as well as drawn or anime-style
-              characters, routing each image to the right recognition
-              model automatically. Like visual search, it all runs on your
+              It works on photographs; drawn media (anime, cartoons,
+              illustration) is recognised and skipped automatically, so
+              it never pollutes your people. Like visual search, it all runs on your
               own machine through the Media Server, and no faces leave
               your computer.
             </p>
@@ -1078,11 +1078,9 @@
               <li>
                 Install the face models from the server's Dependencies
                 page (or straight from the Context Palette's setup
-                prompts): the face detector and recognizer for photos,
-                plus the anime head detector and character recognizer if
-                your library includes drawn artwork. The SigLIP 2 model
-                used by visual search also powers the automatic
-                photo-vs-anime routing.
+                prompts): the face detector and recognizer. The SigLIP 2
+                model used by visual search also powers the automatic
+                check that skips drawn artwork.
               </li>
               <li>
                 Run a face scan. On Windows the server can use your GPU

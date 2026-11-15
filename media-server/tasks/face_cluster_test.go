@@ -434,10 +434,11 @@ func TestCountUngroupedFaces(t *testing.T) {
 	db := newFaceIndexDB(t)
 	resetFaceIndex(t)
 
-	// Routing is on by default, so faces under every KNOWN model count:
-	// two unassigned sface + one unassigned anime-ccip = 3.
+	// Faces under every KNOWN model count: three unassigned sface = 3.
 	sfaceIDs := seedFaces(t, db, "s.jpg", "sface", []float32{1, 0}, []float32{0, 1})
-	seedFaces(t, db, "a.jpg", "anime-ccip", []float32{1, 0})
+	seedFaces(t, db, "a.jpg", "sface", []float32{1, 0})
+	// The retired anime recognizer is unknown now — its rows don't count.
+	seedFaces(t, db, "toon.jpg", "anime-ccip", []float32{1, 0})
 	// Assigned faces don't count.
 	alice, err := media.CreatePerson(db, "Alice")
 	if err != nil {

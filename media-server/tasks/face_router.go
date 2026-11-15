@@ -1,8 +1,10 @@
 package tasks
 
 // Face-domain routing: decide per media item whether it shows PHOTOGRAPHIC
-// people (photo-trained detector/recognizer) or DRAWN characters (anime
-// pipeline), so one `faces` job produces correct clusters for both.
+// people (scanned with the photo detector/recognizer) or DRAWN characters
+// (anime, cartoon, illustration, 3D render), which are NOT scanned — see
+// DrawnSkipModelID for why the anime pipeline was removed. Keeping drawn
+// faces out also keeps them from polluting photo people.
 //
 // The classifier is a SigLIP text probe: the item's whole-image SigLIP
 // embedding — already stored for most of the library by the embed task — is
@@ -127,23 +129,14 @@ func classifyVec(vec []float32, anchors *anchorCache) string {
 	return "photo"
 }
 
-// faceModelForDomain maps a domain to a recognizer: the active model when its
-// domain matches (so a BYO photo recognizer keeps priority), otherwise the
-// built-in for that domain.
+// faceModelForDomain maps a domain to a recognizer: the active model for
+// photos (so a BYO photo recognizer keeps priority), the DrawnSkipModel
+// sentinel for drawn media.
 func faceModelForDomain(domain string) FaceModel {
-	active := ActiveFaceModel()
-	if active.Domain == domain || (domain == "photo" && active.Domain == "") {
-		return active
-	}
 	if domain == "anime" {
-		if m, ok := FaceModelByID("anime-ccip"); ok {
-			return m
-		}
+		return DrawnSkipModel
 	}
-	if m, ok := FaceModelByID(DefaultFaceModelID); ok {
-		return m
-	}
-	return active
+	return ActiveFaceModel()
 }
 
 // routeVec picks the face model for one whole-image embedding.

@@ -147,16 +147,33 @@ func TestFacesServeArgs(t *testing.T) {
 	}
 }
 
-func TestAnimeCcipModelAndArgs(t *testing.T) {
-	m, ok := FaceModelByID("anime-ccip")
-	if !ok {
-		t.Fatal("anime-ccip not registered")
+func TestAnimeCcipRetired(t *testing.T) {
+	// The anime-character pipeline was removed (groups keyed on hair colour
+	// and style, not character): it must not be registered, offered, or
+	// reachable as a dependency, and the skip sentinel stays unregistered.
+	if _, ok := FaceModelByID("anime-ccip"); ok {
+		t.Fatal("anime-ccip is still registered")
 	}
-	if m.Dim != 768 || m.InputSize != 384 || m.Secondary != nil {
-		t.Fatalf("anime-ccip recognizer profile wrong: %+v", m)
+	if _, ok := FaceModelByID(DrawnSkipModelID); ok {
+		t.Fatal("skip sentinel must not be a selectable model")
 	}
-	if m.DetectorKind != "yolo" || m.Align != "bbox-expand" || m.Domain != "anime" || m.DetectorDepID != "anime-head" {
-		t.Fatalf("anime pipeline profile wrong: %+v", m)
+	for _, m := range FaceModelList() {
+		if m.ID == "anime-ccip" || m.Skip {
+			t.Fatalf("model list offers %s", m.ID)
+		}
+	}
+	if deps := faceModelDeps([]string{DefaultFaceModelID, DrawnSkipModelID}); len(deps) != 2 {
+		t.Fatalf("deps for photo+skip = %v, want only the photo detector+recognizer", deps)
+	}
+}
+
+func TestYoloBboxExpandArgs(t *testing.T) {
+	// The landmark-less (yolo + bbox-expand) pipeline stays supported in
+	// onnxface/cmd/embed for future recognizers; keep its args covered.
+	m := FaceModel{
+		ID: "yolo-test", Dim: 768, InputName: "input", OutputName: "output",
+		InputSize: 384, ColorOrder: "RGB",
+		DetectorKind: "yolo", Align: "bbox-expand", CropExpand: 2.5,
 	}
 
 	args := buildFacesServeArgs(`C:\d\head.onnx`, `C:\d\ccip.onnx`, "", "", m, "cpu", 0)
@@ -174,12 +191,6 @@ func TestAnimeCcipModelAndArgs(t *testing.T) {
 		if !strings.Contains(joined, " "+wantArg+" ") {
 			t.Fatalf("missing %q in %v", wantArg, args)
 		}
-	}
-
-	// The anime model appears in the config-UI list after the default.
-	list := FaceModelList()
-	if len(list) < 2 || list[0].ID != "sface" || list[1].ID != "anime-ccip" {
-		t.Fatalf("model list order: %v", list)
 	}
 }
 

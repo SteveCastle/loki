@@ -2474,6 +2474,17 @@ func InitializeSchema(db *sql.DB) error {
 		log.Printf("faces: removed %d stale face row(s) superseded by newer scans under another model", n)
 	}
 
+	// One-time purge of the retired anime-character pipeline (anime-ccip):
+	// its groups were keyed on hair colour and art style, not character.
+	// Drawn media is now skipped by the faces scan; its old markers convert
+	// to the skip marker so nothing is rescanned. Best-effort, retried on the
+	// next start.
+	if n, p, err := PurgeRetiredFaceModel(db, RetiredAnimeFaceModelID, DrawnSkipModelID); err != nil {
+		log.Printf("warning: retired anime face purge failed (will retry on next start): %v", err)
+	} else if n > 0 || p > 0 {
+		log.Printf("faces: removed %d anime-character face row(s) and %d auto group(s) (pipeline retired)", n, p)
+	}
+
 	// Duplicate-candidate review tables (see duplicates.go).
 	if err := initDuplicateSchema(db); err != nil {
 		return err

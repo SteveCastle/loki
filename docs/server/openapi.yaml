@@ -2465,8 +2465,8 @@ components:
         models:
           type: string
           description: >-
-            Comma-separated recognizer id(s) of the person's faces (normally one, e.g. `anime-ccip`
-            for a drawn-character cluster). Omitted when the person has no faces.
+            Comma-separated recognizer id(s) of the person's faces (normally one, e.g. `sface`).
+            Omitted when the person has no faces.
       required:
         - id
         - name

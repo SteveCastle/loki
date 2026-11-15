@@ -41,7 +41,7 @@ func registerFacesItemOp() {
 		ID:   "faces",
 		Name: "Faces (ONNX)",
 		Options: []TaskOption{
-			{Name: "model", Label: "Face Model", Type: "string", Description: "Pin scanning to one face model ID (default: automatic photo/anime routing)"},
+			{Name: "model", Label: "Face Model", Type: "string", Description: "Pin scanning to one face model ID (default: automatic routing — photos scanned, drawn media skipped)"},
 			{Name: "cluster-every", Label: "Cluster Every N Faces", Type: "number", Default: float64(defaultClusterEvery), Description: "Run an incremental people-clustering pass after this many newly scanned faces so People appear while the scan runs (0 = only queue one clustering job at the end)"},
 		},
 		Concurrency: func() int {
@@ -260,12 +260,10 @@ func prepareFacesOp(run *ItemRun) (*ItemProcessor, error) {
 			st.anchors = anchors
 			st.embedModel = TextSearchModel()
 			photo := faceModelForDomain("photo")
-			anime := faceModelForDomain("anime")
-			st.candidateIDs = []string{photo.ID}
-			if anime.ID != photo.ID {
-				st.candidateIDs = append(st.candidateIDs, anime.ID)
-			}
-			q.PushJobStdout(j.ID, fmt.Sprintf("Face routing: photo=%s anime=%s", photo.ID, anime.ID))
+			// Drawn items get an empty marker under the skip sentinel, so it
+			// counts as "already scanned" too (no re-routing every run).
+			st.candidateIDs = []string{photo.ID, DrawnSkipModelID}
+			q.PushJobStdout(j.ID, fmt.Sprintf("Face routing: photo=%s; drawn media (anime, cartoon, illustration) is skipped", photo.ID))
 		}
 	} else {
 		st.pinnedModel = ActiveFaceModel()
@@ -520,6 +518,23 @@ func (st *facesOpState) poolFor(ctx context.Context, run *ItemRun, m FaceModel) 
 // the serialized commit (store faces + index + incremental people assignment).
 func (st *facesOpState) processOne(ctx context.Context, run *ItemRun, path, localPath string) (*ItemCommit, error) {
 	model := st.modelFor(ctx, run, path, localPath)
+	db := run.Queue.Db
+	if model.Skip {
+		// Drawn media: no detector/recognizer run. The empty scan marker
+		// keeps the item from being re-routed on every scan, and (via
+		// ReplaceFaces' one-item-one-recognizer rule) drops any photo-model
+		// faces an older scan left on it.
+		return &ItemCommit{
+			Commit: func() error {
+				if _, cerr := media.ReplaceFaces(db, path, model.ID, nil, time.Now().Unix()); cerr != nil {
+					return cerr
+				}
+				notifyProgress(ProgressFaces, 1)
+				faceIndexReplacePath(model.ID, path, nil, nil) // evicts any stale photo faces
+				return nil
+			},
+		}, nil
+	}
 	pool, perr := st.poolFor(ctx, run, model)
 	if perr != nil {
 		return nil, perr
@@ -564,7 +579,6 @@ func (st *facesOpState) processOne(ctx context.Context, run *ItemRun, path, loca
 		return nil, err
 	}
 
-	db := run.Queue.Db
 	return &ItemCommit{
 		Commit: func() error {
 			ids, cerr := media.ReplaceFaces(db, path, model.ID, faces, time.Now().Unix())

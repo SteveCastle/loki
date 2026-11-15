@@ -118,9 +118,8 @@ What only you can decide/do:
 - [ ] **When bumping ffmpeg/exiftool versions**, update the pinned URLs,
       hashes (`fetch-bundled-deps -Mode update` prints them), **and** the
       commit/version references in `licenses/THIRD-PARTY-LICENSES.md`.
-- [ ] **Model licenses**: CCIP is OpenRAIL (use restrictions) — it's
-      user-downloaded so you're clear, but if you ever pre-bundle models,
-      recheck each license first. SigLIP2/DINOv2/WD-tagger/YuNet/SFace are
+- [ ] **Model licenses**: if you ever pre-bundle models, recheck each
+      license first. SigLIP2/DINOv2/WD-tagger/YuNet/SFace are
       permissive (Apache/MIT).
 
 ## 5. macOS

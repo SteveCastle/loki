@@ -104,12 +104,15 @@ func FacesInImageBytes(ctx context.Context, m FaceModel, image []byte) ([]media.
 }
 
 // FacesForPathOrScan returns the stored faces of a library item under its
-// ROUTED recognizer (photo vs anime, per the domain classifier; the active
+// ROUTED recognizer (photos only — drawn media has no faces, per the domain classifier; the active
 // model when routing is off), scanning it on the fly (and persisting the
 // result + updating the live index) when it hasn't been scanned yet — so
 // "find this person" works from any media item, not only already-scanned ones.
 func FacesForPathOrScan(ctx context.Context, db *sql.DB, path string) ([]media.Face, FaceModel, error) {
 	m := RoutedFaceModelForPath(ctx, db, path)
+	if m.Skip {
+		return nil, m, nil // drawn media is never scanned for faces
+	}
 	scanned, err := media.HasFaceScan(db, path, m.ID)
 	if err != nil {
 		return nil, m, err
@@ -163,10 +166,13 @@ func SearchFacesByMediaPath(ctx context.Context, db *sql.DB, path string, limit 
 // FaceQueryVectorForBytes returns the embedding of the LARGEST face in the
 // query image (the natural "search for this person" interpretation of a photo
 // with several people) plus the recognizer it belongs to. The recognizer is
-// ROUTED from the image content (anime capture → anime model). Errors when
+// ROUTED from the image content (a drawn capture finds no face). Errors when
 // the image contains no detectable face.
 func FaceQueryVectorForBytes(ctx context.Context, image []byte) ([]float32, FaceModel, error) {
 	m := RoutedFaceModelForBytes(ctx, image)
+	if m.Skip {
+		return nil, m, ErrNoFaceInQuery // drawn capture: no face pipeline for it
+	}
 	faces, err := FacesInImageBytes(ctx, m, image)
 	if err != nil {
 		return nil, m, err

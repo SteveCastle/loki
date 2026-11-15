@@ -48,8 +48,7 @@ export interface Person {
   // every regroup and carry extra weight when clustering.
   lockedCount: number;
   // Recognizer(s) the cluster's faces were embedded with (comma-separated;
-  // normally one) — distinguishes photo-face clusters from anime-character
-  // clusters.
+  // normally one).
   models?: string;
 }
 
@@ -65,18 +64,11 @@ interface ReviewFace {
   typicality: number;
 }
 
-// describeModels renders the recognizer id(s) as a human label so the admin
-// can tell a photographic face cluster from a drawn-character one.
+// describeModels renders the recognizer id(s) as a human label.
 function describeModels(models?: string): string | null {
   if (!models) return null;
-  const label = (id: string): string => {
-    if (id === 'anime-ccip') return 'Anime character (CCIP)';
-    if (id === 'sface') return 'Photo face (SFace)';
-    if (id.includes('anime') || id.includes('ccip')) {
-      return `Anime character (${id})`;
-    }
-    return `Photo face (${id})`;
-  };
+  const label = (id: string): string =>
+    id === 'sface' ? 'Photo face (SFace)' : `Photo face (${id})`;
   return models.split(',').map(label).join(', ');
 }
 
@@ -1834,7 +1826,7 @@ export default function PeopleGrid({ isDisabled }: { isDisabled: boolean }) {
   }, [rebuildArmed]);
 
   // Grouping tuner. Strictness is an OFFSET from each recognizer's default
-  // threshold so one slider works across routed models (SFace/CCIP/BYO have
+  // threshold so one slider works across routed models (SFace/BYO have
   // different cosine scales). Saved to the SERVER config (debounced below),
   // where it applies to every clustering pass — Group new faces, Rebuild,
   // in-scan passes — not just the "Regroup with these settings" button.

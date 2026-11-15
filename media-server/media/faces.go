@@ -109,6 +109,141 @@ func ReplaceFaces(db *sql.DB, path, model string, faces []NewFace, scannedAt int
 	return ids, nil
 }
 
+// DrawnSkipModelID is the face_scan marker the faces scan writes for media
+// the domain router classified as drawn (anime, cartoon, illustration):
+// "scanned, deliberately no faces". See tasks.DrawnSkipModelID.
+const DrawnSkipModelID = "skip-drawn"
+
+// RetiredAnimeFaceModelID is the removed anime-character recognizer whose
+// rows PurgeRetiredFaceModel clears at schema init.
+const RetiredAnimeFaceModelID = "anime-ccip"
+
+// PurgeRetiredFaceModel removes every face row stored under a retired
+// recognizer, and the people that existed only because of them:
+//   - auto-only people ("Unknown #N" with no user-assigned face) lose their
+//     taxonomy rows for media where only retired faces placed them, and are
+//     deleted outright when they end up with no faces at all;
+//   - curated people (renamed, or holding a user assignment) are KEPT with
+//     their People tags on media — the naming is the user's knowledge, the
+//     vectors were only the means.
+//
+// The model's scan markers become markers under skipModel (when non-empty), so
+// the items count as already routed instead of being rescanned. Returns the
+// number of face rows removed and people deleted. Idempotent; the cheap
+// indexed probe makes it a no-op on every later start.
+func PurgeRetiredFaceModel(db *sql.DB, model, skipModel string) (faces int, people int, err error) {
+	var probe int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM (SELECT 1 FROM face WHERE model=? LIMIT 1)`, model).Scan(&probe); err != nil {
+		return 0, 0, err
+	}
+	var markers int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM (SELECT 1 FROM face_scan WHERE model=? LIMIT 1)`, model).Scan(&markers); err != nil {
+		return 0, 0, err
+	}
+	if probe == 0 && markers == 0 {
+		return 0, 0, nil
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return 0, 0, err
+	}
+	defer tx.Rollback()
+
+	// People the purge touches, split curated vs auto-only.
+	type affected struct {
+		id      int64
+		name    string
+		curated bool
+	}
+	rows, err := tx.Query(`
+		SELECT p.id, COALESCE(p.name, ''),
+		       (COALESCE(p.name, '') NOT GLOB 'Unknown #*'
+		        OR EXISTS (SELECT 1 FROM face u WHERE u.person_id = p.id AND u.assigned_by = 'user'))
+		FROM person p
+		WHERE p.id IN (SELECT DISTINCT person_id FROM face WHERE model = ? AND person_id IS NOT NULL)`, model)
+	if err != nil {
+		return 0, 0, err
+	}
+	var touched []affected
+	for rows.Next() {
+		var a affected
+		if err := rows.Scan(&a.id, &a.name, &a.curated); err != nil {
+			rows.Close()
+			return 0, 0, err
+		}
+		touched = append(touched, a)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, 0, err
+	}
+
+	const retired = `SELECT id FROM face WHERE model = ?`
+	if _, err := tx.Exec(`UPDATE person SET cover_face_id = NULL WHERE cover_face_id IN (`+retired+`)`, model); err != nil {
+		return 0, 0, fmt.Errorf("clear retired covers: %w", err)
+	}
+	for _, a := range touched {
+		if a.curated {
+			continue
+		}
+		// Media where this person stands only on retired faces lose the tag.
+		if _, err := tx.Exec(`
+			DELETE FROM media_tag_by_category
+			WHERE tag_label = ? AND category_label = ?
+			  AND media_path IN (SELECT media_path FROM face WHERE person_id = ? AND model = ?)
+			  AND media_path NOT IN (SELECT media_path FROM face WHERE person_id = ? AND model <> ?)`,
+			a.name, PeopleCategory, a.id, model, a.id, model); err != nil {
+			return 0, 0, fmt.Errorf("untag retired person: %w", err)
+		}
+	}
+	if err := clearConstraintsForFacesTx(tx, retired, model); err != nil {
+		return 0, 0, fmt.Errorf("clear retired face constraints: %w", err)
+	}
+	res, err := tx.Exec(`DELETE FROM face WHERE model = ?`, model)
+	if err != nil {
+		return 0, 0, fmt.Errorf("delete retired faces: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	for _, a := range touched {
+		if a.curated {
+			continue
+		}
+		var left int
+		if err := tx.QueryRow(`SELECT COUNT(*) FROM face WHERE person_id = ?`, a.id).Scan(&left); err != nil {
+			return 0, 0, err
+		}
+		if left > 0 {
+			continue
+		}
+		for _, stmt := range []struct {
+			q    string
+			args []any
+		}{
+			{`DELETE FROM face_veto WHERE person_id = ?`, []any{a.id}},
+			{`DELETE FROM media_tag_by_category WHERE tag_label = ? AND category_label = ?`, []any{a.name, PeopleCategory}},
+			{`DELETE FROM tag WHERE label = ? AND category_label = ?`, []any{a.name, PeopleCategory}},
+			{`DELETE FROM person WHERE id = ?`, []any{a.id}},
+		} {
+			if _, err := tx.Exec(stmt.q, stmt.args...); err != nil {
+				return 0, 0, fmt.Errorf("delete retired person: %w", err)
+			}
+		}
+		people++
+	}
+	if skipModel != "" {
+		if _, err := tx.Exec(`UPDATE OR IGNORE face_scan SET model = ?, face_count = 0 WHERE model = ?`, skipModel, model); err != nil {
+			return 0, 0, fmt.Errorf("convert retired scan markers: %w", err)
+		}
+	}
+	if _, err := tx.Exec(`DELETE FROM face_scan WHERE model = ?`, model); err != nil {
+		return 0, 0, fmt.Errorf("delete retired scan markers: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, 0, err
+	}
+	return int(n), people, nil
+}
+
 // CleanupSupersededFaces removes face rows (and their covers, curation
 // assertions, and scan markers) whose scan was superseded by a NEWER scan of
 // the same media under a different model. ReplaceFaces now enforces this

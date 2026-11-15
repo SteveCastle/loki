@@ -128,7 +128,7 @@ What you get:
 - **Visual workflow editor** for chaining tasks into reusable pipelines (transcode → screenshot → auto-tag → ingest)
 - **Auto-tagging** using ONNX models (WD-EVA02-Large-Tagger v3) or Ollama vision models
 - **Visual similarity search**: SigLIP2 embeddings with an exact parallel cosine scan, so "more like this" and text-to-image queries stay accurate at hundreds of thousands of vectors instead of degrading the way an approximate index does
-- **Face grouping**: detect, embed, and cluster faces into people, across both photographic and illustrated/anime domains, routed automatically per item
+- **Face grouping**: detect, embed, and cluster faces into people in photographs (drawn media — anime, cartoons, illustration — is detected and skipped automatically)
 - **Transcription** of any video via Faster-Whisper
 - **Ingestion** from local folders, YouTube (yt-dlp), galleries (gallery-dl), and Discord exports
 - **HLS adaptive streaming** so the viewer can scrub through massive videos remotely

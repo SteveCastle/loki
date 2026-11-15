@@ -31,9 +31,8 @@ type Person struct {
 	LockedCount int   `json:"lockedCount"`
 	CreatedAt   int64 `json:"createdAt,omitempty"`
 	// Models lists the recognizer(s) the cluster's faces were embedded with
-	// (comma-separated; normally one) — e.g. "anime-ccip" identifies a drawn-
-	// character cluster vs a photographic face cluster. Empty when the person
-	// has no faces.
+	// (comma-separated; normally one), e.g. "sface" or a BYO id like
+	// "arcface-glint360k". Empty when the person has no faces.
 	Models string `json:"models,omitempty"`
 }
 

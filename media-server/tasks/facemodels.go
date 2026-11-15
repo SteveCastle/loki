@@ -7,6 +7,7 @@ import (
 
 	"github.com/stevecastle/shrike/appconfig"
 	"github.com/stevecastle/shrike/deps"
+	"github.com/stevecastle/shrike/media"
 )
 
 // FaceModel describes one face-identity recognizer: its identity, output
@@ -71,6 +72,31 @@ type FaceModel struct {
 	Secondary       *FaceModelPart
 	Weight          float32 // primary fusion weight (default 1)
 	SecondaryWeight float32
+
+	// Skip marks the routing sentinel for DRAWN media (DrawnSkipModel): such
+	// items are never run through a detector/recognizer; a scan only writes
+	// an empty face_scan marker under this ID so they are not re-routed.
+	Skip bool
+}
+
+// DrawnSkipModelID is the face_scan marker for media the domain router
+// classified as drawn (anime, cartoon, illustration, 3D render). Drawn faces
+// are not scanned at all: a dedicated anime pipeline (anime head detector +
+// CCIP) shipped until 2026-11 and was removed after measuring it on the live
+// libraries — on mixed illustration content CCIP groups by hair colour and art
+// style, not character (one group held half of a library's drawn faces), and
+// different-character pairs reach cos 0.65 at p99, so no threshold separates
+// them at library scale. Photo recognizers on drawn faces are worse still.
+// Never registered in the model registry, so it has no deps and is never
+// clustered, searched or offered in the config UI.
+const DrawnSkipModelID = media.DrawnSkipModelID
+
+// DrawnSkipModel is the routing target for the drawn domain.
+var DrawnSkipModel = FaceModel{
+	ID:          DrawnSkipModelID,
+	DisplayName: "Drawn media (not scanned for faces)",
+	Domain:      "anime",
+	Skip:        true,
 }
 
 // DetectorKindOrDefault returns the detector family, defaulting to YuNet.
@@ -128,47 +154,6 @@ var builtinFaceModels = map[string]FaceModel{
 		Domain:         "photo",
 		DetectorKind:   "yunet",
 		Align:          "landmarks",
-	},
-	// Anime characters: drawn faces defeat photo-trained recognizers, so this
-	// pipeline detects HEADS (deepghs YOLO detector, MIT), crops an expanded
-	// head/bust region (hair + costume carry the identity signal for drawn
-	// characters), and embeds it with CCIP — a model trained specifically for
-	// anime character identity (deepghs, OpenRAIL; downloaded on demand from
-	// the Dependencies tab, never redistributed). Vectors live in the same
-	// face table under this ID, so characters become ordinary persons/People
-	// tags. Calibration on library art (same character across styles vs
-	// different characters): same 0.63–0.78, different ≤ 0.33 — a DINOv2 +
-	// SigLIP fusion measured an OVERLAPPING 0.52–0.78 vs 0.42–0.66 and was
-	// rejected; the fusion plumbing remains for future recognizers.
-	"anime-ccip": {
-		ID:          "anime-ccip",
-		DisplayName: "Anime characters (CCIP)",
-		Dim:         768,
-		DepID:       "ccip",
-		File:        "model.onnx",
-		InputName:   "input",
-		OutputName:  "output",
-		InputSize:   384,
-		Mean:        [3]float32{123.675, 116.28, 103.53}, // ImageNet, 0..255 scale
-		Std:         [3]float32{58.395, 57.12, 57.375},
-		ColorOrder:  "RGB",
-		// Floor of the measured same-character band (0.63–0.78), minus a
-		// hair. The original 0.50 (midpoint of the portrait-calibration gap:
-		// same 0.63–0.78, different ≤ 0.33) collapsed a 109k-face live
-		// library into ~221 mega-blob "characters": on real library content
-		// (explicit scenes, western cartoon, furry — far from CCIP's
-		// training distribution) cross-character similarity has a fat tail
-		// (p75 ≈ 0.37, pairs up to 0.65), so a dense region of the space
-		// percolates at join 0.50/form 0.55 — measured blob internal mean
-		// 0.61. 0.60 sits above that density while staying under the
-		// same-character floor.
-		MatchThreshold: 0.60,
-		Domain:         "anime",
-		DetectorDepID:  "anime-head",
-		DetectorFile:   "model.onnx",
-		DetectorKind:   "yolo",
-		Align:          "bbox-expand",
-		CropExpand:     2.5,
 	},
 }
 
@@ -248,7 +233,7 @@ func ActiveFaceModel() FaceModel {
 // FaceModelList returns all selectable recognizers (built-ins in a stable
 // order, then valid BYO entries) for the config UI.
 func FaceModelList() []FaceModel {
-	order := []string{DefaultFaceModelID, "anime-ccip"}
+	order := []string{DefaultFaceModelID}
 	out := make([]FaceModel, 0, len(builtinFaceModels))
 	seen := map[string]bool{}
 	for _, id := range order {

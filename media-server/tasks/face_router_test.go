@@ -33,21 +33,22 @@ func TestFaceModelForDomain(t *testing.T) {
 	if m := faceModelForDomain("photo"); m.ID != "sface" {
 		t.Fatalf("photo → %s, want sface", m.ID)
 	}
-	if m := faceModelForDomain("anime"); m.ID != "anime-ccip" {
-		t.Fatalf("anime → %s, want anime-ccip", m.ID)
+	// Drawn media is never scanned: it routes to the skip sentinel.
+	if m := faceModelForDomain("anime"); m.ID != DrawnSkipModelID || !m.Skip {
+		t.Fatalf("anime → %+v, want the drawn skip sentinel", m)
 	}
 
-	// Active ANIME model: anime items keep it; photo items fall back to the
-	// photo default rather than scanning photos with CCIP.
+	// A config still naming the retired anime recognizer falls back to the
+	// photo default for photos, and drawn media stays skipped.
 	setFaceConfig(t, func(c *appconfig.Config) {
 		c.FaceModel = "anime-ccip"
 		c.FaceRouting = "auto"
 	})
-	if m := faceModelForDomain("anime"); m.ID != "anime-ccip" {
-		t.Fatalf("anime under anime-active → %s", m.ID)
-	}
 	if m := faceModelForDomain("photo"); m.ID != DefaultFaceModelID {
-		t.Fatalf("photo under anime-active → %s, want %s", m.ID, DefaultFaceModelID)
+		t.Fatalf("photo under retired anime config → %s, want %s", m.ID, DefaultFaceModelID)
+	}
+	if m := faceModelForDomain("anime"); !m.Skip {
+		t.Fatalf("anime under retired anime config → %s, want skip", m.ID)
 	}
 }
 
@@ -79,11 +80,11 @@ func TestPartitionPathsByModel(t *testing.T) {
 	if onTheFly != 0 {
 		t.Fatalf("embedded on the fly = %d, want 0 (all stored)", onTheFly)
 	}
-	if len(groups["anime-ccip"]) != 2 || len(groups["sface"]) != 1 {
+	if len(groups[DrawnSkipModelID]) != 2 || len(groups["sface"]) != 1 {
 		t.Fatalf("groups = %v", groups)
 	}
-	if _, ok := models["anime-ccip"]; !ok {
-		t.Fatal("anime model missing from models map")
+	if m, ok := models[DrawnSkipModelID]; !ok || !m.Skip {
+		t.Fatal("drawn skip sentinel missing from models map")
 	}
 
 	// A path with no stored embedding AND no decodable file degrades to the
@@ -131,8 +132,8 @@ func TestCachedRoutedFaceModelForPath(t *testing.T) {
 	}
 
 	withAnchors(t, []float32{1, 0}, []float32{0, 1})
-	if m := CachedRoutedFaceModelForPath(db, "a.jpg"); m.ID != "anime-ccip" {
-		t.Fatalf("cached route → %s, want anime-ccip", m.ID)
+	if m := CachedRoutedFaceModelForPath(db, "a.jpg"); m.ID != DrawnSkipModelID {
+		t.Fatalf("cached route → %s, want %s", m.ID, DrawnSkipModelID)
 	}
 	// No stored embedding → active model (never embeds on the fly).
 	if m := CachedRoutedFaceModelForPath(db, "missing.jpg"); m.ID != "sface" {

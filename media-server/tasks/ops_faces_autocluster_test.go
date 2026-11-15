@@ -105,7 +105,7 @@ func TestRunItemOpsSkipsFinalizeOnPause(t *testing.T) {
 		op.Prepare = func(run *ItemRun) (*ItemProcessor, error) {
 			return &ItemProcessor{
 				Process: func(ctx context.Context, path, _ string) (*ItemCommit, error) {
-					_ = q.RequestPause(jobID)
+					_ = q.RequestPause(jobID, false)
 					return &ItemCommit{Commit: func() error { return nil }}, nil
 				},
 				Finalize: func() error { atomic.AddInt32(&finalizeCalls, 1); return nil },

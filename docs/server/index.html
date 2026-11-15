@@ -195,7 +195,7 @@
           <li>Media ingestion from local directories, YouTube, and gallery sites</li>
           <li>AI-powered auto-tagging using ONNX models</li>
           <li>Visual similarity search with local image embeddings</li>
-          <li>Face recognition that clusters faces into people (photos and anime)</li>
+          <li>Face recognition that clusters faces in photos into people</li>
           <li>LLM vision integration for image descriptions</li>
           <li>Video transcription with Faster Whisper</li>
           <li>Browser extensions for Chrome and Firefox</li>
@@ -388,7 +388,7 @@
           <li><strong>wd-eva02-large-tagger-v3</strong> - auto-tagging (~1.3&nbsp;GB)</li>
           <li><strong>siglip2-base-patch16-224</strong> - visual similarity and text-to-image search (~1.5&nbsp;GB)</li>
           <li><strong>dinov2-base</strong> - image-only similarity (~350&nbsp;MB)</li>
-          <li><strong>yunet / sface / anime-head / ccip</strong> - face detection and recognition for photos and anime</li>
+          <li><strong>yunet / sface</strong> - face detection and recognition for photos</li>
           <li><strong>faster-whisper</strong> - video transcription (~1.5&nbsp;GB; setting <code>fasterWhisperPath</code> to an existing install works too)</li>
         </ul>
         <div class="placeholder-video">Dependency Setup Demo Video</div>
@@ -904,8 +904,8 @@
         <p>
           The server can detect the faces in your library, compute a compact embedding
           for each one, and cluster them into people that show up in the viewer's
-          <strong>People</strong> view. It handles photographs and drawn/anime-style
-          characters, and everything runs locally.
+          <strong>People</strong> view. It handles photographs (drawn media is
+          skipped), and everything runs locally.
         </p>
         <h4>Tasks</h4>
         <ul>
@@ -925,17 +925,16 @@
         </ul>
         <h4>Models &amp; Automatic Domain Routing</h4>
         <p>
-          Two recognition pipelines ship built-in, installable from the Dependencies
-          page:
+          The built-in pipeline (YuNet face detector + SFace recognizer) installs from
+          the Dependencies page.
         </p>
-        <ul>
-          <li><strong>Photos</strong> - YuNet face detector + SFace recognizer</li>
-          <li><strong>Anime / drawn art</strong> - anime head detector + CCIP character recognizer</li>
-        </ul>
         <p>
           With routing set to <code>auto</code> (the default), each item is classified
-          photo-vs-anime using a SigLIP 2 text probe and sent to the right pipeline, so
-          one <code>faces</code> job covers a mixed library. Advanced users can also
+          photo-vs-drawn using a SigLIP 2 text probe; drawn media (anime, cartoons,
+          illustration) is skipped, so one <code>faces</code> job covers a mixed library
+          without drawn faces leaking into people. A dedicated anime-character pipeline
+          (CCIP) was tried and removed: on real libraries it grouped by hair colour and
+          art style rather than character. Advanced users can also
           point the config at their own ArcFace-family ONNX recognizer. Face inference
           supports GPU acceleration via DirectML on Windows, configurable per-task from
           the Config page.
