@@ -131,7 +131,7 @@
     "react-dom": "^18.3.1",
     "react-indiana-drag-scroll": "^3.0.3-alpha",
     "react-loading-skeleton": "^3.5.0",
-    "react-resizable-panels": "^4.2.0",
+    "react-resizable-panels": "~4.15.3",
     "react-router-dom": "^6.30.2",
     "react-scroll-ondrag": "^3.0.1",
     "react-tooltip": "^5.30.0",
