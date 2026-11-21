@@ -25,6 +25,12 @@ const textCaptureOp = "capture-text"
 // names and punctuation on every line.
 const textCaptureTemperature = 0.2
 
+// textCaptureMinImageTokens upscales small images before they are read: a
+// 640x400 screenshot is otherwise ~250 vision tokens, too coarse for small
+// Japanese text (misread kanji, dropped menu labels); manga pages are larger
+// than this already and are read as before.
+const textCaptureMinImageTokens = 1024
+
 // textCaptureMaxTokensLimit bounds a per-job --max-tokens override.
 const textCaptureMaxTokensLimit = 16384
 
@@ -133,7 +139,8 @@ func prepareTextCaptureOp(run *ItemRun) (*ItemProcessor, error) {
 			text, err := imageText(ctx, q, jobID, localPath, textRequest{
 				Prompt: prompt, Model: model, MaxTokens: maxTokens,
 				Temperature: textCaptureTemperature, NoRepeat: true,
-				OnFinish: func(f string) { finish = f },
+				MinImageTokens: textCaptureMinImageTokens,
+				OnFinish:       func(f string) { finish = f },
 			})
 			if err != nil {
 				return nil, err
@@ -161,7 +168,8 @@ func prepareTextCaptureOp(run *ItemRun) (*ItemProcessor, error) {
 					// each line is written twice (original, then translation)
 					MaxTokens:   min(2*maxTokens, textCaptureMaxTokensLimit),
 					Temperature: textCaptureTemperature, NoRepeat: true,
-					OnFinish: func(f string) { finish = f },
+					MinImageTokens: textCaptureMinImageTokens,
+					OnFinish:       func(f string) { finish = f },
 				})
 				if err != nil {
 					return nil, fmt.Errorf("translating: %w", err)

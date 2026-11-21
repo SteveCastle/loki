@@ -79,6 +79,9 @@ type textRequest struct {
 	Temperature float64
 	// NoRepeat turns on the engine's DRY loop guard (scribeDRYArgs).
 	NoRepeat bool
+	// MinImageTokens (optional) upscales an image smaller than this many
+	// vision tokens before reading it (capped at Config.TextMaxImageTokens).
+	MinImageTokens int
 	// OnFinish (optional) gets the engine's finish reason: "stop", or
 	// "length" when the answer ran into MaxTokens without ending.
 	OnFinish func(finish string)
@@ -208,7 +211,11 @@ func runTextBatch(items []*textItem) {
 
 	cfg := appconfig.Get()
 	r := live[0].req
-	args := []string{"--json", "--max-tokens", strconv.Itoa(r.MaxTokens), "--parallel", strconv.Itoa(max(1, cfg.TextParallel)), "--max-image-tokens", strconv.Itoa(max(64, cfg.TextMaxImageTokens))}
+	maxImage := max(64, cfg.TextMaxImageTokens)
+	args := []string{"--json", "--max-tokens", strconv.Itoa(r.MaxTokens), "--parallel", strconv.Itoa(max(1, cfg.TextParallel)), "--max-image-tokens", strconv.Itoa(maxImage)}
+	if r.MinImageTokens > 0 {
+		args = append(args, "--min-image-tokens", strconv.Itoa(min(r.MinImageTokens, maxImage)))
+	}
 	if r.Model != "" {
 		args = append(args, "--model", r.Model)
 	}
