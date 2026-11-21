@@ -143,6 +143,10 @@ type Config struct {
 	// TextCaptureMaxTokens caps one capture's output (a job's --max-tokens
 	// overrides it): the safety stop when a model never emits its end token.
 	TextCaptureMaxTokens int `json:"textCaptureMaxTokens"`
+	// TextTranslatePrompt is the second pass of a translating capture: the
+	// transcription (as written) is translated with the picture for context.
+	// {language} is replaced by the target language.
+	TextTranslatePrompt string `json:"textTranslatePrompt"`
 
 	// AutoProcessOps is the comma-separated per-item op list the scheduled
 	// combined job runs. Empty = every op (hash, dimensions, describe,
@@ -413,6 +417,22 @@ var TextCaptureLanguages = []string{
 // model stuck in a loop stops here instead of running for minutes.
 const DefaultTextCaptureMaxTokens = 2048
 
+// DefaultTextTranslatePrompt is the translation pass of Text capture. Reading
+// and translating in one answer garbled a Korean manga page (misread set
+// phrases, swapped speakers); transcribing first and then translating that
+// text line by line (each original copied before its translation, the ">> "
+// lines kept) read it like a professional translation.
+const DefaultTextTranslatePrompt = `Below is the text of this image, transcribed exactly as written. Translate it into {language} the way a professional comic and manga translator would: natural, fluent, idiomatic {language} that a native speaker would actually say, never a word-for-word rendering.
+
+- Use the picture to understand each line: who is speaking to whom, what is happening, and the mood. Set phrases that depend on the moment (greetings when arriving or leaving, thanks, apologies, "I'm home", "I'm off", "thanks for the meal") become what a {language} speaker would say in that situation, not their literal words. For example, a guest leaving with 失礼しました / 실례했습니다 / 打扰了 is saying "Thanks for having me", 行ってきます / 다녀오겠습니다 when heading out is "I'm off!" or "See you later!", and ただいま / 다녀왔습니다 is "I'm home!".
+- Get who does what to whom right; when the original leaves the subject or object unsaid, work it out from the context and the picture.
+- Keep each speaker's voice: casual stays casual, polite stays polite, and stammers, trailing off (...) and emphasis stay, rendered the {language} way (in English a stammered word becomes "I-it's").
+- Keep the structure exactly: the same lines in the same order, every PANEL line, and each line's label before the colon. Translate descriptive labels into {language} and keep names as they are, with honorifics such as -chan and -san.
+- Sound effects (SFX lines) become {language} onomatopoeia for the sound they show, such as a door shutting as CLUNK or a phone vibrating as BZZT in English.
+- Text already in {language} stays as it is.
+
+Work line by line. For every line of the text, first copy it exactly as it is, then on the next line write ">> " followed by the line's {language} translation with its label. PANEL lines and blank lines are copied once, with no translation.`
+
 // DefaultTextCapturePrompt is the Text capture task's default instruction.
 const DefaultTextCapturePrompt = `Transcribe all of the text in this image exactly as it is written: every word, number and symbol, keeping its spelling, capitalization and punctuation. Do not describe the image, summarize or add any commentary. If there is no text at all, answer with nothing.
 
@@ -494,6 +514,7 @@ func defaultConfig() Config {
 		DescribePrompt:          "Please describe this image, paying special attention to the people, the color of hair, clothing, items, text and captions, and actions being performed.",
 		TextCapturePrompt:       DefaultTextCapturePrompt,
 		TextCaptureMaxTokens:    DefaultTextCaptureMaxTokens,
+		TextTranslatePrompt:     DefaultTextTranslatePrompt,
 		TextParallel:            DefaultTextParallel,
 		TextBatch:               DefaultTextBatch,
 		TextMaxImageTokens:      DefaultTextMaxImageTokens,
@@ -748,6 +769,9 @@ func Load() (Config, string, error) {
 	}
 	if strings.TrimSpace(c.TextCapturePrompt) == "" {
 		c.TextCapturePrompt = def.TextCapturePrompt
+	}
+	if strings.TrimSpace(c.TextTranslatePrompt) == "" {
+		c.TextTranslatePrompt = def.TextTranslatePrompt
 	}
 	if c.TextCaptureMaxTokens <= 0 {
 		c.TextCaptureMaxTokens = def.TextCaptureMaxTokens

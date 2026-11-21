@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/stevecastle/shrike/appconfig"
@@ -37,9 +38,9 @@ func textCaptureLanguage(v string) string {
 	return v
 }
 
-// textCapturePrompt is the instruction for one run: the custom prompt or the
-// configured one, plus the translation instruction when a language is set.
-func textCapturePrompt(custom, language string) string {
+// textCapturePrompt is the transcription instruction (always as written: a
+// translation is a second pass over this text, textTranslatePrompt).
+func textCapturePrompt(custom string) string {
 	p := strings.TrimSpace(custom)
 	if p == "" {
 		p = strings.TrimSpace(appconfig.Get().TextCapturePrompt)
@@ -47,11 +48,45 @@ func textCapturePrompt(custom, language string) string {
 	if p == "" {
 		p = appconfig.DefaultTextCapturePrompt
 	}
-	if lang := textCaptureLanguage(language); lang != "" {
-		p += fmt.Sprintf("\n\nWrite your answer in %[1]s: translate every piece of text into %[1]s, whatever language it is written in, keeping its meaning and tone and the structure described above (speaker names, panel markers and sound effects too). Text already in %[1]s stays exactly as written. Give only the %[1]s version.", lang)
-	}
 	return p
 }
+
+// textTranslatePrompt is the translation pass's instruction for one
+// transcript: the configured prompt for the language, then the text.
+func textTranslatePrompt(language, transcript string) string {
+	p := strings.TrimSpace(appconfig.Get().TextTranslatePrompt)
+	if p == "" {
+		p = appconfig.DefaultTextTranslatePrompt
+	}
+	return strings.ReplaceAll(p, "{language}", language) + "\n\nTEXT:\n" + transcript
+}
+
+// translatedLines keeps a line-by-line translation's ">> " lines (and the
+// PANEL / blank lines between them), dropping the copied originals. A reply
+// without any ">> " line ignored the format: it is used whole.
+func translatedLines(reply string) string {
+	if !strings.Contains(reply, ">>") {
+		return strings.TrimSpace(reply)
+	}
+	var out []string
+	for _, l := range strings.Split(strings.ReplaceAll(reply, "\r\n", "\n"), "\n") {
+		t := strings.TrimSpace(l)
+		switch {
+		case strings.HasPrefix(t, ">>"):
+			out = append(out, strings.TrimSpace(strings.TrimPrefix(t, ">>")))
+		case t == "":
+			if len(out) > 0 && out[len(out)-1] != "" {
+				out = append(out, "")
+			}
+		case panelLine.MatchString(t):
+			out = append(out, t)
+		}
+	}
+	return strings.TrimSpace(strings.Join(out, "\n"))
+}
+
+// panelLine matches a script's panel marker ("PANEL 3", "Panel 12").
+var panelLine = regexp.MustCompile(`(?i)^panel\s*\d+\s*:?$`)
 
 func registerTextCaptureItemOp() {
 	RegisterItemOp(ItemOp{
@@ -81,7 +116,8 @@ func prepareTextCaptureOp(run *ItemRun) (*ItemProcessor, error) {
 	if lang := textCaptureLanguage(language); lang != "" {
 		q.PushJobStdout(jobID, "Text capture: translating into "+lang)
 	}
-	prompt := textCapturePrompt(custom, language)
+	prompt := textCapturePrompt(custom)
+	lang := textCaptureLanguage(language)
 	maxTokens := int(optFloat(run.Opts, "max-tokens"))
 	if maxTokens <= 0 {
 		maxTokens = appconfig.Get().TextCaptureMaxTokens
@@ -102,14 +138,35 @@ func prepareTextCaptureOp(run *ItemRun) (*ItemProcessor, error) {
 			if err != nil {
 				return nil, err
 			}
-			text = strings.TrimSpace(text)
 			// Only an answer that ran into the limit is a loop; a finished
 			// one keeps every repeated balloon it has.
-			if finish == "length" {
-				var looped bool
-				if text, looped = trimRepeatedTail(text); looped {
+			trimLoop := func(t string) string {
+				if finish != "length" {
+					return t
+				}
+				t, looped := trimRepeatedTail(t)
+				if looped {
 					q.PushJobStdout(jobID, "  "+filepath.Base(path)+": the model got stuck repeating itself; kept one copy of the repeated part")
 				}
+				return t
+			}
+			text = trimLoop(strings.TrimSpace(text))
+			// Translation is a second pass over the transcription, with the
+			// picture for context: reading and translating in one answer
+			// misread set phrases and swapped speakers.
+			if lang != "" && text != "" {
+				finish = ""
+				reply, err := imageText(ctx, q, jobID, localPath, textRequest{
+					Prompt: textTranslatePrompt(lang, text), Model: model,
+					// each line is written twice (original, then translation)
+					MaxTokens:   min(2*maxTokens, textCaptureMaxTokensLimit),
+					Temperature: textCaptureTemperature, NoRepeat: true,
+					OnFinish: func(f string) { finish = f },
+				})
+				if err != nil {
+					return nil, fmt.Errorf("translating: %w", err)
+				}
+				text = trimLoop(translatedLines(reply))
 			}
 			detail := "text captured"
 			if text == "" {

@@ -1078,6 +1078,18 @@
                   </small>
                 </div>
                 <div class="field">
+                  <label class="label" for="text-translate-prompt">Text capture translation prompt</label>
+                  <textarea id="text-translate-prompt" class="input" rows="6">
+{{.Config.TextTranslatePrompt}}</textarea
+                  >
+                  <small class="hint">
+                    When a language is picked, the transcribed text goes through
+                    this second pass with the picture for context.
+                    <code>{language}</code> becomes the language. Clear the box
+                    to restore the default.
+                  </small>
+                </div>
+                <div class="field">
                   <label class="label" for="text-capture-language">Text capture language</label>
                   <select id="text-capture-language" class="input">
                     {{range .TextCaptureLanguages}}<option value="{{if ne . "Original"}}{{.}}{{end}}" {{if eq . $.Config.TextCaptureLanguage}}selected{{else if and (eq . "Original") (eq $.Config.TextCaptureLanguage "")}}selected{{end}}>{{if eq . "Original"}}As written (no translation){{else}}Translate to {{.}}{{end}}</option>{{end}}
@@ -2420,6 +2432,7 @@
           discordToken: document.getElementById('discord-token').value.trim(),
           describePrompt: document.getElementById('describe-prompt').value,
           textCapturePrompt: document.getElementById('text-capture-prompt').value,
+          textTranslatePrompt: document.getElementById('text-translate-prompt').value,
           textCaptureLanguage: document.getElementById('text-capture-language').value,
           textCaptureMaxTokens:
             parseInt(document.getElementById('text-capture-max-tokens').value, 10) || 0,

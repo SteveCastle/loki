@@ -1212,6 +1212,7 @@ type updateConfigRequest struct {
 	TextCapturePrompt    *string `json:"textCapturePrompt"`
 	TextCaptureLanguage  *string `json:"textCaptureLanguage"`
 	TextCaptureMaxTokens *int    `json:"textCaptureMaxTokens"`
+	TextTranslatePrompt  *string `json:"textTranslatePrompt"`
 	// TextModel: nil keeps the stored model (partial POSTs), "" resets it to
 	// the engine default.
 	TextModel                 *string `json:"textModel"`
@@ -1455,6 +1456,12 @@ func configHandler(deps *Dependencies) http.HandlerFunc {
 				newCfg.TextCapturePrompt = strings.TrimSpace(*req.TextCapturePrompt)
 				if newCfg.TextCapturePrompt == "" {
 					newCfg.TextCapturePrompt = appconfig.DefaultTextCapturePrompt
+				}
+			}
+			if req.TextTranslatePrompt != nil {
+				newCfg.TextTranslatePrompt = strings.TrimSpace(*req.TextTranslatePrompt)
+				if newCfg.TextTranslatePrompt == "" {
+					newCfg.TextTranslatePrompt = appconfig.DefaultTextTranslatePrompt
 				}
 			}
 			if req.TextCaptureMaxTokens != nil {

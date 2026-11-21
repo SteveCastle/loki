@@ -15,23 +15,25 @@ func TestTextCapturePrompt(t *testing.T) {
 	cfg.TextCapturePrompt = "BASE"
 	appconfig.Set(cfg)
 
-	if got := textCapturePrompt("", ""); got != "BASE" {
-		t.Errorf("no language: %q", got)
+	// transcription never carries a translation instruction (that is pass 2)
+	if got := textCapturePrompt(""); got != "BASE" {
+		t.Errorf("configured prompt: %q", got)
 	}
-	if got := textCapturePrompt("", "Original"); got != "BASE" {
-		t.Errorf("original: %q", got)
-	}
-	got := textCapturePrompt("", "Spanish")
-	if !strings.HasPrefix(got, "BASE\n\n") || !strings.Contains(got, "translate every piece of text into Spanish") {
-		t.Errorf("translation instruction missing: %q", got)
-	}
-	if got := textCapturePrompt("MINE", "French"); !strings.HasPrefix(got, "MINE") || !strings.Contains(got, "French") {
+	if got := textCapturePrompt("MINE"); got != "MINE" {
 		t.Errorf("custom prompt: %q", got)
 	}
 	cfg.TextCapturePrompt = ""
+	cfg.TextTranslatePrompt = ""
 	appconfig.Set(cfg)
-	if got := textCapturePrompt("", ""); got != appconfig.DefaultTextCapturePrompt {
+	if got := textCapturePrompt(""); got != appconfig.DefaultTextCapturePrompt {
 		t.Error("an empty configured prompt falls back to the default")
+	}
+	got := textTranslatePrompt("Spanish", "PANEL 1\nA: hola")
+	if strings.Contains(got, "{language}") || !strings.Contains(got, "into Spanish") || !strings.HasSuffix(got, "TEXT:\nPANEL 1\nA: hola") {
+		t.Errorf("translate prompt: %q", got)
+	}
+	if textCaptureLanguage("Original") != "" || textCaptureLanguage(" English ") != "English" {
+		t.Error("language normalization")
 	}
 	if op, ok := itemOps[textCaptureOp]; !ok || op.Applies == nil || !op.Applies("page.png") || op.Applies("clip.mp4") {
 		t.Error("capture-text applies to images only")
@@ -79,5 +81,22 @@ func TestScribeSupportedArgsDropsDRY(t *testing.T) {
 	got := scribeSupportedArgs(context.Background(), aiToolRun{Bin: "Z:/nope/loki-scribe.exe"}, args, func(string) {})
 	if strings.Join(got, " ") != "--json --temp 0.2 -p x" {
 		t.Errorf("got %v", got)
+	}
+}
+
+func TestTranslatedLines(t *testing.T) {
+	// the reply shape the translation prompt asks for (copied originals, ">> " translations)
+	reply := "PANEL 1\nWOMAN IN HOODIE: 실례 했습니다.\n>> WOMAN IN HOODIE: Thanks for having me.\nBLONDE MAN: 그럼\n>> BLONDE MAN: Well then.\n\nPANEL 2\nSFX: ガギン\n>> SFX: CLUNK\n"
+	want := "PANEL 1\nWOMAN IN HOODIE: Thanks for having me.\nBLONDE MAN: Well then.\n\nPANEL 2\nSFX: CLUNK"
+	if got := translatedLines(reply); got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+	// a reply that ignored the format is kept whole
+	if got := translatedLines("PANEL 1\nA: hello"); got != "PANEL 1\nA: hello" {
+		t.Errorf("plain reply: %q", got)
+	}
+	// CRLF and blank-line runs
+	if got := translatedLines("PANEL 1\r\nX: y\r\n>> X: z\r\n\r\n\r\nPANEL 2\r\n>> SFX: BZZT"); got != "PANEL 1\nX: z\n\nPANEL 2\nSFX: BZZT" {
+		t.Errorf("crlf: %q", got)
 	}
 }
