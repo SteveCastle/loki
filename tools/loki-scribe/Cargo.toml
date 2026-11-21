@@ -1,0 +1,34 @@
+[package]
+name = "loki-scribe"
+version = "0.1.0"
+edition = "2021"
+default-run = "loki-scribe"
+
+[[bin]]
+name = "loki-scribe"
+path = "src/main.rs"
+
+[dependencies]
+cudarc = { version = "0.19", default-features = false, features = ["std", "driver", "nvrtc", "dynamic-loading", "cuda-12060"] }
+half = "2.7"
+memmap2 = "0.9"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "bmp", "tiff", "gif"] }
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+ureq = "2"
+regex = "1"
+
+[build-dependencies]
+anyhow = "1"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+debug = 1
+
+[profile.dev]
+opt-level = 1
