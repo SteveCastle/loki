@@ -140,6 +140,9 @@ type Config struct {
 	// job's --language overrides it; "" = as written).
 	TextCapturePrompt   string `json:"textCapturePrompt"`
 	TextCaptureLanguage string `json:"textCaptureLanguage"`
+	// TextCaptureMaxTokens caps one capture's output (a job's --max-tokens
+	// overrides it): the safety stop when a model never emits its end token.
+	TextCaptureMaxTokens int `json:"textCaptureMaxTokens"`
 
 	// AutoProcessOps is the comma-separated per-item op list the scheduled
 	// combined job runs. Empty = every op (hash, dimensions, describe,
@@ -406,6 +409,10 @@ var TextCaptureLanguages = []string{
 	"Chinese (Traditional)", "Japanese", "Korean",
 }
 
+// DefaultTextCaptureMaxTokens: a busy comic page is a few hundred lines; a
+// model stuck in a loop stops here instead of running for minutes.
+const DefaultTextCaptureMaxTokens = 2048
+
 // DefaultTextCapturePrompt is the Text capture task's default instruction.
 const DefaultTextCapturePrompt = `Transcribe all of the text in this image exactly as it is written: every word, number and symbol, keeping its spelling, capitalization and punctuation. Do not describe the image, summarize or add any commentary. If there is no text at all, answer with nothing.
 
@@ -486,6 +493,7 @@ func defaultConfig() Config {
 		TranscriptionVADFilter:  true,
 		DescribePrompt:          "Please describe this image, paying special attention to the people, the color of hair, clothing, items, text and captions, and actions being performed.",
 		TextCapturePrompt:       DefaultTextCapturePrompt,
+		TextCaptureMaxTokens:    DefaultTextCaptureMaxTokens,
 		TextParallel:            DefaultTextParallel,
 		TextBatch:               DefaultTextBatch,
 		TextMaxImageTokens:      DefaultTextMaxImageTokens,
@@ -740,6 +748,9 @@ func Load() (Config, string, error) {
 	}
 	if strings.TrimSpace(c.TextCapturePrompt) == "" {
 		c.TextCapturePrompt = def.TextCapturePrompt
+	}
+	if c.TextCaptureMaxTokens <= 0 {
+		c.TextCaptureMaxTokens = def.TextCaptureMaxTokens
 	}
 	if c.EmbeddingModel == "" {
 		c.EmbeddingModel = def.EmbeddingModel

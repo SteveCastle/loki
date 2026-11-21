@@ -27,6 +27,14 @@ pub struct Sampling {
     pub min_p: f32,
     pub presence_penalty: f32,
     pub repeat_penalty: f32,
+    /// DRY ("don't repeat yourself"): a token that would extend a repeat of
+    /// the answer's own earlier text by `len` >= dry_allowed_length tokens
+    /// loses dry_multiplier * dry_base^(len - dry_allowed_length) logits.
+    /// Unlike the penalties above it leaves recurring short pieces (names,
+    /// labels, punctuation) alone and stops loops. 0 = off.
+    pub dry_multiplier: f32,
+    pub dry_base: f32,
+    pub dry_allowed_length: usize,
     pub seed: u64,
 }
 
@@ -345,7 +353,7 @@ impl Engine {
             prompt_tokens: n_rows,
             started,
         };
-        let t = sample(&logits[..self.model.output_n()], &a.job.params.sampling, &a.seen, &mut a.rng);
+        let t = sample(&logits[..self.model.output_n()], &a.job.params.sampling, &a.seen, &a.generated, &mut a.rng);
         a.push(t);
         crate::info!("[{}] prompt {} tokens{} -> generating", a.job.input.as_deref().or(a.job.id.as_deref()).unwrap_or("request"), n_rows, if images.is_empty() { String::new() } else { format!(" ({} image(s))", images.len()) });
         Ok(Admit::Started(a))
@@ -382,7 +390,7 @@ impl Engine {
         for (r, &i) in live.iter().enumerate() {
             let a = &mut active[i];
             a.next_pos += 1;
-            let t = sample(&logits[r * v..(r + 1) * v], &a.job.params.sampling, &a.seen, &mut a.rng);
+            let t = sample(&logits[r * v..(r + 1) * v], &a.job.params.sampling, &a.seen, &a.generated, &mut a.rng);
             a.push(t);
         }
         let mut st = self.stats.borrow_mut();
@@ -465,20 +473,57 @@ fn next_u64(s: &mut u64) -> u64 {
     z ^ (z >> 31)
 }
 
+/// Longest repeat DRY looks at: beyond it the penalty has long saturated.
+const DRY_MAX_MATCH: usize = 256;
+
+/// DRY penalties for the next token, from the answer so far: for every earlier
+/// occurrence of the last token, the length of the run ending there that equals
+/// the run ending now; the token that followed it would extend that repeat.
+pub fn dry_penalties(history: &[u32], s: &Sampling) -> Vec<(u32, f32)> {
+    let n = history.len();
+    if s.dry_multiplier <= 0.0 || n < 2 {
+        return Vec::new();
+    }
+    let last = history[n - 1];
+    let mut longest: std::collections::HashMap<u32, usize> = Default::default();
+    for i in 0..n - 1 {
+        if history[i] != last {
+            continue;
+        }
+        let mut len = 1;
+        while len < DRY_MAX_MATCH && len <= i && history[i - len] == history[n - 1 - len] {
+            len += 1;
+        }
+        let e = longest.entry(history[i + 1]).or_insert(0);
+        *e = (*e).max(len);
+    }
+    longest
+        .into_iter()
+        .filter(|&(_, len)| len >= s.dry_allowed_length)
+        .map(|(t, len)| (t, s.dry_multiplier * s.dry_base.powi((len - s.dry_allowed_length).min(40) as i32)))
+        .collect()
+}
+
 /// Pick the next token: penalties, then greedy (temperature 0) or top-k / top-p / min-p sampling.
-pub fn sample(logits: &[f32], s: &Sampling, seen: &std::collections::HashSet<u32>, rng: &mut u64) -> u32 {
+pub fn sample(logits: &[f32], s: &Sampling, seen: &std::collections::HashSet<u32>, history: &[u32], rng: &mut u64) -> u32 {
     // penalties touch only the tokens generated so far
+    let dry = dry_penalties(history, s);
     let mut owned;
-    let logits: &[f32] = if seen.is_empty() || (s.repeat_penalty == 1.0 && s.presence_penalty == 0.0) {
+    let logits: &[f32] = if dry.is_empty() && (seen.is_empty() || (s.repeat_penalty == 1.0 && s.presence_penalty == 0.0)) {
         logits
     } else {
         owned = logits.to_vec();
-        for &t in seen {
-            let l = &mut owned[t as usize];
-            if s.repeat_penalty != 1.0 {
-                *l = if *l > 0.0 { *l / s.repeat_penalty } else { *l * s.repeat_penalty };
+        if s.repeat_penalty != 1.0 || s.presence_penalty != 0.0 {
+            for &t in seen {
+                let l = &mut owned[t as usize];
+                if s.repeat_penalty != 1.0 {
+                    *l = if *l > 0.0 { *l / s.repeat_penalty } else { *l * s.repeat_penalty };
+                }
+                *l -= s.presence_penalty;
             }
-            *l -= s.presence_penalty;
+        }
+        for (t, p) in dry {
+            owned[t as usize] -= p;
         }
         &owned
     };
@@ -545,4 +590,40 @@ pub fn sample(logits: &[f32], s: &Sampling, seen: &std::collections::HashSet<u32
         }
     }
     cand[n - 1].1
+}
+
+#[cfg(test)]
+mod dry_tests {
+    use super::*;
+
+    fn s(allowed: usize) -> Sampling {
+        Sampling { temperature: 0.2, top_k: 20, top_p: 0.8, min_p: 0.0, presence_penalty: 0.0, repeat_penalty: 1.0, dry_multiplier: 0.8, dry_base: 1.75, dry_allowed_length: allowed, seed: 0 }
+    }
+
+    #[test]
+    fn short_recurring_pieces_are_free() {
+        // "A: x \n A: y \n A:" -> extending "A:" with the next token is a 2-token repeat
+        let h = [1, 2, 10, 9, 1, 2, 11, 9, 1, 2];
+        assert!(dry_penalties(&h, &s(4)).is_empty());
+    }
+
+    #[test]
+    fn a_repeated_line_is_penalized_and_grows() {
+        // the line [1 2 3 9] three times, then 1 2 3: the next 9 extends a 14-token repeat
+        let line = [1u32, 2, 3, 9];
+        let mut h: Vec<u32> = line.iter().cycle().take(15).copied().collect();
+        let p = dry_penalties(&h, &s(8));
+        let nine = p.iter().find(|(t, _)| *t == 9).map(|x| x.1).unwrap();
+        assert!(nine > 0.8, "{nine}");
+        h.extend_from_slice(&[9, 1, 2, 3]);
+        let more = dry_penalties(&h, &s(8)).iter().find(|(t, _)| *t == 9).map(|x| x.1).unwrap();
+        assert!(more > nine * 9.0, "penalty grows with the repeat: {nine} -> {more}");
+    }
+
+    #[test]
+    fn off_by_default() {
+        let mut x = s(2);
+        x.dry_multiplier = 0.0;
+        assert!(dry_penalties(&[1, 2, 1, 2, 1, 2], &x).is_empty());
+    }
 }

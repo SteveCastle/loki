@@ -1,4 +1,4 @@
-import { useContext, useEffect, useRef, useState } from 'react';
+import { useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useSelector } from '@xstate/react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { debounce } from 'lodash';
@@ -55,16 +55,29 @@ export default function ImageTranscript({ path }: { path: string }) {
     [path]
   );
 
+  // The editor grows to fit its text so the panel (not the textarea) scrolls:
+  // the height includes the borders (scrollHeight does not, and a textarea
+  // left a few px short becomes its own scroller that swallows the wheel),
+  // and the panel's scroll position survives the measuring collapse.
   const ref = useRef<HTMLTextAreaElement>(null);
-  useEffect(() => {
-    if (ref.current) {
-      ref.current.style.height = 'auto';
-      ref.current.style.height = ref.current.scrollHeight + 'px';
+  const panelRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const ta = ref.current;
+    if (!ta) return;
+    const panel = panelRef.current;
+    const top = panel?.scrollTop ?? 0;
+    // typing at the end of a long text keeps the panel following it
+    const atBottom =
+      !!panel && top >= panel.scrollHeight - panel.clientHeight - 2;
+    ta.style.height = 'auto';
+    ta.style.height = `${ta.scrollHeight + ta.offsetHeight - ta.clientHeight}px`;
+    if (panel) {
+      panel.scrollTop = atBottom ? panel.scrollHeight : top;
     }
   }, [text, editing]);
 
   return (
-    <div className="ImageTranscript">
+    <div className="ImageTranscript" ref={panelRef}>
       <CaptureText path={path} hasText={!!saved} />
       {editing ? (
         <textarea
@@ -106,6 +119,8 @@ function CaptureText({ path, hasText }: { path: string; hasText: boolean }) {
   const [language, setLanguage] = useState<string>(
     () => (store.get(LANGUAGE_KEY, '') as string) || ''
   );
+  // Per-run cap on the answer's length in tokens ('' = the server's setting).
+  const [maxTokens, setMaxTokens] = useState('');
   const [busy, setBusy] = useState(false);
   const { jobs, noteJob } = useJobsForPath(
     path,
@@ -124,7 +139,9 @@ function CaptureText({ path, hasText }: { path: string; hasText: boolean }) {
   const capture = async () => {
     setBusy(true);
     try {
-      const id = await createTextCaptureJob(path, authToken, language);
+      const id = await createTextCaptureJob(path, authToken, language, {
+        maxTokens: parseInt(maxTokens, 10) || undefined,
+      });
       if (id) noteJob({ id, command: 'capture-text', state: 'pending' });
     } catch (error) {
       console.error('Failed to create text capture job:', error);
@@ -189,6 +206,18 @@ function CaptureText({ path, hasText }: { path: string; hasText: boolean }) {
           </option>
         ))}
       </select>
+      <input
+        className="image-transcript-max"
+        type="number"
+        min={64}
+        step={256}
+        placeholder="Max len"
+        value={maxTokens}
+        onChange={(e) => setMaxTokens(e.target.value)}
+        onKeyDown={(e) => e.stopPropagation()}
+        onKeyUp={(e) => e.stopPropagation()}
+        title="Most tokens to write for this run (about 3 characters each); empty uses the server's Text capture max length"
+      />
       <button className="generate" onClick={capture} disabled={busy}>
         {hasText ? 'Transcribe again' : 'Transcribe'}
       </button>

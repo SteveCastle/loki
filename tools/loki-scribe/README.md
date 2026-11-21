@@ -55,7 +55,15 @@ final prompt (the GGUF's chat template, images as their token counts) without lo
 
 Thinking is off by default (`<think></think>` is pre-filled, as the template does with `enable_thinking=false`);
 `--think low|medium|high` turns it on, and the reasoning is returned separately. Sampling defaults: temperature
-0.7, top-k 20, top-p 0.8 (1.0 / 20 / 0.95 when thinking); `--temp 0` is greedy.
+0.7, top-k 20, top-p 0.8 (1.0 / 20 / 0.95 when thinking); `--temp 0` is greedy, which Qwen3 models are prone to
+loop under (one line repeated to the token limit), so prefer a low temperature such as 0.2 for exact work.
+
+`--dry-multiplier` turns on the DRY loop guard ("don't repeat yourself"): a token that would extend a repeat of the
+answer's own earlier text by more than `--dry-allowed-length` tokens loses `multiplier * base^(extra tokens)` logits
+(`--dry-base`, default 1.75). Short recurring pieces (names, labels, punctuation) stay free, unlike
+`--presence-penalty` / `--repeat-penalty`, which hit every token already written. Transcription in the media server
+uses `--temp 0.2 --dry-multiplier 0.8 --dry-allowed-length 16`: a manga page that greedy decoding looped on to 2048
+tokens finished on its own at ~400.
 
 ## Verification
 

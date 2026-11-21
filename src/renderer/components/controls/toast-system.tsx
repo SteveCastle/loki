@@ -72,11 +72,58 @@ const parseFlag = (input: string, flag: string): string | null => {
   return m ? m[1] : null;
 };
 
+// parseOpsFlag reads a combined job's --ops list (comma-separated op ids).
+const parseOpsFlag = (input: string): string | null => {
+  const m = input?.match(/--ops[=\s]+([\w,-]+)/);
+  return m ? m[1] : null;
+};
+
 // argValue reads the value following a `--flag` in a job's argument list.
 const argValue = (args: string[], flag: string): string | null => {
   const i = args.indexOf(`--${flag}`);
   return i >= 0 && i + 1 < args.length ? args[i + 1] : null;
 };
+
+// Titles for tasks with nothing more specific to say (any task the switch in
+// getJobTitle does not name); anything missing here is title-cased from its
+// command, so a new task never shows its raw id.
+const JOB_TITLES: Record<string, string> = {
+  'capture-text': 'Transcribing Image Text',
+  'thumbnail-cleanup': 'Cleaning Up Thumbnails',
+  hls: 'Preparing Video Streaming',
+  'split-dir': 'Splitting Folder',
+  'lora-dataset': 'Building LoRA Dataset',
+  'ffmpeg-scale': 'Scaling Video',
+  'ffmpeg-convert': 'Converting Media',
+  'ffmpeg-extract-audio': 'Extracting Audio',
+  'ffmpeg-extract-audio-clip': 'Extracting Audio Clip',
+  'ffmpeg-screenshot': 'Taking Screenshot',
+  'ffmpeg-thumbnail': 'Making Thumbnail',
+  'ffmpeg-reverse': 'Reversing Video',
+  'ffmpeg-speed': 'Changing Speed',
+  'ffmpeg-grayscale': 'Converting to Grayscale',
+  'ffmpeg-blur': 'Blurring Video',
+  'ffmpeg-resize': 'Resizing Media',
+  'ffmpeg-crop': 'Cropping Media',
+  'ffmpeg-rotate': 'Rotating Media',
+  'ffmpeg-caption': 'Adding Captions',
+  'ffmpeg-thumbsheet': 'Making Thumbnail Sheet',
+  splat: 'Building 3D Scene',
+  'scene-render': 'Rendering Scene',
+  'scene-lock': 'Locking Scene Edges',
+  'scene-heal-merge': 'Healing Scene Seam',
+  'scene-track': 'Tracking Scene Mask',
+  'scene-recolour': 'Recolouring Scene',
+  save: 'Saving File',
+};
+
+// titleCaseCommand: "scene-render" -> "Scene Render".
+const titleCaseCommand = (command: string): string =>
+  command
+    .split(/[-_\s]+/)
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ');
 
 // getJobTitle returns a short, human-readable title for a background job.
 export const getJobTitle = (job: JobRunnerJob): string => {
@@ -144,8 +191,18 @@ export const getJobTitle = (job: JobRunnerJob): string => {
       return 'Hashing Files';
     case 'dimensions':
       return 'Reading Dimensions';
-    case 'process':
+    case 'process': {
+      // The context menu's Transcripts chip: speech + image text together.
+      const ops = (
+        parseOpsFlag([...(job.arguments || []), job.input || ''].join(' ')) || ''
+      )
+        .split(',')
+        .filter(Boolean);
+      if (ops.length && ops.every((o) => o === 'transcribe' || o === 'capture-text')) {
+        return 'Transcribing Media';
+      }
       return 'Processing Media';
+    }
     case 'dedupe':
       return 'Removing Duplicates';
     case 'find-duplicates':
@@ -170,7 +227,7 @@ export const getJobTitle = (job: JobRunnerJob): string => {
           return 'Generating Metadata';
       }
     default:
-      return job.command;
+      return JOB_TITLES[job.command] ?? titleCaseCommand(job.command);
   }
 };
 
@@ -203,6 +260,8 @@ const getJobSubtitle = (job: JobRunnerJob): string | null => {
       return 'Writing AI descriptions of your media.';
     case 'transcribe':
       return 'Transcribing speech into searchable text.';
+    case 'capture-text':
+      return 'Reading the text in your images (comics as a script).';
     case 'hash':
       return 'Computing content hashes to find duplicates.';
     case 'dimensions':

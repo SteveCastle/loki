@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -72,9 +73,15 @@ type textRequest struct {
 	// Model overrides Config.TextModel (a GGUF path, HF publisher/repo or name).
 	Model     string
 	MaxTokens int
-	// Greedy samples deterministically (temperature 0): transcription wants
-	// the most likely reading, not variety.
-	Greedy bool
+	// Temperature overrides the engine's sampling temperature (0 = its
+	// default). Never 0 for real: greedy decoding makes Qwen3 models fall into
+	// endless repetition.
+	Temperature float64
+	// NoRepeat turns on the engine's DRY loop guard (scribeDRYArgs).
+	NoRepeat bool
+	// OnFinish (optional) gets the engine's finish reason: "stop", or
+	// "length" when the answer ran into MaxTokens without ending.
+	OnFinish func(finish string)
 }
 
 // textMaxOutputTokens caps generation for descriptions and captions: a few
@@ -121,7 +128,7 @@ func generateText(ctx context.Context, logf func(string), req textRequest) (stri
 		req.MaxTokens = textMaxOutputTokens
 	}
 	it := &textItem{req: req, ctx: ctx, logf: logf, done: make(chan textResult, 1)}
-	key := strings.Join([]string{req.Model, req.System, req.Prompt, strconv.Itoa(req.MaxTokens), strconv.FormatBool(req.Image != ""), strconv.FormatBool(req.Greedy)}, "\x00")
+	key := strings.Join([]string{req.Model, req.System, req.Prompt, strconv.Itoa(req.MaxTokens), strconv.FormatBool(req.Image != ""), strconv.FormatFloat(req.Temperature, 'f', -1, 64), strconv.FormatBool(req.NoRepeat)}, "\x00")
 	batch := max(1, cfg.TextBatch)
 	if req.Image == "" {
 		batch = 1 // a text-only request is one engine run
@@ -211,8 +218,11 @@ func runTextBatch(items []*textItem) {
 	if r.System != "" {
 		args = append(args, "-s", r.System)
 	}
-	if r.Greedy {
-		args = append(args, "--temp", "0")
+	if r.Temperature > 0 {
+		args = append(args, "--temp", strconv.FormatFloat(r.Temperature, 'f', -1, 64))
+	}
+	if r.NoRepeat {
+		args = append(args, scribeDRYArgs...)
 	}
 	args = append(args, "-p", r.Prompt)
 	// log lines name their input as the engine saw it (a worker's own path),
@@ -263,6 +273,13 @@ func runTextBatch(items []*textItem) {
 		case ok && res.Error != "":
 			it.done <- textResult{err: errors.New(res.Error)}
 		case ok:
+			if res.Finish == "length" {
+				// no end token: the text is cut off, or the model fell into a loop
+				it.logf(fmt.Sprintf("[text] %s: stopped at the %d-token limit without finishing (raise the max length if the text is cut short)", filepath.Base(it.req.Image), it.req.MaxTokens))
+			}
+			if it.req.OnFinish != nil {
+				it.req.OnFinish(res.Finish)
+			}
 			it.done <- textResult{text: res.Text}
 		case err != nil:
 			it.done <- textResult{err: err}
@@ -298,7 +315,34 @@ func runScribe(ctx context.Context, args []string, onLog func(string)) ([]string
 		return scribeLocal.run(ctx, args, onLog)
 	}
 	onLog("running on GPU worker " + lease.t.key)
-	return runRemote(ctx, aiToolRun{Bin: scribeEngine, lease: lease}, remoteScribeArgs(args), false, onLog, onLog)
+	tool := aiToolRun{Bin: scribeEngine, lease: lease}
+	return runRemote(ctx, tool, remoteScribeArgs(scribeSupportedArgs(ctx, tool, args, onLog)), false, onLog, onLog)
+}
+
+// scribeDRYArgs is the DRY loop guard for transcription (validated on a
+// manga page that greedy decoding looped on: it finished cleanly at 400
+// tokens). A repeat of the answer's own text longer than 16 tokens is
+// penalized 0.8 * 1.75^(extra tokens), so a line can recur a few times but
+// not run away; short recurring pieces (names, PANEL / SFX labels) are free.
+var scribeDRYArgs = []string{"--dry-multiplier", "0.8", "--dry-base", "1.75", "--dry-allowed-length", "16"}
+
+// scribeSupportedArgs drops the DRY flags when the engine that will run them
+// predates them (an engine rejects flags it does not know; a pool worker
+// can lag this machine's build).
+func scribeSupportedArgs(ctx context.Context, tool aiToolRun, args []string, onLog func(string)) []string {
+	if !slices.Contains(args, "--dry-multiplier") || aiToolHelpHas(ctx, tool, "--dry-multiplier") {
+		return args
+	}
+	onLog("this loki-scribe has no loop guard (--dry-multiplier); running without it - update the engine")
+	out := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		if strings.HasPrefix(args[i], "--dry-") {
+			i++ // and its value
+			continue
+		}
+		out = append(out, args[i])
+	}
+	return out
 }
 
 // remoteScribeArgs keeps a worker from being sent this machine's model
@@ -360,6 +404,7 @@ type scribeProc struct {
 	stdin   io.WriteCloser
 	events  chan map[string]any
 	exited  chan struct{}
+	bin     string // the running engine binary (its --help gates newer flags)
 	logMu   sync.Mutex
 	onLog   func(string)
 	logDone chan string
@@ -406,6 +451,7 @@ func (p *scribeProc) start(ctx context.Context, onLog func(string)) error {
 		return err
 	}
 	cmd := exec.Command(tool.Bin, "--worker")
+	p.bin = tool.Bin
 	cmd.Env = append(os.Environ(), tool.Env...)
 	platform.HideSubprocessWindow(cmd)
 	stdin, err := cmd.StdinPipe()
@@ -537,6 +583,7 @@ func (p *scribeProc) run(ctx context.Context, args []string, onLog func(string))
 			return nil, err
 		}
 	}
+	args = scribeSupportedArgs(ctx, aiToolRun{Bin: p.bin}, args, onLog)
 	p.logMu.Lock()
 	p.onLog = onLog
 	p.logMu.Unlock()

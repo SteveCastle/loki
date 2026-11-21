@@ -1087,6 +1087,22 @@
                     is translated into it whatever language it is written in.
                   </small>
                 </div>
+                <div class="field">
+                  <label class="label" for="text-capture-max-tokens">Text capture max length</label>
+                  <input
+                    id="text-capture-max-tokens"
+                    class="input"
+                    type="number"
+                    min="64"
+                    step="64"
+                    value="{{.Config.TextCaptureMaxTokens}}"
+                  />
+                  <small class="hint">
+                    Most tokens written for one image (about 3 characters
+                    each). Stops a model that never finishes; a job or the
+                    Transcript tab can set its own.
+                  </small>
+                </div>
                 <details>
                   <summary class="label" style="cursor: pointer">Advanced: speed and memory</summary>
                   <div class="field" style="margin-top: var(--space-3)">
@@ -2405,6 +2421,8 @@
           describePrompt: document.getElementById('describe-prompt').value,
           textCapturePrompt: document.getElementById('text-capture-prompt').value,
           textCaptureLanguage: document.getElementById('text-capture-language').value,
+          textCaptureMaxTokens:
+            parseInt(document.getElementById('text-capture-max-tokens').value, 10) || 0,
           textModel: document.getElementById('text-model').value.trim(),
           textMmproj: document.getElementById('text-mmproj').value.trim(),
           textParallel:

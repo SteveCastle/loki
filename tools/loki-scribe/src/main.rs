@@ -97,6 +97,16 @@ struct Cli {
     /// Repetition penalty (1 = off)
     #[arg(long, default_value_t = 1.0)]
     repeat_penalty: f32,
+    /// DRY loop guard: penalty scale for a token that would extend a repeat of the answer's
+    /// own earlier text (0 = off; 0.8 is typical). Leaves short recurring pieces alone
+    #[arg(long, default_value_t = 0.0)]
+    dry_multiplier: f32,
+    /// DRY: growth of the penalty per token of repeat past the allowed length
+    #[arg(long, default_value_t = 1.75)]
+    dry_base: f32,
+    /// DRY: repeats up to this many tokens are free
+    #[arg(long, default_value_t = 2)]
+    dry_allowed_length: usize,
     /// Random seed
     #[arg(long, default_value_t = 0)]
     seed: u64,
@@ -160,6 +170,9 @@ fn params(cli: &Cli) -> Result<Params> {
             min_p: cli.min_p,
             presence_penalty: cli.presence_penalty,
             repeat_penalty: cli.repeat_penalty,
+            dry_multiplier: cli.dry_multiplier,
+            dry_base: cli.dry_base,
+            dry_allowed_length: cli.dry_allowed_length.max(1),
             seed: cli.seed,
         },
         min_image_tokens: cli.min_image_tokens,

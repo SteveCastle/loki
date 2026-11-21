@@ -1,5 +1,9 @@
 /* An image's captured text: the same quiet surface as the Transcript panel. */
 .ImageTranscript {
+  /* a flex item of .tab-content: fill it whatever the text's width */
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
   height: 100%;
   overflow-y: auto;
   padding: 0.5rem;
@@ -26,6 +30,22 @@
   font-size: 0.8rem;
   padding: 0.3rem 0.4rem;
   outline: none;
+}
+
+.ImageTranscript .image-transcript-max {
+  flex: 0 0 84px;
+  width: 84px;
+  background: transparent;
+  border: 1px solid #262c36;
+  border-radius: 4px;
+  color: #e6edf3;
+  font-size: 0.8rem;
+  padding: 0.3rem 0.4rem;
+  outline: none;
+}
+
+.ImageTranscript .image-transcript-max::placeholder {
+  color: #7d8590;
 }
 
 .ImageTranscript .image-transcript-language option {
@@ -55,7 +75,9 @@
 }
 
 .ImageTranscript .image-transcript-editor {
-  resize: vertical;
+  /* sized to its text; the panel scrolls */
+  resize: none;
+  overflow: hidden;
   outline: none;
 }
 

@@ -31,19 +31,23 @@ export const TEXT_CAPTURE_LANGUAGES = [
 export async function createTextCaptureJob(
   path: string,
   authToken: string | null,
-  language: string
+  language: string,
+  opts: { maxTokens?: number } = {}
 ): Promise<string | undefined> {
   const headers: HeadersInit = { 'Content-Type': 'application/json' };
   if (authToken) {
     headers['Authorization'] = `Bearer ${authToken}`;
   }
-  const body: { input: string; fields?: { language: string } } = {
+  const fields: Record<string, string> = {};
+  if (language) fields.language = language;
+  if (opts.maxTokens && opts.maxTokens > 0) {
+    fields['max-tokens'] = String(Math.round(opts.maxTokens));
+  }
+  const body = {
     // --overwrite: an explicit per-file request recaptures existing text.
     input: `capture-text --overwrite "${path}"`,
+    fields,
   };
-  if (language) {
-    body.fields = { language };
-  }
   const response = await fetch(`${mediaServerBase}/create`, {
     method: 'POST',
     headers,
