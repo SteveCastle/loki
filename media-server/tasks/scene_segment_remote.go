@@ -49,7 +49,7 @@ var remoteSegReaper sync.Once
 // the strategy falls back).
 func remoteSegTarget() (*engineTarget, bool, error) {
 	engine := workerapi.EngineName(segSpec.Bin)
-	if engineDisp.route(engine) == appconfig.EngineStrategyHybrid {
+	if appconfig.ParseRoute(engineDisp.route(engine)).Local {
 		return nil, false, nil
 	}
 	cands, unreachable := engineDisp.candidates(engine)

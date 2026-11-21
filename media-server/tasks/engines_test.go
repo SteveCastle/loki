@@ -382,3 +382,44 @@ func TestEnginesLocalOnly(t *testing.T) {
 		t.Error("retouch stayed local after local only was turned off")
 	}
 }
+
+// A route is a set of places: named pools, with or without this machine.
+func TestEnginesRouteSets(t *testing.T) {
+	a, b, c := newFakeNode(t, 1), newFakeNode(t, 1), newFakeNode(t, 1)
+	usePools(t, nil, appconfig.EnginesConfig{Routes: map[string]string{
+		"retouch": "pool:One,two",
+		"dream":   "local+pool:Two",
+		"reshoot": "pool:three",
+	}, Pools: []appconfig.WorkerPool{
+		{Name: "one", Nodes: []appconfig.WorkerNode{{Name: "a", URL: a.srv.URL}}},
+		{Name: "two", Nodes: []appconfig.WorkerNode{{Name: "b", URL: b.srv.URL}}},
+		{Name: "three", Nodes: []appconfig.WorkerNode{{Name: "c", URL: c.srv.URL}}},
+	}})
+	engineDisp.checkAll(context.Background())
+	keys := func(engine string) string {
+		cands, _ := engineDisp.candidates(engine)
+		var k []string
+		for _, t := range cands {
+			k = append(k, t.key)
+		}
+		return strings.Join(k, ",")
+	}
+	if got := keys("loki-retouch"); got != "one/a,two/b" {
+		t.Errorf("retouch candidates = %s; want one/a,two/b", got)
+	}
+	if got := keys("loki-dream"); got != "local,two/b" {
+		t.Errorf("dream candidates = %s; want local,two/b", got)
+	}
+	if got := keys("loki-reshoot"); got != "three/c" {
+		t.Errorf("reshoot candidates = %s; want three/c", got)
+	}
+	if got := keys("loki-segment"); got != "local" {
+		t.Errorf("segment (no route, local strategy) candidates = %s; want local", got)
+	}
+	if engineRunsLocalOnly("loki-dream") {
+		t.Error("dream with local+pool must use the dispatcher")
+	}
+	if !InferenceHostIsLocal() {
+		t.Error("scribe without a route runs here")
+	}
+}

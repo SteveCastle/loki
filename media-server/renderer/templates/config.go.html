@@ -2582,11 +2582,16 @@
             null
           );
         }
+        // a route string (appconfig.Route) in words
         function place(r) {
-          if (!r || r === 'local') return 'this machine';
-          if (r === 'pool') return 'worker pools';
-          if (r === 'hybrid') return 'this machine + pools';
-          return r.startsWith('pool:') ? 'pool ' + r.slice(5) : r;
+          r = String(r || 'local');
+          const l = r.toLowerCase();
+          if (l === 'local') return 'this machine';
+          if (l === 'pool') return 'every pool';
+          if (l === 'hybrid') return 'this machine + every pool';
+          const local = l.startsWith('local+');
+          const names = (local ? r.slice(6) : r).replace(/^pool:/i, '').split(',').join(' + ');
+          return (local ? 'this machine + ' : '') + names;
         }
         function renderPicker() {
           const cur = input.value.trim();

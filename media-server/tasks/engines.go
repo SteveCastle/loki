@@ -211,7 +211,7 @@ func (d *engineDispatcher) resize() {
 
 func (d *engineDispatcher) anyRouteLocal() bool {
 	for _, r := range d.cfg.Routes {
-		if r == "local" || r == appconfig.EngineStrategyHybrid {
+		if r != "" && appconfig.ParseRoute(r).Local {
 			return true
 		}
 	}
@@ -225,8 +225,9 @@ func (d *engineDispatcher) notify() {
 	d.mu.Unlock()
 }
 
-// route is the placement rule for one engine: "local", "pool", "pool:<name>"
-// or "hybrid". Local only sends everything to this machine.
+// route is the placement rule for one engine (appconfig.Route's string form:
+// "local", "pool", "hybrid", "pool:a,b", "local+pool:a,b"). Local only sends
+// everything to this machine.
 func (d *engineDispatcher) route(engine string) string {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -251,19 +252,15 @@ func EngineLocalOnly(engine string) bool { return engineRunsLocalOnly(engine) }
 // candidates are the targets an engine may use now (healthy ones), and
 // whether the local GPU is one of them.
 func (d *engineDispatcher) candidates(engine string) (out []*engineTarget, unreachable []string) {
-	r := d.route(engine)
+	r := appconfig.ParseRoute(d.route(engine))
 	d.mu.Lock()
 	targets, fallback := d.targets, d.cfg.Fallback
 	d.mu.Unlock()
-	pool := ""
-	switch {
-	case r == "local":
+	if r.Local && !r.AllPools && len(r.Pools) == 0 {
 		return []*engineTarget{d.local}, nil
-	case strings.HasPrefix(r, "pool:"):
-		pool = strings.TrimPrefix(r, "pool:")
 	}
 	for _, t := range targets {
-		if pool != "" && !strings.EqualFold(t.pool, pool) {
+		if !r.UsesPool(t.pool) {
 			continue
 		}
 		if !t.serves(engine) {
@@ -277,7 +274,7 @@ func (d *engineDispatcher) candidates(engine string) (out []*engineTarget, unrea
 		}
 		out = append(out, t)
 	}
-	if r == appconfig.EngineStrategyHybrid || (len(out) == 0 && fallback) {
+	if r.Local || (len(out) == 0 && fallback) {
 		out = append([]*engineTarget{d.local}, out...)
 	}
 	return out, unreachable

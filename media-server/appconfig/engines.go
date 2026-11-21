@@ -173,7 +173,10 @@ func NormalizeEngines(e *EnginesConfig) {
 		if !strings.HasPrefix(k, "loki-") {
 			k = "loki-" + k
 		}
-		routes[k] = strings.TrimSpace(v)
+		if v = strings.TrimSpace(v); v != "" {
+			v = ParseRoute(v).String()
+		}
+		routes[k] = v
 	}
 	if len(routes) == 0 {
 		routes = nil
@@ -220,4 +223,82 @@ func applyEnginesEnv(c *Config) {
 		c.Engines.LocalOnly = v == "1" || strings.EqualFold(v, "true")
 	}
 	NormalizeEngines(&c.Engines)
+}
+
+// Route is where an engine's jobs may go: this machine and/or worker pools.
+// Its string forms (Config.Engines.Routes values):
+//
+//	"local"          this machine
+//	"pool"           every pool               "hybrid"          this machine + every pool
+//	"pool:a,b"       the named pools          "local+pool:a,b"  this machine + the named pools
+type Route struct {
+	Local    bool
+	AllPools bool
+	Pools    []string
+}
+
+// ParseRoute reads a route string; an empty or unknown one is this machine.
+func ParseRoute(s string) Route {
+	s = strings.TrimSpace(s)
+	var r Route
+	switch strings.ToLower(s) {
+	case "", EngineStrategyLocal:
+		return Route{Local: true}
+	case EngineStrategyPool:
+		return Route{AllPools: true}
+	case EngineStrategyHybrid, "local+pool":
+		return Route{Local: true, AllPools: true}
+	}
+	if strings.HasPrefix(strings.ToLower(s), "local+") {
+		r.Local = true
+		s = s[len("local+"):]
+	}
+	if !strings.HasPrefix(strings.ToLower(s), "pool:") {
+		return Route{Local: true}
+	}
+	names := s[len("pool:"):]
+	seen := map[string]bool{}
+	for _, n := range strings.Split(names, ",") {
+		if n = strings.TrimSpace(n); n != "" && !seen[strings.ToLower(n)] {
+			seen[strings.ToLower(n)] = true
+			r.Pools = append(r.Pools, n)
+		}
+	}
+	if len(r.Pools) == 0 {
+		r.Local = true
+	}
+	return r
+}
+
+// UsesPool reports whether the route may send work to the named pool.
+func (r Route) UsesPool(name string) bool {
+	if r.AllPools {
+		return true
+	}
+	for _, p := range r.Pools {
+		if strings.EqualFold(p, name) {
+			return true
+		}
+	}
+	return false
+}
+
+// PoolsOnly reports whether the route never uses this machine.
+func (r Route) PoolsOnly() bool { return !r.Local }
+
+// String is the canonical form ("local", "pool", "hybrid", "pool:a,b",
+// "local+pool:a,b").
+func (r Route) String() string {
+	switch {
+	case r.AllPools && r.Local:
+		return EngineStrategyHybrid
+	case r.AllPools:
+		return EngineStrategyPool
+	case len(r.Pools) == 0:
+		return EngineStrategyLocal
+	case r.Local:
+		return "local+pool:" + strings.Join(r.Pools, ",")
+	default:
+		return "pool:" + strings.Join(r.Pools, ",")
+	}
 }

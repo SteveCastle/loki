@@ -60,8 +60,7 @@ func InferenceHost() string { return HostBucketScribe }
 // InferenceHostIsLocal reports whether text generation may run on this
 // machine's GPU (then its jobs also hold the shared local-compute slot).
 func InferenceHostIsLocal() bool {
-	r := engineDisp.route(scribeEngine)
-	return r == appconfig.EngineStrategyLocal || r == appconfig.EngineStrategyHybrid
+	return appconfig.ParseRoute(engineDisp.route(scribeEngine)).Local
 }
 
 // textRequest is one generation.

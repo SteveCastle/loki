@@ -34,7 +34,37 @@
   .gx-row { display: grid; gap: var(--space-3); align-items: center; padding: 10px var(--space-3); border-bottom: 1px solid var(--border-subtle); font-size: var(--text-sm); }
   .gx-row:last-child { border-bottom: none; }
   .gx-row.hdr { font-weight: 600; color: var(--text-secondary); font-size: var(--text-xs); text-transform: uppercase; letter-spacing: .5px; background: var(--bg-surface); padding-top: 6px; padding-bottom: 6px; }
-  .gx-eng { grid-template-columns: minmax(180px, 1.6fr) minmax(170px, 1.2fr) minmax(150px, 1.2fr) minmax(120px, 1fr); }
+  .gx-eng { grid-template-columns: minmax(160px, 1fr) minmax(260px, 1.9fr) minmax(180px, 1.2fr) minmax(100px, .7fr); align-items: start; }
+  .gx-eng.hdr { align-items: center; }
+  .gx-eng > .gx-name, .gx-eng > .gx-now, .gx-eng > .gx-wide { padding-top: 5px; }
+  .gx-winline { display: none; margin-top: 6px; }
+  @media (max-width: 1200px) {
+    .gx-eng { grid-template-columns: minmax(150px, 1fr) minmax(240px, 2fr) minmax(170px, 1.3fr); }
+    .gx-eng > .gx-wcol { display: none; }
+    .gx-winline { display: block; }
+  }
+  .gx-now { font-size: var(--text-sm); color: var(--text-primary); }
+  .gx-now.warn { color: #d29922; } .gx-now.bad { color: #f85149; }
+  .gx-now .gx-muted { display: block; }
+  /* places an engine may use: on/off chips with a check that pops in */
+  .gx-places { display: flex; flex-wrap: wrap; gap: 6px; }
+  .gx-place { display: inline-flex; align-items: center; gap: 7px; padding: 5px 12px 5px 7px; border-radius: 999px; border: 1px solid var(--border-default); background: transparent; color: var(--text-secondary); font: inherit; font-size: 12.5px; font-weight: 500; cursor: pointer; white-space: nowrap; max-width: 150px; transition: background-color .2s ease, border-color .2s ease, color .2s ease, transform .12s ease; }
+  .gx-place span.l { overflow: hidden; text-overflow: ellipsis; }
+  .gx-place:hover { color: var(--text-primary); border-color: var(--text-muted); }
+  .gx-place:active { transform: scale(.95); }
+  .gx-place:focus-visible { outline: 2px solid var(--accent-primary); outline-offset: 2px; }
+  .gx-place i { position: relative; flex-shrink: 0; width: 16px; height: 16px; border-radius: 50%; border: 1.5px solid var(--text-muted); transition: background-color .2s ease, border-color .2s ease; }
+  .gx-place i::after { content: ''; position: absolute; left: 4.5px; top: 1.5px; width: 4px; height: 8px; border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg) scale(0); transition: transform .22s cubic-bezier(.34, 1.56, .64, 1); }
+  .gx-place.on { color: var(--text-primary); border-color: var(--accent-primary); background: color-mix(in srgb, var(--accent-primary) 16%, transparent); }
+  .gx-place.on i { background: var(--accent-primary); border-color: var(--accent-primary); }
+  .gx-place.on i::after { transform: rotate(45deg) scale(1); }
+  .gx-place.dim { opacity: .55; }
+  .gx-places.off { opacity: .45; pointer-events: none; }
+  .gx-places.shake { animation: gx-shake .32s ease; }
+  @keyframes gx-shake { 20%, 60% { transform: translateX(-4px); } 40%, 80% { transform: translateX(4px); } }
+  @media (prefers-reduced-motion: reduce) { .gx-place, .gx-place i, .gx-place i::after { transition: none; } .gx-places.shake { animation: none; } }
+  .gx-rule { margin-top: var(--space-4); padding-top: var(--space-3); border-top: 1px solid var(--border-subtle); display: flex; flex-direction: column; gap: 6px; font-size: var(--text-sm); }
+  .gx-rule label { display: flex; gap: 8px; align-items: center; color: var(--text-secondary); cursor: pointer; }
   .gx-wk { grid-template-columns: 14px minmax(160px, 1.6fr) minmax(140px, 1.6fr) minmax(120px, 1.2fr) 60px auto; }
   .gx-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--text-muted); display: inline-block; }
   .gx-dot.ok { background: #3fb950; } .gx-dot.bad { background: #f85149; } .gx-dot.busy { background: #d29922; }
@@ -65,11 +95,10 @@
   details.gx-more summary { cursor: pointer; font-size: var(--text-xs); color: var(--text-secondary); }
 
   @media (max-width: 860px) {
-    .gx-eng { grid-template-columns: 1fr 1fr; }
-    .gx-eng > .gx-wide { grid-column: span 2; }
+    .gx-eng { grid-template-columns: 1fr; gap: var(--space-2); }
+    .gx-row.hdr.gx-eng { display: none; }
     .gx-wk { grid-template-columns: 14px 1fr auto; }
     .gx-wk > .gx-wide { display: none; }
-    .gx-row.hdr.gx-eng > :nth-child(n+3) { display: none; }
   }
 </style>
 {{ end }}
@@ -79,47 +108,31 @@
   <!-- 1. Where GPU work runs -->
   <div class="config-card config-card--blue">
     <div class="gx-head">
-      <div class="section-title">🧭 Where GPU work runs</div>
+      <div class="section-title">🧭 Routing</div>
       <span class="gx-status" id="gx-status"></span>
     </div>
     <div class="section-subtitle">
-      Descriptions, image editing, video, image generation and object selection
-      run on GPU engines. They can use this machine's GPU, worker pools (other
-      GPUs: another PC, a cloud VM, RunPod), or both. Changes on this tab apply
-      immediately; jobs already running finish where they are.
+      Tick the places each engine may use: <b>Local</b> is this machine's GPU,
+      the others are your worker pools. With several ticked, a job goes to
+      whichever is free first (this machine first). <b>Right now</b> says what
+      the next job will actually do. Changes apply to the next job; jobs already
+      running finish where they are.
     </div>
-    <div class="gx-seg" id="gx-mode" role="radiogroup" aria-label="Default placement">
-      <button type="button" data-mode="local" role="radio">This machine<small>its own GPU</small></button>
-      <button type="button" data-mode="pool" role="radio">Worker pools<small>remote GPUs only</small></button>
-      <button type="button" data-mode="hybrid" role="radio">Both<small>this GPU is one more worker</small></button>
-    </div>
-    <div class="gx-help" id="gx-mode-help"></div>
-    <div class="gx-opts">
-      <label class="gx-opt" id="gx-fallback-row">
-        <span class="gx-switch"><input type="checkbox" id="gx-fallback" /><span></span></span>
-        <span><b>Use this machine when no worker answers</b><br /><span class="gx-muted">For engines set to worker pools only: if every worker is down, run here instead of failing the job.</span></span>
-      </label>
-      <label class="gx-opt" id="gx-pause-row">
-        <span class="gx-switch"><input type="checkbox" id="gx-pause" /><span></span></span>
-        <span><b>Pause worker pools</b><br /><span class="gx-muted">Run everything on this machine for now (working offline, or while the cloud misbehaves). Pools and per-engine choices are kept.</span></span>
-      </label>
-    </div>
-    <div class="gx-banner" id="gx-pause-banner" hidden>Worker pools are paused: every engine runs on this machine until you turn this off.</div>
-  </div>
-
-  <!-- 2. Engines -->
-  <div class="config-card config-card--purple">
-    <div class="gx-head">
-      <div class="section-title">⚙️ Engines</div>
-      <span class="gx-muted" id="gx-gpu"></span>
-    </div>
-    <div class="section-subtitle">
-      Each engine follows the choice above unless you give it its own place
-      (say, object selection here for snappy clicks while video goes to the
-      cloud). An engine runs on this machine only once it is installed here; it
-      installs itself on first use, or install it now.
+    <div class="gx-banner" id="gx-pause-banner" hidden>
+      <b>Worker pools are paused.</b> Every engine runs on this machine until you
+      resume; the routes below are kept and come back when you do.
+      <button class="btn btn-secondary gx-small" type="button" id="gx-resume" style="margin-left: var(--space-2)">Resume pools</button>
     </div>
     <div class="gx-table" id="gx-engines"><div class="gx-row"><span class="gx-muted">Loading…</span></div></div>
+    <div class="gx-rule" id="gx-fallback-row" hidden>
+      <div><b>When a pool has no worker that can take a job</b> <span class="gx-muted">(engines sent to a pool only)</span></div>
+      <label><input type="radio" name="gx-fallback" value="wait" /> Wait for a worker; fail if none is reachable</label>
+      <label><input type="radio" name="gx-fallback" value="local" /> Run it on this machine instead</label>
+    </div>
+    <div class="gx-rule" id="gx-pause-row" hidden>
+      <div><b>Pause worker pools</b> <span class="gx-muted">Run everything on this machine for a while (offline, or the cloud misbehaves) without losing your routes.</span></div>
+      <div><button class="btn btn-secondary gx-small" type="button" id="gx-pause">Pause pools</button></div>
+    </div>
   </div>
 
   <!-- 3. Worker pools -->
@@ -189,9 +202,11 @@
   </div>
 </div>
 <script>
-  // GPU Engines tab: Config.Engines (default placement, per-engine routes,
-  // fallback, pause = localOnly, pools) through /api/engines, plus this
-  // machine's installs. Every control saves at once (PUT /api/engines).
+  // GPU Engines tab: Config.Engines through /api/engines, plus this
+  // machine's installs. Routing is one explicit route per engine (the UI
+  // writes all of them and keeps the old global strategy at "local"),
+  // fallback = what a pool-only engine does with no worker, pause = localOnly.
+  // Every control saves at once (PUT /api/engines).
   // Polls only while the tab is showing (window.enginesPanel.show / hide).
   window.enginesPanel = (function () {
     const ENGINES = [
@@ -201,11 +216,6 @@
       ['loki-dream', 'Image generation', 'Generate, Reimagine, Scene layers'],
       ['loki-segment', 'Object selection', 'Scene editor select tool and roto'],
     ];
-    const MODE_HELP = {
-      local: 'Every engine runs on this machine. Add workers below and switch to Worker pools or Both to spread the work.',
-      pool: 'Engines run on the worker pools; this machine needs no GPU for them. Jobs wait for a free worker.',
-      hybrid: 'This machine\'s GPU takes jobs alongside the workers: a job goes to whichever is free first, this machine before a remote worker.',
-    };
     const BUSY = ['queued', 'downloading', 'verifying', 'extracting'];
     let cfg = null, status = null, local = [], timer = null, saving = false;
     const $ = (id) => document.getElementById('gx-' + id);
@@ -251,49 +261,105 @@
       }
     }
     function render() {
-      renderMode(); renderEngines(); renderPools();
+      renderRules(); renderEngines(); renderPools();
     }
 
     // --- placement wording
     const pools = () => (cfg.pools || []);
-    const activePools = () => pools().filter((p) => !p.disabled);
-    function placeText(r) {
-      if (!r || r === 'local') return 'this machine';
-      if (r === 'pool') return 'worker pools';
-      if (r === 'hybrid') return 'this machine + pools';
-      if (r.startsWith('pool:')) return 'pool ' + r.slice(5);
-      return r;
+    // a route is a set of places, as appconfig.Route: "local", "pool" (every
+    // pool), "hybrid" (this machine + every pool), "pool:a,b", "local+pool:a,b"
+    function parseRoute(str) {
+      let s = String(str || '').trim();
+      const l = s.toLowerCase();
+      if (!l || l === 'local') return { local: true, all: false, pools: [] };
+      if (l === 'pool') return { local: false, all: true, pools: [] };
+      if (l === 'hybrid' || l === 'local+pool') return { local: true, all: true, pools: [] };
+      let local = false;
+      if (l.startsWith('local+')) { local = true; s = s.slice(6); }
+      if (!s.toLowerCase().startsWith('pool:')) return { local: true, all: false, pools: [] };
+      const names = s.slice(5).split(',').map((x) => x.trim()).filter(Boolean);
+      return names.length ? { local, all: false, pools: names } : { local: true, all: false, pools: [] };
     }
-    const usesPools = (r) => r === 'pool' || r === 'hybrid' || (r || '').startsWith('pool:');
+    function routeString(r) {
+      if (r.all) return r.local ? 'hybrid' : 'pool';
+      if (!r.pools.length) return 'local';
+      return (r.local ? 'local+' : '') + 'pool:' + r.pools.join(',');
+    }
+    const routeUses = (r, name) => r.all || r.pools.some((x) => x.toLowerCase() === name.toLowerCase());
+    const usesPools = (str) => { const r = parseRoute(str); return r.all || r.pools.length > 0; };
+    function poolNames(r) {
+      return r.all ? 'every pool' : r.pools.join(' + ');
+    }
+    function placeText(str) {
+      const r = parseRoute(str);
+      const pl = r.all || r.pools.length ? poolNames(r) : '';
+      return r.local ? (pl ? 'this machine + ' + pl : 'this machine') : pl;
+    }
 
-    // --- 1. mode
-    function renderMode() {
-      const mode = cfg.strategy || 'local';
-      $('mode').querySelectorAll('button').forEach((b) => {
-        b.classList.toggle('on', b.dataset.mode === mode);
-        b.setAttribute('aria-checked', b.dataset.mode === mode);
-      });
-      let help = MODE_HELP[mode];
-      if (mode !== 'local' && !activePools().length) help += ' No worker pool is set up yet: add workers below.';
-      $('mode-help').textContent = help;
-      const routes = Object.values(cfg.routes || {});
-      const poolOnly = mode === 'pool' || routes.some((r) => r === 'pool' || (r || '').startsWith('pool:'));
-      $('fallback-row').hidden = !poolOnly;
-      $('fallback').checked = !!cfg.fallback;
-      const anyPoolUse = usesPools(mode) || routes.some(usesPools);
-      $('pause-row').hidden = !(pools().length && (anyPoolUse || cfg.localOnly));
-      $('pause').checked = !!cfg.localOnly;
+    // --- routing rules: an engine's route is cfg.routes[engine], else the
+    // stored default strategy (older configs); the UI always writes every
+    // engine's route explicitly and keeps the strategy at "local".
+    const routeOf = (engine) => (cfg.routes || {})[engine] || cfg.strategy || 'local';
+    function renderRules() {
+      const routes = ENGINES.map((x) => parseRoute(routeOf(x[0])));
+      $('fallback-row').hidden = !routes.some((r) => !r.local);
+      document.querySelectorAll('input[name="gx-fallback"]').forEach((r) => (r.checked = r.value === (cfg.fallback ? 'local' : 'wait')));
+      $('pause-row').hidden = !!cfg.localOnly || !routes.some((r) => r.all || r.pools.length);
       $('pause-banner').hidden = !cfg.localOnly;
     }
-    $('mode').addEventListener('click', (ev) => {
-      const b = ev.target.closest('button[data-mode]');
-      if (!b || saving || b.dataset.mode === (cfg.strategy || 'local')) return;
+    // every engine's route written out (and the old global default retired)
+    function withRoutes(c, fn) {
+      c.routes = c.routes || {};
+      for (const [e] of ENGINES) c.routes[e] = fn(e, (cfg.routes || {})[e] || cfg.strategy || 'local');
+      c.strategy = 'local';
+      return c;
+    }
+    document.querySelectorAll('input[name="gx-fallback"]').forEach((r) => r.addEventListener('change', () => {
       const c = clone();
-      c.strategy = b.dataset.mode;
-      save(c, 'Placement saved');
+      c.fallback = r.value === 'local';
+      save(c, c.fallback ? 'Jobs fall back to this machine' : 'Jobs wait for a worker');
+    }));
+    $('pause').onclick = () => { const c = clone(); c.localOnly = true; save(c, 'Pools paused'); };
+    $('resume').onclick = () => { const c = clone(); c.localOnly = false; save(c, 'Pools resumed'); };
+
+    // the places chips of one engine
+    function placesHtml(engine) {
+      const r = parseRoute(routeOf(engine));
+      const chip = (key, label, on, title, dim) =>
+        `<button type="button" class="gx-place ${on ? 'on' : ''} ${dim ? 'dim' : ''}" role="checkbox" aria-checked="${on}" data-place="${esc(key)}" title="${esc(title)}"${cfg.localOnly ? ' tabindex="-1"' : ''}><i aria-hidden="true"></i><span class="l">${esc(label)}</span></button>`;
+      let html = chip('', 'Local', r.local, "This machine's GPU");
+      for (const p of pools()) html += chip(p.name, p.name, routeUses(r, p.name), 'Workers in pool ' + p.name + (p.disabled ? ' (disabled: gets no work)' : ''), p.disabled);
+      // a pool the route names that no longer exists
+      for (const n of r.pools) if (!pools().some((p) => p.name.toLowerCase() === n.toLowerCase())) html += chip(n, n + '?', true, 'Pool ' + n + ' no longer exists: untick it', true);
+      return `<div class="gx-places ${cfg.localOnly ? 'off' : ''}" role="group" aria-label="Where ${esc(short(engine))} jobs may go" data-gx-route="${esc(engine)}">${html}</div>`;
+    }
+    // a chip click: flip the place, keep at least one, save
+    document.getElementById('engines-panel').addEventListener('click', async (ev) => {
+      const b = ev.target.closest('.gx-place');
+      if (!b || saving) return;
+      const box = b.closest('.gx-places');
+      const engine = box.dataset.gxRoute;
+      const r = parseRoute(routeOf(engine));
+      // "every pool" becomes the explicit list once a pool is clicked
+      if (r.all) { r.all = false; r.pools = pools().map((p) => p.name); }
+      const place = b.dataset.place;
+      if (!place) r.local = !r.local;
+      else if (routeUses(r, place)) r.pools = r.pools.filter((x) => x.toLowerCase() !== place.toLowerCase());
+      else r.pools.push(place);
+      if (!r.local && !r.pools.length) {
+        box.classList.remove('shake');
+        void box.offsetWidth;
+        box.classList.add('shake');
+        flash('An engine needs at least one place to run.', 'err');
+        return;
+      }
+      // flip the chip at once (its check animates), then save
+      b.classList.toggle('on');
+      b.setAttribute('aria-checked', b.classList.contains('on'));
+      const v = routeString(r);
+      await new Promise((res) => setTimeout(res, 220));
+      save(withRoutes(clone(), (e, cur) => (e === engine ? v : cur)), short(engine) + ' jobs now go to ' + placeText(v));
     });
-    $('fallback').addEventListener('change', (ev) => { const c = clone(); c.fallback = ev.target.checked; save(c); });
-    $('pause').addEventListener('change', (ev) => { const c = clone(); c.localOnly = ev.target.checked; save(c, ev.target.checked ? 'Pools paused' : 'Pools resumed'); });
 
     // --- 2. engines
     function installChip(it) {
@@ -314,7 +380,7 @@
       const busy = parts.filter((x) => BUSY.includes(x.state));
       let html = '';
       if (!missing.length && !busy.length) {
-        html = installChip(e.tool) + (e.version ? `<span class="gx-muted"> v${esc(e.version)}</span>` : '');
+        html = '';
       } else {
         html = busy.map(installChip).join('');
         if (missing.length) {
@@ -322,11 +388,12 @@
           html += `<button class="btn btn-secondary gx-small" type="button" data-gx-install="${esc(missing.map((m) => m.id).join(','))}">Install${size ? ' (' + gb(size) + ')' : ''}</button>`;
         }
       }
-      if (e.engine === 'loki-scribe' && !(e.models || []).length) html += '<span class="gx-muted" style="display:block">model: the one set under AI Models</span>';
+      if (html) html = '<span style="display:block;margin-top:4px">' + html + '</span>';
       const err = parts.find((x) => x.state === 'failed' && x.error);
       if (err) html += `<div class="gx-err">${esc(err.error)}</div>`;
       return html;
     }
+    const hasWorkers = (engine) => (status.targets || []).some((t) => (t.kind === 'node' && t.info && (t.info.tools || []).some((x) => x.name === engine)) || (t.kind === 'runpod' && (!t.engines || !t.engines.length || t.engines.includes(engine))));
     function workersCell(engine) {
       const chips = [];
       for (const t of status.targets || []) {
@@ -349,7 +416,7 @@
     function servingTargets(engine, route) {
       return (status.targets || []).filter((t) => {
         if (t.kind === 'local' || !t.healthy) return false;
-        if (route.startsWith('pool:') && t.pool !== route.slice(5)) return false;
+        if (!routeUses(parseRoute(route), t.pool)) return false;
         const p = pools().find((x) => x.name === t.pool);
         if (!p || p.disabled) return false;
         if (p.engines && p.engines.length && !p.engines.includes(engine)) return false;
@@ -357,56 +424,42 @@
         return true;
       });
     }
-    function routeSelect(engine) {
-      const cur = (cfg.routes || {})[engine] || '';
-      const def = cfg.strategy || 'local';
-      const opts = [['', `Default (${placeText(def)})`], ['local', 'This machine'], ['pool', 'Worker pools'], ['hybrid', 'This machine + pools']]
-        .concat(pools().map((p) => ['pool:' + p.name, 'Pool ' + p.name + (p.disabled ? ' (disabled)' : '')]));
-      if (engine === 'loki-segment') {
-        // selection sessions need an addressable machine
-        for (const o of opts) if (o[0].startsWith('pool:') && (pools().find((p) => 'pool:' + p.name === o[0]) || {}).kind === 'runpod') o[1] += ' (no sessions)';
+    // what the next job of an engine will do, in words
+    function rightNow(engine, e) {
+      const installed = e && e.tool.state === 'installed' && (e.models || []).every((m) => m.state === 'installed');
+      const here = (extra) => ({ text: 'This machine' + (extra || ''), sub: installed || !e ? '' : 'installs itself on the first job (or Install)', cls: '', usesHere: true });
+      if (cfg.localOnly) return here(' (pools paused)');
+      const route = routeOf(engine);
+      const r = parseRoute(route);
+      if (!r.all && !r.pools.length) return here();
+      const serving = servingTargets(engine, route);
+      const where = r.all ? 'the pools' : r.pools.length === 1 ? 'pool ' + r.pools[0] : r.pools.join(' + ');
+      const n = serving.length;
+      if (r.local) return { text: n ? `This machine + ${n} worker${n === 1 ? '' : 's'}` : 'This machine', sub: n ? 'whichever is free first, this machine first' : `no worker in ${where} can run it right now`, cls: '', usesHere: true };
+      if (n) {
+        const warm = serving.filter((t) => t.info && (t.info.tools || []).some((x) => x.name === engine && (x.resident || []).length)).length;
+        return { text: `${n} worker${n === 1 ? '' : 's'} in ${where}`, sub: warm ? `${warm} with the model loaded` : 'the first job loads the model', cls: '', usesHere: false };
       }
-      return `<select class="input" data-gx-route="${esc(engine)}" aria-label="Where ${esc(short(engine))} runs">${opts.map(([v, l]) => `<option value="${esc(v)}" ${v === cur ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>`;
+      if (cfg.fallback) return { text: 'This machine (fallback)', sub: `no worker in ${where} can run it`, cls: 'warn', usesHere: true };
+      return { text: 'Nowhere: its jobs fail', sub: `no reachable worker in ${where} has this engine`, cls: 'bad', usesHere: false };
     }
     function renderEngines() {
       const lt = (status.targets || []).find((t) => t.kind === 'local');
-      $('gpu').textContent = lt ? `This GPU: ${lt.running ? lt.running + ' job(s) running' : 'idle'}` : '';
       const byEngine = {};
       for (const e of local) byEngine[e.engine] = e;
       const rows = ENGINES.map(([engine, title, what]) => {
-        const eff = (status.placement || {})[engine] || 'local';
-        const own = (cfg.routes || {})[engine];
         const e = byEngine[engine];
-        const needsHere = eff === 'local' || eff === 'hybrid' || cfg.fallback;
-        const installed = e && e.tool.state === 'installed' && (e.models || []).every((m) => m.state === 'installed');
-        const effNote = cfg.localOnly && usesPools(own || cfg.strategy) ? 'pools paused: running on this machine' : '';
-        let problem = '';
-        if (!cfg.localOnly && (eff === 'pool' || eff.startsWith('pool:')) && !servingTargets(engine, eff).length) {
-          problem = cfg.fallback ? 'no reachable worker runs it: jobs fall back to this machine' : 'no reachable worker runs it: its jobs will fail';
-        }
-        // red: its jobs cannot run anywhere; amber: it needs this machine but is not installed here yet
-        const dot = problem && !cfg.fallback ? 'bad' : needsHere && !installed ? 'busy' : 'ok';
-        const warn = needsHere && e && !installed ? '<span class="gx-muted" style="display:block">installs on first use here</span>' : '';
-        const usedHere = needsHere || problem;
-        return `<div class="gx-row gx-eng">
+        const now = rightNow(engine, e);
+        const dot = now.cls === 'bad' ? 'bad' : now.cls === 'warn' || (now.usesHere && now.sub && now.sub.startsWith('installs')) ? 'busy' : 'ok';
+        return `<div class="gx-row gx-eng ${cfg.localOnly ? 'paused' : ''}">
           <span class="gx-name"><span class="gx-dot ${dot}"></span> <b>${esc(title)}</b> <span class="gx-muted">${esc(short(engine))} · ${esc(what)}</span></span>
-          <span>${routeSelect(engine)}${effNote ? `<span class="gx-muted" style="display:block">${esc(effNote)}</span>` : ''}${problem ? `<span class="gx-warn">${esc(problem)}</span>` : ''}</span>
-          <span class="gx-wide">${usedHere ? hereCell(e) + warn : '<span class="gx-muted">not used: runs on workers</span>'}</span>
-          <span class="gx-wide">${workersCell(engine)}</span>
+          <span>${placesHtml(engine)}</span>
+          <span class="gx-now ${now.cls}">${esc(now.text)}${now.sub ? `<span class="gx-muted">${esc(now.sub)}</span>` : ''}${now.usesHere ? hereCell(e) : ''}${hasWorkers(engine) ? `<span class="gx-winline">${workersCell(engine)}</span>` : ''}</span>
+          <span class="gx-wide gx-wcol">${workersCell(engine)}</span>
         </div>`;
       });
-      $('engines').innerHTML = `<div class="gx-row gx-eng hdr"><span>Engine</span><span>Runs on</span><span>On this machine</span><span>On workers</span></div>` + rows.join('');
+      $('engines').innerHTML = `<div class="gx-row gx-eng hdr"><span>Engine</span><span>May run on</span><span>Right now${lt && lt.running ? ' · this GPU busy' : ''}</span><span class="gx-wcol">On workers</span></div>` + rows.join('');
     }
-    $('engines').addEventListener('change', (ev) => {
-      const s = ev.target.closest('select[data-gx-route]');
-      if (!s) return;
-      const c = clone();
-      c.routes = c.routes || {};
-      if (s.value) c.routes[s.dataset.gxRoute] = s.value;
-      else delete c.routes[s.dataset.gxRoute];
-      save(c, short(s.dataset.gxRoute) + ' now runs on ' + placeText(s.value || c.strategy || 'local'));
-    });
-
     // --- 3. pools
     function workerRow(t, p) {
       const dot = !t.healthy ? 'bad' : t.running > 0 ? 'busy' : 'ok';
@@ -415,7 +468,7 @@
       if (t.kind === 'runpod') {
         const h = t.runpod;
         what = h ? `${h.workers.idle} idle · ${h.workers.running} running · ${h.workers.initializing} starting` : 'serverless endpoint';
-        gpu = esc(t.transfer || '');
+        gpu = 'Serverless (assigned per job)';
         if (h && h.jobs.inQueue) load += ` · ${h.jobs.inQueue} queued`;
       } else if (t.info) {
         what = (t.info.tools || []).map((x) => `<span class="gx-chip ${(x.resident || []).length ? 'ok' : ''}">${esc(short(x.name))}</span>`).join('');
@@ -436,8 +489,7 @@
       // engines whose placement sends work to this pool and that its workers have
       const ts = (status.targets || []).filter((t) => t.pool === p.name);
       return ENGINES.map((x) => x[0]).filter((e) => {
-        const r = (status.placement || {})[e] || 'local';
-        const here = r === 'pool' || r === 'hybrid' || r === 'pool:' + p.name;
+        const here = routeUses(parseRoute((status.placement || {})[e] || 'local'), p.name);
         if (!here || (p.engines && p.engines.length && !p.engines.includes(e))) return false;
         return p.kind === 'runpod' || ts.some((t) => !t.info || (t.info.tools || []).some((x) => x.name === e));
       });
@@ -458,13 +510,16 @@
         const kind = p.kind === 'runpod' ? 'RunPod serverless · ' + esc(p.endpointId) : ts.length + ' worker' + (ts.length === 1 ? '' : 's');
         const up = ts.filter((t) => t.healthy).length;
         const serves = p.engines && p.engines.length ? ' · only ' + p.engines.map(short).join(', ') : '';
+        // serverless workers are not addressable: files reach them inline or through a bucket
+        const t0 = ts[0];
+        const files = p.kind === 'runpod' ? (t0 && t0.transfer && !t0.transfer.startsWith('inline') ? ' · files over 7 MB go through ' + esc(t0.transfer) : ' · files up to 7 MB only (no transfer bucket)') : '';
         const routed = poolEngines(p);
         const controls = p.fromEnv ? '<span class="gx-muted">from the environment (not saved)</span>' :
           `<label class="gx-opt" style="align-items:center" title="A disabled pool keeps its settings but gets no work"><span class="gx-switch"><input type="checkbox" data-gx-toggle="${esc(p.name)}" ${p.disabled ? '' : 'checked'} /><span></span></span><span class="gx-muted">${p.disabled ? 'disabled' : 'enabled'}</span></label>
            <button class="btn btn-secondary gx-small" type="button" data-gx-remove-pool="${esc(p.name)}">Remove pool</button>`;
         return `<div class="gx-pool ${p.disabled ? 'off' : ''}">
           <div class="gx-pool-head">
-            <span class="gx-name"><b>${esc(p.name)}</b><span class="gx-muted">${kind}${p.kind !== 'runpod' && ts.length ? ` · ${up} reachable` : ''}${serves}</span></span>
+            <span class="gx-name"><b>${esc(p.name)}</b><span class="gx-muted">${kind}${p.kind !== 'runpod' && ts.length ? ` · ${up} reachable` : ''}${serves}${files}</span></span>
             <span class="gx-actions">
               <button class="btn btn-secondary gx-small" type="button" data-gx-warm="${esc(p.name)}" ${routed.length && !p.disabled ? '' : 'disabled'} title="${routed.length ? 'Load ' + routed.map(short).join(', ') + ' on every worker now, so the first job does not wait' : 'No engine runs on this pool yet'}">Preload models</button>
               ${controls}
@@ -486,10 +541,6 @@
       $('add-runpod').hidden = b.dataset.kind !== 'runpod';
     });
 
-    // a new worker is no use while everything runs here: start using pools
-    function enablePools(c) {
-      if ((c.strategy || 'local') === 'local' && !Object.values(c.routes || {}).some(usesPools)) c.strategy = 'hybrid';
-    }
     $('node-test').onclick = async () => {
       $('node-note').textContent = 'Testing…';
       try {
@@ -506,10 +557,8 @@
       if (p && p.kind === 'runpod') { $('node-note').textContent = `${name} is a serverless pool; give this worker another pool name.`; return; }
       if (!p) { p = { name, kind: 'nodes', nodes: [] }; c.pools = (c.pools || []).concat([p]); }
       p.nodes = (p.nodes || []).concat([{ name: $('node-name').value.trim(), url, token: $('node-token').value.trim() }]);
-      const wasLocal = (c.strategy || 'local') === 'local';
-      enablePools(c);
       if (await save(c, 'Worker added')) {
-        $('node-note').textContent = wasLocal ? 'Added. Placement switched to Both, so this machine and the new worker share the work; change it at the top.' : 'Added.';
+        $('node-note').textContent = 'Added. Send engines to it in the Routing table above.';
         ['node-url', 'node-token', 'node-name'].forEach((k) => ($(k).value = ''));
       }
     };
@@ -531,9 +580,7 @@
       if (!p.endpointId || !p.apiKey) { $('rp-note').textContent = 'Enter the endpoint ID and API key.'; return; }
       const c = clone();
       c.pools = (c.pools || []).filter((x) => x.name.toLowerCase() !== p.name.toLowerCase()).concat([p]);
-      const wasLocal = (c.strategy || 'local') === 'local';
-      enablePools(c);
-      if (await save(c, 'Endpoint added')) $('rp-note').textContent = wasLocal ? 'Added. Placement switched to Both; change it at the top.' : 'Added.';
+      if (await save(c, 'Endpoint added')) $('rp-note').textContent = 'Added. Send engines to it in the Routing table above.';
     };
 
     // --- row actions
@@ -560,7 +607,14 @@
         if (!confirm(`Remove pool ${b.dataset.gxRemovePool}? Cloud machines it was created with keep running (lokictl pool destroy stops them).`)) return;
         const c = clone();
         c.pools = c.pools.filter((x) => x.name !== b.dataset.gxRemovePool);
-        for (const [e, r] of Object.entries(c.routes || {})) if (r === 'pool:' + b.dataset.gxRemovePool) delete c.routes[e];
+        const gone = b.dataset.gxRemovePool;
+        withRoutes(c, (e, cur) => {
+          const r = parseRoute(cur);
+          if (r.all) { r.all = false; r.pools = c.pools.map((p) => p.name); }
+          r.pools = r.pools.filter((x) => x.toLowerCase() !== gone.toLowerCase());
+          if (!r.pools.length) r.local = true;
+          return routeString(r);
+        });
         save(c, 'Pool removed');
       } else if (b.dataset.gxWarm) {
         const p = pools().find((x) => x.name === b.dataset.gxWarm);
@@ -586,7 +640,7 @@
     return {
       show() {
         load().catch((e) => { $('engines').innerHTML = '<div class="gx-row"><span class="gx-err">' + esc(e.message) + '</span></div>'; });
-        if (!timer) timer = setInterval(() => { const a = document.activeElement; if (!saving && !(a && a.closest && a.closest('#gx-engines select'))) load().catch(() => {}); }, 5000);
+        if (!timer) timer = setInterval(() => { if (!saving) load().catch(() => {}); }, 5000);
       },
       hide() {
         if (timer) clearInterval(timer);
