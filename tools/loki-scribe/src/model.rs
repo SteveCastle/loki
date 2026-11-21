@@ -55,7 +55,9 @@ impl Config {
         ensure!(sections.len() >= 3, "missing rope.dimension_sections");
         let head_dim = g.u(&k("attention.key_length"))?;
         let c = Config {
-            n_layer: g.u(&k("block_count"))?,
+            // block_count includes the multi-token-prediction layers (blk.N.nextn.*,
+            // `nextn_predict_layers`) that newer conversions keep; they are not run here
+            n_layer: g.u(&k("block_count"))? - g.u(&k("nextn_predict_layers")).unwrap_or(0),
             n_embd: g.u(&k("embedding_length"))?,
             n_ff: g.u(&k("feed_forward_length"))?,
             n_head: g.u(&k("attention.head_count"))?,
