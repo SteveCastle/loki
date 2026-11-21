@@ -4,6 +4,7 @@ import {
   Panel,
   Separator as PanelResizeHandle,
   usePanelRef,
+  useGroupRef,
   useDefaultLayout,
   type PanelProps,
   type PanelImperativeHandle,
@@ -188,12 +189,23 @@ const Layout = () => {
   const listRef = usePanelRef();
   const metaDataRef = usePanelRef();
   const taxonomyRef = usePanelRef();
+  const innerGroupRef = useGroupRef();
+
+  // Give the list + detail share of the row to one of them and collapse the
+  // other. Taxonomy and metadata keep their sizes: resizing a single panel to
+  // 100% would squeeze every other panel in the group shut.
+  function showOnly(show: 'list-panel' | 'detail-panel') {
+    const hide = show === 'list-panel' ? 'detail-panel' : 'list-panel';
+    const layout = innerGroupRef.current?.getLayout();
+    if (!layout) return;
+    const total = (layout[show] ?? 0) + (layout[hide] ?? 0);
+    innerGroupRef.current?.setLayout({ ...layout, [show]: total, [hide]: 0 });
+  }
 
   function handleListClick() {
     setRenderID((id) => id + 1);
     try {
-      listRef.current?.resize('0%');
-      detailRef.current?.resize('100%');
+      showOnly('detail-panel');
     } catch {
       // Panels not yet registered, ignore
     }
@@ -213,15 +225,8 @@ const Layout = () => {
 
   function handleDetailClick() {
     try {
-      if (listRef.current?.isCollapsed()) {
-        setRenderID((id) => id + 1);
-        detailRef.current?.resize('0%');
-        listRef.current?.resize('100%');
-      } else {
-        setRenderID((id) => id + 1);
-        listRef.current?.resize('0%');
-        detailRef.current?.resize('100%');
-      }
+      setRenderID((id) => id + 1);
+      showOnly(listRef.current?.isCollapsed() ? 'list-panel' : 'detail-panel');
     } catch {
       // Panels not yet registered, ignore
     }
@@ -285,6 +290,7 @@ const Layout = () => {
           <PanelGroup
             orientation="horizontal"
             id="inner-group"
+            groupRef={innerGroupRef}
             defaultLayout={innerGroupLayout.defaultLayout}
             onLayoutChange={innerGroupLayout.onLayoutChange}
           >
