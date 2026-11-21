@@ -1,0 +1,64 @@
+/* An image's captured text: the same quiet surface as the Transcript panel. */
+.ImageTranscript {
+  height: 100%;
+  overflow-y: auto;
+  padding: 0.5rem;
+  background: #0d1117;
+  box-sizing: border-box;
+}
+
+.ImageTranscript .image-transcript-actions {
+  display: flex;
+  /* .GenerateTranscript fills its container; here it is a toolbar row. */
+  height: auto;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.5rem;
+}
+
+.ImageTranscript .image-transcript-language {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: transparent;
+  border: 1px solid #262c36;
+  border-radius: 4px;
+  color: #e6edf3;
+  font-size: 0.8rem;
+  padding: 0.3rem 0.4rem;
+  outline: none;
+}
+
+.ImageTranscript .image-transcript-language option {
+  background: #0d1117;
+}
+
+.ImageTranscript .image-transcript-text {
+  width: 100%;
+  min-height: 120px;
+  padding: 0.6rem 0.7rem;
+  border: 1px solid #21262d;
+  border-radius: 4px;
+  background: #0d1117;
+  color: #e6edf3;
+  font: inherit;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  /* Scripts and documents keep their line structure. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  box-sizing: border-box;
+}
+
+.ImageTranscript .image-transcript-text.empty {
+  color: #7d8590;
+  font-style: italic;
+}
+
+.ImageTranscript .image-transcript-editor {
+  resize: vertical;
+  outline: none;
+}
+
+.ImageTranscript .image-transcript-editor:focus {
+  border-color: #388bfd;
+}

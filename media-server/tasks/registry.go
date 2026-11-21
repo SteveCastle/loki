@@ -60,6 +60,7 @@ func init() {
 	RegisterTask("autotag", "Auto Tag (ONNX)", itemOpTaskOptions("autotag"), makeItemOpTaskFn("autotag"))
 	RegisterTask("embed", "Visual Embedding (ONNX)", itemOpTaskOptions("embed"), makeItemOpTaskFn("embed"))
 	RegisterTask("describe", "Generate Descriptions", itemOpTaskOptions("describe"), makeItemOpTaskFn("describe"))
+	RegisterTask(textCaptureOp, "Capture Text (transcribe and translate image text)", itemOpTaskOptions(textCaptureOp), makeItemOpTaskFn(textCaptureOp))
 	RegisterTask("transcribe", "Generate Transcripts", itemOpTaskOptions("transcribe"), makeItemOpTaskFn("transcribe"))
 	RegisterTask("hash", "Generate Hashes", itemOpTaskOptions("hash"), makeItemOpTaskFn("hash"))
 	RegisterTask("dimensions", "Generate Dimensions", itemOpTaskOptions("dimensions"), makeItemOpTaskFn("dimensions"))
@@ -96,6 +97,7 @@ func init() {
 	// former metadata-task selves did. Transcription also historically ran
 	// under the metadata task's inference bucket, so it keeps that behavior.
 	RegisterHostResolver("describe", visionHost)
+	RegisterHostResolver(textCaptureOp, visionHost)
 	RegisterHostResolver("transcribe", visionHost)
 	// A combined job may include LLM ops, so it conservatively takes the
 	// inference bucket (a hash-only combined run parking there is harmless).
@@ -193,7 +195,7 @@ func GetTasks() TaskMap {
 // really polls PauseRequested per item.
 var gracefulPauseTasks = map[string]bool{
 	"cleanup": true, "thumbnail-cleanup": true,
-	"autotag": true, "embed": true, "describe": true, "transcribe": true,
+	"autotag": true, "embed": true, "describe": true, "transcribe": true, textCaptureOp: true,
 	"hash": true, "dimensions": true, "process": true, "faces": true,
 	"assign-person": true, "metadata": true, "hls": true, "move": true,
 	"split-dir": true, "dedupe": true, "find-duplicates": true,

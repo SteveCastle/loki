@@ -72,6 +72,9 @@ type textRequest struct {
 	// Model overrides Config.TextModel (a GGUF path, HF publisher/repo or name).
 	Model     string
 	MaxTokens int
+	// Greedy samples deterministically (temperature 0): transcription wants
+	// the most likely reading, not variety.
+	Greedy bool
 }
 
 // textMaxOutputTokens caps generation for descriptions and captions: a few
@@ -118,7 +121,7 @@ func generateText(ctx context.Context, logf func(string), req textRequest) (stri
 		req.MaxTokens = textMaxOutputTokens
 	}
 	it := &textItem{req: req, ctx: ctx, logf: logf, done: make(chan textResult, 1)}
-	key := strings.Join([]string{req.Model, req.System, req.Prompt, strconv.Itoa(req.MaxTokens), strconv.FormatBool(req.Image != "")}, "\x00")
+	key := strings.Join([]string{req.Model, req.System, req.Prompt, strconv.Itoa(req.MaxTokens), strconv.FormatBool(req.Image != ""), strconv.FormatBool(req.Greedy)}, "\x00")
 	batch := max(1, cfg.TextBatch)
 	if req.Image == "" {
 		batch = 1 // a text-only request is one engine run
@@ -207,6 +210,9 @@ func runTextBatch(items []*textItem) {
 	}
 	if r.System != "" {
 		args = append(args, "-s", r.System)
+	}
+	if r.Greedy {
+		args = append(args, "--temp", "0")
 	}
 	args = append(args, "-p", r.Prompt)
 	// log lines name their input as the engine saw it (a worker's own path),

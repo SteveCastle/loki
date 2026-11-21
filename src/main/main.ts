@@ -592,6 +592,7 @@ ipcMain.handle('load-db', async (event, args) => {
   ipcMain.removeHandler('add-media');
   ipcMain.removeHandler('record-battle');
   ipcMain.removeHandler('update-description');
+  ipcMain.removeHandler('update-transcript');
   ipcMain.removeHandler('select-new-path');
   ipcMain.removeHandler('rename-category');
   ipcMain.removeHandler('delete-category');
@@ -657,6 +658,7 @@ ipcMain.handle('load-db', async (event, args) => {
   );
   ipcMain.handle('record-battle', mediaModule.recordBattle(db));
   ipcMain.handle('update-description', mediaModule.updateDescription(db));
+  ipcMain.handle('update-transcript', mediaModule.updateTranscript(db));
   ipcMain.handle(
     'copy-file-into-clipboard',
     mediaModule.copyFileIntoClipboard()

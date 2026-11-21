@@ -82,7 +82,7 @@ func ResolveHost(command, input string) string {
 // its work runs on local hardware.
 func opResources(op string) []string {
 	switch op {
-	case "describe":
+	case "describe", textCaptureOp:
 		r := []string{InferenceHost()}
 		if InferenceHostIsLocal() {
 			r = append(r, HostBucketLocalCompute)
@@ -144,7 +144,7 @@ func flagListValue(flag string, arguments []string, input string) []string {
 func ResolveResources(command string, arguments []string, input string) []string {
 	var ops []string
 	switch command {
-	case "describe", "transcribe", "embed", "autotag", "faces":
+	case "describe", "transcribe", "embed", "autotag", "faces", textCaptureOp:
 		ops = []string{command}
 	case "retouch", "reshoot", "4kify":
 		// Heavy local GPU diffusion run (~20 GB VRAM). Sent to worker pools

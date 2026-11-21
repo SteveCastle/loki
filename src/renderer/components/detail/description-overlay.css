@@ -23,6 +23,15 @@
   z-index: 900;
 }
 
+/* Image text: one caption line per line of the captured text, capped so a
+   long page never covers more than the lower half of the picture (the start
+   stays visible; the Transcript tab has the whole text). */
+.DescriptionOverlay.captions {
+  white-space: pre-line;
+  max-height: 45%;
+  overflow: hidden;
+}
+
 /* When the file-info bar is shown it owns the bottom 20px — sit above it. */
 .DetailContainer:has(.item-info) .DescriptionOverlay {
   bottom: 20px;

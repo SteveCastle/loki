@@ -218,6 +218,12 @@ function channelToEndpoint(channel: string): EndpointMapping | null {
       method: 'PUT',
       argsToBody: (args) => ({ path: args[0], description: args[1] }),
     },
+    // An image's captured text (the media transcript column).
+    'update-transcript': {
+      url: '/api/media/transcript',
+      method: 'POST',
+      argsToBody: (args) => ({ path: args[0], transcript: args[1] }),
+    },
     // record-battle args: [winnerPath, loserPath, outcome?]
     'record-battle': {
       url: '/api/media/battle',

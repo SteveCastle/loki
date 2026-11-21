@@ -313,7 +313,7 @@ func runItemOps(j *jobqueue.Job, q *jobqueue.Queue, opIDs []string, prefixed boo
 	// model work gets it back unless this run generates text itself.
 	usesText := false
 	for _, op := range ops {
-		usesText = usesText || op.ID == "describe"
+		usesText = usesText || op.ID == "describe" || op.ID == textCaptureOp
 	}
 	if !usesText {
 		releaseScribeIdle()

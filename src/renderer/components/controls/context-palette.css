@@ -168,6 +168,34 @@
   gap: 6px;
 }
 
+.capture-language {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.capture-language span {
+  white-space: nowrap;
+}
+
+.capture-language select {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  color: #e6edf3;
+  font: inherit;
+  padding: 4px 6px;
+}
+
+.capture-language select option {
+  background: #1a1a1f;
+}
+
 .type-chip {
   flex: 1 1 calc(50% - 3px);
   min-width: 0;

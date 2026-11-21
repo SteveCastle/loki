@@ -34,6 +34,7 @@ export type Channels =
   | 'add-media'
   | 'record-battle'
   | 'update-description'
+  | 'update-transcript'
   | 'copy-file-into-clipboard'
   | 'load-categories'
   | 'load-category-tags'

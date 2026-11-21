@@ -628,7 +628,7 @@ export const SHOW_NEW_JOB_OUTPUT = {
 // Shows the media description as a closed-caption-style overlay across the
 // bottom of the detail view.
 export const SHOW_DESCRIPTION_OVERLAY = {
-  title: 'Description Overlay',
+  title: 'Caption Overlay (descriptions; text in images)',
   reload: false,
   display: 'general',
   options: {

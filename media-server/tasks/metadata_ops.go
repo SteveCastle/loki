@@ -168,9 +168,14 @@ func probeVideoDuration(ctx context.Context, videoPath string) float64 {
 	return d
 }
 
-// describeFile describes one media file with the text model: images as they
-// are (normalized), anything else through an ffmpeg frame.
+// describeFile describes one media file with the text model.
 func describeFile(ctx context.Context, q *jobqueue.Queue, jobID, mediaPath, model, customPrompt string) (string, error) {
+	return imageText(ctx, q, jobID, mediaPath, textRequest{Prompt: resolveDescribePrompt(customPrompt), Model: model})
+}
+
+// imageText runs one text-model request on a media file: images as they are
+// (normalized), anything else through an ffmpeg frame. req.Image is filled in.
+func imageText(ctx context.Context, q *jobqueue.Queue, jobID, mediaPath string, req textRequest) (string, error) {
 	var tempImagePath string
 	var cleanupPaths []string
 	source := "image"
@@ -203,13 +208,14 @@ func describeFile(ctx context.Context, q *jobqueue.Queue, jobID, mediaPath, mode
 		logf = func(s string) { q.PushJobStdout(jobID, s) }
 	}
 	timeoutCtx, cancel := context.WithTimeout(ctx, 30*time.Minute)
-	description, err := generateText(timeoutCtx, logf, textRequest{Image: resizedPath, Prompt: resolveDescribePrompt(customPrompt), Model: model})
+	req.Image = resizedPath
+	description, err := generateText(timeoutCtx, logf, req)
 	cancel()
 	if err != nil {
 		for _, p := range cleanupPaths {
 			_ = os.Remove(p)
 		}
-		return "", fmt.Errorf("description failed: %w", err)
+		return "", fmt.Errorf("text model: %w", err)
 	}
 	for _, p := range cleanupPaths {
 		_ = os.Remove(p)

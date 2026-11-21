@@ -709,6 +709,7 @@ export function ToastSystem() {
           'ingest',
           'describe',
           'transcribe',
+          'capture-text',
           'hash',
           'dimensions',
           'process',

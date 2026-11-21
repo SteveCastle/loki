@@ -16,7 +16,9 @@ import {
   isElectron,
   invoke,
   send,
+  store,
 } from '../../platform';
+import { TEXT_CAPTURE_LANGUAGES } from '../metadata/text-capture';
 import { subscribeStream, streamConnected } from '../../stream-bus';
 import { onIdleAfterFirstPaint } from '../../first-paint';
 import { displayTagLabel } from '../../tag-display';
@@ -102,7 +104,9 @@ type MetadataType = {
 const METADATA_TYPES: MetadataType[] = [
   { label: 'Tags', ops: ['autotag'], skipTaggedInFolder: true },
   { label: 'Descriptions', ops: ['describe'] },
-  { label: 'Transcripts', ops: ['transcribe'] },
+  // Speech for video/audio, the text in the picture for images (each op
+  // only touches the files it applies to).
+  { label: 'Transcripts', ops: ['transcribe', 'capture-text'] },
   { label: 'File info', ops: ['hash', 'dimensions'] },
   { label: 'Embeddings', ops: ['embed'] },
   { label: 'Faces', ops: ['faces'] },
@@ -1229,6 +1233,23 @@ export default function ContextPalette() {
 
   // Chip selection: chips toggle; the Run button launches everything the
   // user picked as ONE combined job (plus a parallel faces job when chosen).
+  // Translation target for image text (shared with the Transcript tab).
+  const [captureLanguage, setCaptureLanguage] = useState<string>(
+    () => (store.get('textCapture.language', '') as string) || ''
+  );
+  // Re-read on each open: the Transcript tab may have changed it since.
+  useEffect(() => {
+    if (display) {
+      setCaptureLanguage(
+        (store.get('textCapture.language', '') as string) || ''
+      );
+    }
+  }, [display]);
+  const pickCaptureLanguage = (v: string) => {
+    setCaptureLanguage(v);
+    store.set('textCapture.language', v);
+  };
+
   const toggleType = (meta: MetadataType) => {
     // Point-of-use gate: a job whose model/tool isn't installed would only
     // fail later inside its log where casual users never look. Downloadable
@@ -1238,6 +1259,8 @@ export default function ContextPalette() {
       const req = TASK_REQUIREMENTS[meta.label];
       const dep = req ? deps.get(req.depId) : undefined;
       if (
+        // Transcripts still captures image text without the speech tool.
+        meta.label !== 'Transcripts' &&
         req &&
         req.kind === 'downloadable' &&
         dep &&
@@ -1303,7 +1326,22 @@ export default function ContextPalette() {
       ? `"${selection.join('\n')}"`
       : `--query64=${effectiveQuery64}`;
 
-    const ops = selected.flatMap((m) => m.ops);
+    // Without the speech tool, Transcripts captures image text only.
+    const whisperDep = deps.get(TASK_REQUIREMENTS.Transcripts.depId);
+    const whisperMissing =
+      !!whisperDep &&
+      (isDownloadableState(whisperDep.state) ||
+        isDownloadingState(whisperDep.state));
+    const ops = selected
+      .flatMap((m) => m.ops)
+      .filter((op) => op !== 'transcribe' || !whisperMissing);
+    // Image text capture's language rides as an op option (prefixed with
+    // the op id inside a combined job).
+    const fields: Record<string, string> = {};
+    if (ops.includes('capture-text') && captureLanguage) {
+      fields[ops.length === 1 ? 'language' : 'capture-text-language'] =
+        captureLanguage;
+    }
     const input =
       ops.length === 1
         ? `${ops[0]}${overwrite} ${targetTail}`
@@ -1315,7 +1353,7 @@ export default function ContextPalette() {
       const res = await fetch(`${mediaServerBase}/create`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ input }),
+        body: JSON.stringify({ input, fields }),
         signal: AbortSignal.timeout(10000),
         redirect: 'error',
       });
@@ -1831,6 +1869,25 @@ export default function ContextPalette() {
               );
             })}
           </div>
+          {selectedTypes.includes('Transcripts') && (
+            <label className="capture-language">
+              <span>Text in images</span>
+              <select
+                value={captureLanguage}
+                onChange={(e) => pickCaptureLanguage(e.target.value)}
+                onKeyDown={(e) => e.stopPropagation()}
+                title="Image text is translated into this language, whatever it is written in"
+              >
+                <option value="">Server default language</option>
+                <option value="Original">As written</option>
+                {TEXT_CAPTURE_LANGUAGES.map((l) => (
+                  <option key={l} value={l}>
+                    Translate to {l}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           <div className="generate-run-row">
             <button
               type="button"

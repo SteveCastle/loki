@@ -595,6 +595,17 @@ const updateDescription =
     ]);
   };
 
+// updateTranscript stores the media transcript column: for images, the text
+// captured from the picture (video/audio speech transcripts are .vtt files).
+const updateTranscript =
+  (db: Database) =>
+  async (_: IpcMainInvokeEvent, args: UpdateDescriptionInput) => {
+    db.run('UPDATE media SET transcript = ? WHERE path = ?', [
+      args[1],
+      args[0],
+    ]);
+  };
+
 // removeFileFromDisk: trash the file, falling back to unlink. A file that is
 // ALREADY gone counts as removed — trashItem can throw on network drives after
 // the file has vanished, and the unlink fallback then reports ENOENT. Treating
@@ -1274,6 +1285,7 @@ export {
   moveMedia,
   recordBattle,
   updateDescription,
+  updateTranscript,
   importFiles,
 };
 

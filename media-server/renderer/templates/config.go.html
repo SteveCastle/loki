@@ -1066,6 +1066,27 @@
                     prompt.
                   </small>
                 </div>
+                <div class="field">
+                  <label class="label" for="text-capture-prompt">Text capture prompt</label>
+                  <textarea id="text-capture-prompt" class="input" rows="6">
+{{.Config.TextCapturePrompt}}</textarea
+                  >
+                  <small class="hint">
+                    Used by the Text capture task, which writes the exact text
+                    of an image (comics as a script, in reading order) to its
+                    transcript. Clear the box to restore the default.
+                  </small>
+                </div>
+                <div class="field">
+                  <label class="label" for="text-capture-language">Text capture language</label>
+                  <select id="text-capture-language" class="input">
+                    {{range .TextCaptureLanguages}}<option value="{{if ne . "Original"}}{{.}}{{end}}" {{if eq . $.Config.TextCaptureLanguage}}selected{{else if and (eq . "Original") (eq $.Config.TextCaptureLanguage "")}}selected{{end}}>{{if eq . "Original"}}As written (no translation){{else}}Translate to {{.}}{{end}}</option>{{end}}
+                  </select>
+                  <small class="hint">
+                    The default for jobs that don't pick a language: the text
+                    is translated into it whatever language it is written in.
+                  </small>
+                </div>
                 <details>
                   <summary class="label" style="cursor: pointer">Advanced: speed and memory</summary>
                   <div class="field" style="margin-top: var(--space-3)">
@@ -2382,6 +2403,8 @@
             parseInt(document.getElementById('server-port').value, 10) || 0,
           discordToken: document.getElementById('discord-token').value.trim(),
           describePrompt: document.getElementById('describe-prompt').value,
+          textCapturePrompt: document.getElementById('text-capture-prompt').value,
+          textCaptureLanguage: document.getElementById('text-capture-language').value,
           textModel: document.getElementById('text-model').value.trim(),
           textMmproj: document.getElementById('text-mmproj').value.trim(),
           textParallel:

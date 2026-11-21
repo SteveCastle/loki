@@ -1193,6 +1193,7 @@ func formatBytes(bytes int64) string {
 
 type configTemplateData struct {
 	Config                 appconfig.Config
+	TextCaptureLanguages   []string
 	ConfigPath             string
 	ActiveDBPath           string
 	EmbeddingModels        []tasks.EmbedModel
@@ -1204,10 +1205,12 @@ type configTemplateData struct {
 }
 
 type updateConfigRequest struct {
-	DBPath         string `json:"dbPath"`
-	Port           int    `json:"port"`
-	DownloadPath   string `json:"downloadPath"`
-	DescribePrompt string `json:"describePrompt"`
+	DBPath              string  `json:"dbPath"`
+	Port                int     `json:"port"`
+	DownloadPath        string  `json:"downloadPath"`
+	DescribePrompt      string  `json:"describePrompt"`
+	TextCapturePrompt   *string `json:"textCapturePrompt"`
+	TextCaptureLanguage *string `json:"textCaptureLanguage"`
 	// TextModel: nil keeps the stored model (partial POSTs), "" resets it to
 	// the engine default.
 	TextModel                 *string `json:"textModel"`
@@ -1399,6 +1402,7 @@ func configHandler(deps *Dependencies) http.HandlerFunc {
 			currentConfig = cfg
 			data := configTemplateData{
 				Config:                 cfg,
+				TextCaptureLanguages:   appconfig.TextCaptureLanguages,
 				ConfigPath:             cfgPath,
 				ActiveDBPath:           cfg.DBPath,
 				EmbeddingModels:        tasks.EmbedModelList(),
@@ -1444,6 +1448,16 @@ func configHandler(deps *Dependencies) http.HandlerFunc {
 			}
 			if req.DescribePrompt != "" {
 				newCfg.DescribePrompt = req.DescribePrompt
+			}
+			// nil keeps the stored prompt; an empty box restores the default.
+			if req.TextCapturePrompt != nil {
+				newCfg.TextCapturePrompt = strings.TrimSpace(*req.TextCapturePrompt)
+				if newCfg.TextCapturePrompt == "" {
+					newCfg.TextCapturePrompt = appconfig.DefaultTextCapturePrompt
+				}
+			}
+			if req.TextCaptureLanguage != nil {
+				newCfg.TextCaptureLanguage = strings.TrimSpace(*req.TextCaptureLanguage)
 			}
 			if req.TextModel != nil {
 				newCfg.TextModel = strings.TrimSpace(*req.TextModel)

@@ -133,6 +133,13 @@ type Config struct {
 	TextBatch          int    `json:"textBatch,omitempty"`
 	TextMaxImageTokens int    `json:"textMaxImageTokens,omitempty"`
 	DescribePrompt     string `json:"describePrompt"`
+	// TextCapturePrompt is the Text capture task's instruction (exact
+	// transcription of the text in an image, comics as a script; the result
+	// goes to the media transcript column). TextCaptureLanguage, when set, has
+	// the text translated into that language whatever it is written in (a
+	// job's --language overrides it; "" = as written).
+	TextCapturePrompt   string `json:"textCapturePrompt"`
+	TextCaptureLanguage string `json:"textCaptureLanguage"`
 
 	// AutoProcessOps is the comma-separated per-item op list the scheduled
 	// combined job runs. Empty = every op (hash, dimensions, describe,
@@ -389,6 +396,30 @@ func DefaultConfigDir() string {
 	return platform.GetDataDir()
 }
 
+// TextCaptureLanguages are the translation targets offered by the Text
+// capture pickers ("Original" = keep the text as written). Any other language
+// name works too; this is only the list the UIs show.
+var TextCaptureLanguages = []string{
+	"Original", "English", "Spanish", "French", "German", "Italian", "Portuguese",
+	"Dutch", "Polish", "Russian", "Ukrainian", "Turkish", "Arabic", "Hebrew",
+	"Hindi", "Indonesian", "Vietnamese", "Thai", "Chinese (Simplified)",
+	"Chinese (Traditional)", "Japanese", "Korean",
+}
+
+// DefaultTextCapturePrompt is the Text capture task's default instruction.
+const DefaultTextCapturePrompt = `Transcribe all of the text in this image exactly as it is written: every word, number and symbol, keeping its spelling, capitalization and punctuation. Do not describe the image, summarize or add any commentary. If there is no text at all, answer with nothing.
+
+If the image is a comic, manga, webcomic or other sequential art, write it as a script in narrative order: follow the panels in the page's reading direction and the balloons inside each panel in reading order. Use this form, one line per caption, balloon or sound effect:
+
+PANEL 1
+CAPTION: ...
+NAME: ...
+SFX: ...
+
+The speaker is whoever the balloon's tail points to. Use a character's name only when the comic itself establishes it for that character (a caption, an earlier introduction, a name tag); a name spoken inside a balloon is usually the person being addressed, not the speaker. Otherwise name the speaker by what they look like (OLD MAN, GIRL IN RED, ROBOT) or, when the art shows nothing usable, SPEAKER 1, SPEAKER 2 and so on, kept consistent across the page. Mark thoughts as NAME (THOUGHT), whispers as NAME (WHISPER) and voices from outside the panel as NAME (OFF).
+
+For everything else (signs, screenshots, documents, posters, memes) keep the text's own reading order and structure: one line per line of text, a blank line between separate blocks.`
+
 // Text-generation defaults (loki-scribe).
 const (
 	DefaultTextParallel       = 8
@@ -454,6 +485,7 @@ func defaultConfig() Config {
 		TranscriptionLanguage:   "en",
 		TranscriptionVADFilter:  true,
 		DescribePrompt:          "Please describe this image, paying special attention to the people, the color of hair, clothing, items, text and captions, and actions being performed.",
+		TextCapturePrompt:       DefaultTextCapturePrompt,
 		TextParallel:            DefaultTextParallel,
 		TextBatch:               DefaultTextBatch,
 		TextMaxImageTokens:      DefaultTextMaxImageTokens,
@@ -706,6 +738,9 @@ func Load() (Config, string, error) {
 	if c.DescribePrompt == "" {
 		c.DescribePrompt = def.DescribePrompt
 	}
+	if strings.TrimSpace(c.TextCapturePrompt) == "" {
+		c.TextCapturePrompt = def.TextCapturePrompt
+	}
 	if c.EmbeddingModel == "" {
 		c.EmbeddingModel = def.EmbeddingModel
 		needsSave = true
@@ -860,6 +895,9 @@ func applyEnvOverrides(c *Config) {
 	}
 	if v := os.Getenv("LOWKEY_TEXT_MODEL"); v != "" {
 		c.TextModel = strings.TrimSpace(v)
+	}
+	if v := os.Getenv("LOWKEY_TEXT_CAPTURE_LANGUAGE"); v != "" {
+		c.TextCaptureLanguage = strings.TrimSpace(v)
 	}
 	if v := os.Getenv("LOWKEY_TEXT_MMPROJ"); v != "" {
 		c.TextMMProj = strings.TrimSpace(v)

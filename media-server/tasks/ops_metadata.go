@@ -39,6 +39,8 @@ func registerBuiltinItemOps() {
 		Prepare:     prepareDescribeOp,
 	})
 
+	registerTextCaptureItemOp()
+
 	RegisterItemOp(ItemOp{
 		ID:      "transcribe",
 		Name:    "Transcript",

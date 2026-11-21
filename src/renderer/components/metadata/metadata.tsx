@@ -10,6 +10,7 @@ import FileMetadata from './file-metadata';
 import Duplicates from './duplicates';
 import Thumbnails from './thumbnails';
 import Transcript from './transcript';
+import ImageTranscript from './image-transcript';
 import Transformations from './transformations';
 import JobQueue from './job-queue';
 import useJobServerAvailable from '../../hooks/useJobServerAvailable';
@@ -28,9 +29,11 @@ const tabs = [
     active: true,
   },
   {
+    // Video/audio: timed .vtt cues; images: the text captured from the
+    // picture (the media transcript column).
     key: 'transcript',
     label: 'Transcript',
-    fileTypes: [FileTypes.Audio, FileTypes.Video],
+    fileTypes: [FileTypes.Image, FileTypes.Audio, FileTypes.Video],
     actions: ['followMetadata'],
     active: true,
   },
@@ -115,7 +118,7 @@ export default function Metadata() {
   const itemType = getFileType(item?.path || '');
 
   // The tab the user last picked is remembered as-is; when it doesn't apply
-  // (no transcript for an image, Jobs or Duplicates while the server check is pending or
+  // (no thumbnails for audio, Jobs or Duplicates while the server check is pending or
   // before an item has loaded) the first available tab shows instead, without
   // overwriting the choice, so it comes back as soon as it applies again.
   const handleTabChange = (key: string) => {
@@ -162,7 +165,12 @@ export default function Metadata() {
             key={tab.key}
           >
             <span>{tab.label}</span>
-            {tab.actions.map((action) => getAction(action))}
+            {/* follow-playback has nothing to follow on an image */}
+            {tab.actions
+              .filter(
+                (a) => a !== 'followMetadata' || itemType !== FileTypes.Image
+              )
+              .map((action) => getAction(action))}
           </div>
         ))}
       </div>
@@ -173,7 +181,12 @@ export default function Metadata() {
             <Thumbnails path={item.path} />
           </div>
         )}
-        {shownTabKey === 'transcript' && <Transcript />}
+        {shownTabKey === 'transcript' &&
+          (itemType === FileTypes.Image ? (
+            item && <ImageTranscript path={item.path} key={item.path} />
+          ) : (
+            <Transcript />
+          ))}
         {shownTabKey === 'jobs' && <JobQueue />}
         {shownTabKey === 'transformations' && <Transformations />}
         {shownTabKey === 'duplicates' && item && (
