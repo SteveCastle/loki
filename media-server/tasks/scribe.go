@@ -320,6 +320,15 @@ func remoteScribeArgs(args []string) []string {
 	return out
 }
 
+// scribeWarmModel is the configured text model as a worker resolves it.
+func scribeWarmModel() string {
+	m := strings.TrimSpace(appconfig.Get().TextModel)
+	if m == "" {
+		return ""
+	}
+	return remoteScribeArgs([]string{"--model", m})[1]
+}
+
 // scribeConcurrency is how many describe items should be in flight at once
 // so the batcher can fill its runs: a batch per GPU slot that can take one.
 func scribeConcurrency() int {

@@ -91,12 +91,31 @@ func WarmEngines(ctx context.Context, pool string, engines []string, model strin
 		if pool != "" && !strings.EqualFold(t.pool, pool) {
 			continue
 		}
+		// one warm request per model choice: loki-scribe loads the configured
+		// text model, the others take `model` (a variant such as reshoot's fast)
+		var groups []workerapi.WarmRequest
+		var rest []string
+		for _, e := range engines {
+			if workerapi.EngineName(e) == scribeEngine {
+				groups = append(groups, workerapi.WarmRequest{Tools: []string{scribeEngine}, Model: scribeWarmModel()})
+			} else {
+				rest = append(rest, e)
+			}
+		}
+		if len(rest) > 0 {
+			groups = append(groups, workerapi.WarmRequest{Tools: rest, Model: model})
+		}
 		var err error
-		switch t.kind {
-		case "node":
-			err = t.node.Warm(ctx, workerapi.WarmRequest{Tools: engines, Model: model})
-		case "runpod":
-			_, err = t.rp.Run(ctx, workerapi.RunPodInput{Warm: &workerapi.WarmRequest{Tools: engines, Model: model}})
+		for _, g := range groups {
+			switch t.kind {
+			case "node":
+				err = t.node.Warm(ctx, g)
+			case "runpod":
+				_, err = t.rp.Run(ctx, workerapi.RunPodInput{Warm: &g})
+			}
+			if err != nil {
+				break
+			}
 		}
 		if err != nil {
 			notes = append(notes, fmt.Sprintf("%s: %v", t.key, err))

@@ -1,163 +1,218 @@
 {{ define "engines-panel-style" }}
 <style>
-  .wk-muted { color: var(--text-muted); font-size: var(--text-xs); }
-  .wk-head { display: flex; justify-content: space-between; align-items: center; gap: var(--space-3); flex-wrap: wrap; margin-bottom: var(--space-3); }
-  .wk-head .section-title { margin: 0; }
-  .wk-table { border: 1px solid var(--border-subtle); border-radius: var(--radius-md); overflow: hidden; }
-  .wk-row { display: grid; grid-template-columns: 16px 1.6fr 2fr 1.4fr 0.8fr 1.6fr auto; gap: var(--space-2); align-items: center; padding: 8px var(--space-3); border-bottom: 1px solid var(--border-subtle); font-size: var(--text-sm); }
-  .wk-row:last-child { border-bottom: none; }
-  .wk-row.hdr { font-weight: 600; color: var(--text-secondary); font-size: var(--text-xs); text-transform: uppercase; letter-spacing: .5px; background: var(--bg-surface); }
-  .wk-row.local { grid-template-columns: 16px 1.2fr 2.4fr 0.8fr 2.4fr auto; }
-  .wk-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--text-muted); }
-  .wk-dot.ok { background: #3fb950; } .wk-dot.bad { background: #f85149; } .wk-dot.busy { background: #d29922; }
-  .wk-err { color: #f85149; font-size: var(--text-xs); word-break: break-word; }
-  .wk-path { font-family: var(--font-mono, monospace); font-size: 11px; color: var(--text-muted); word-break: break-all; }
-  .wk-chip { display: inline-block; padding: 1px 6px; margin: 1px 2px; border-radius: 10px; font-size: 11px; background: var(--bg-surface); border: 1px solid var(--border-subtle); color: var(--text-secondary); }
-  .wk-chip.warm, .wk-chip.ok { border-color: #3fb950; color: #3fb950; }
-  .wk-chip.bad { border-color: #f85149; color: #f85149; }
-  .wk-chip.busy { border-color: #d29922; color: #d29922; }
-  .wk-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--space-3); }
-  .wk-grid label { display: flex; flex-direction: column; gap: 4px; font-size: var(--text-xs); color: var(--text-secondary); }
-  .wk-actions { display: flex; gap: var(--space-2); margin-top: var(--space-3); flex-wrap: wrap; align-items: center; }
-  .wk-inline { display: flex; gap: var(--space-3); align-items: center; flex-wrap: wrap; font-size: var(--text-sm); }
-  .wk-note { margin-top: var(--space-2); font-size: var(--text-xs); color: var(--text-secondary); white-space: pre-wrap; }
-  .wk-small { padding: 2px 8px !important; font-size: var(--text-xs) !important; }
-  .wk-pools.overridden { opacity: .55; }
-  .wk-banner { display: none; margin-bottom: var(--space-4); padding: var(--space-3) var(--space-4); border-radius: var(--radius-md); border: 1px solid #d29922; color: #d29922; background: rgba(210, 153, 34, .08); font-size: var(--text-sm); }
-  .wk-banner.on { display: block; }
-  /* Local only switch */
-  .wk-switch { display: flex; align-items: center; gap: var(--space-4); }
-  .wk-switch input { position: absolute; opacity: 0; width: 1px; height: 1px; }
-  .wk-track { position: relative; flex-shrink: 0; width: 46px; height: 26px; border-radius: 13px; background: var(--border-default); cursor: pointer; transition: background .15s; }
-  .wk-track::after { content: ''; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: #fff; transition: transform .15s; }
-  .wk-switch input:checked + .wk-track { background: var(--accent-primary); }
-  .wk-switch input:checked + .wk-track::after { transform: translateX(20px); }
-  .wk-switch input:focus-visible + .wk-track { outline: 2px solid var(--accent-primary); outline-offset: 2px; }
-  .wk-switch b { color: var(--text-primary); }
-  @media (max-width: 800px) {
-    .wk-row, .wk-row.local { grid-template-columns: 16px 1fr 1fr auto; }
-    .wk-row > .wide { display: none; }
+  #engines-panel [hidden], #tab-ai [hidden] { display: none !important; }
+  .gx-muted { color: var(--text-muted); font-size: var(--text-xs); }
+  .gx-head { display: flex; justify-content: space-between; align-items: center; gap: var(--space-3); flex-wrap: wrap; margin-bottom: var(--space-2); }
+  .gx-head .section-title { margin: 0; }
+  .gx-status { font-size: var(--text-xs); color: var(--text-muted); min-height: 1em; }
+  .gx-status.ok { color: #3fb950; } .gx-status.err { color: #f85149; }
+
+  /* segmented control */
+  .gx-seg { display: inline-flex; border: 1px solid var(--border-default); border-radius: var(--radius-md); overflow: hidden; flex-wrap: wrap; }
+  .gx-seg button { background: transparent; border: none; border-right: 1px solid var(--border-default); color: var(--text-secondary); padding: 8px 14px; font-size: var(--text-sm); cursor: pointer; text-align: left; }
+  .gx-seg button:last-child { border-right: none; }
+  .gx-seg button:hover { color: var(--text-primary); background: var(--bg-surface); }
+  .gx-seg button.on { background: var(--accent-primary); color: #fff; }
+  .gx-seg button small { display: block; font-size: 11px; opacity: .8; }
+  .gx-help { margin-top: var(--space-3); font-size: var(--text-sm); color: var(--text-secondary); max-width: 70ch; }
+  .gx-opts { display: flex; flex-direction: column; gap: var(--space-3); margin-top: var(--space-4); }
+  .gx-opt { display: flex; gap: var(--space-3); align-items: flex-start; font-size: var(--text-sm); }
+  .gx-opt b { color: var(--text-primary); }
+  .gx-banner { margin-top: var(--space-3); padding: var(--space-3) var(--space-4); border-radius: var(--radius-md); border: 1px solid #d29922; color: #d29922; background: rgba(210, 153, 34, .08); font-size: var(--text-sm); }
+
+  /* switch */
+  .gx-switch { position: relative; flex-shrink: 0; width: 40px; height: 22px; }
+  .gx-switch input { position: absolute; opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; z-index: 1; }
+  .gx-switch span { position: absolute; inset: 0; border-radius: 11px; background: var(--border-default); transition: background .15s; }
+  .gx-switch span::after { content: ''; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: transform .15s; }
+  .gx-switch input:checked + span { background: var(--accent-primary); }
+  .gx-switch input:checked + span::after { transform: translateX(18px); }
+  .gx-switch input:focus-visible + span { outline: 2px solid var(--accent-primary); outline-offset: 2px; }
+
+  /* tables */
+  .gx-table { border: 1px solid var(--border-subtle); border-radius: var(--radius-md); overflow: hidden; margin-top: var(--space-3); }
+  .gx-row { display: grid; gap: var(--space-3); align-items: center; padding: 10px var(--space-3); border-bottom: 1px solid var(--border-subtle); font-size: var(--text-sm); }
+  .gx-row:last-child { border-bottom: none; }
+  .gx-row.hdr { font-weight: 600; color: var(--text-secondary); font-size: var(--text-xs); text-transform: uppercase; letter-spacing: .5px; background: var(--bg-surface); padding-top: 6px; padding-bottom: 6px; }
+  .gx-eng { grid-template-columns: minmax(180px, 1.6fr) minmax(170px, 1.2fr) minmax(150px, 1.2fr) minmax(120px, 1fr); }
+  .gx-wk { grid-template-columns: 14px minmax(160px, 1.6fr) minmax(140px, 1.6fr) minmax(120px, 1.2fr) 60px auto; }
+  .gx-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--text-muted); display: inline-block; }
+  .gx-dot.ok { background: #3fb950; } .gx-dot.bad { background: #f85149; } .gx-dot.busy { background: #d29922; }
+  .gx-name b { color: var(--text-primary); }
+  .gx-name .gx-muted { display: block; margin-top: 2px; }
+  .gx-chip { display: inline-block; padding: 1px 7px; margin: 1px 3px 1px 0; border-radius: 10px; font-size: 11px; background: var(--bg-surface); border: 1px solid var(--border-subtle); color: var(--text-secondary); white-space: nowrap; }
+  .gx-chip.ok { border-color: #3fb950; color: #3fb950; }
+  .gx-chip.bad { border-color: #f85149; color: #f85149; }
+  .gx-chip.busy { border-color: #d29922; color: #d29922; }
+  .gx-err { color: #f85149; font-size: var(--text-xs); word-break: break-word; }
+  .gx-small { padding: 2px 9px !important; font-size: var(--text-xs) !important; }
+  .gx-row select.input { padding: 5px 8px; font-family: inherit; font-size: var(--text-sm); }
+  .gx-warn { color: #f85149; font-size: var(--text-xs); display: block; margin-top: 3px; }
+
+  /* pools */
+  .gx-pool { border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: var(--space-3); margin-top: var(--space-3); }
+  .gx-pool.off { opacity: .6; }
+  .gx-pool-head { display: flex; justify-content: space-between; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+  .gx-pool-head .gx-actions { display: flex; gap: var(--space-2); align-items: center; flex-wrap: wrap; }
+  .gx-empty { padding: var(--space-4); text-align: center; color: var(--text-secondary); font-size: var(--text-sm); border: 1px dashed var(--border-default); border-radius: var(--radius-md); margin-top: var(--space-3); }
+  .gx-add { margin-top: var(--space-4); padding-top: var(--space-4); border-top: 1px solid var(--border-subtle); }
+  .gx-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--space-3); margin-top: var(--space-3); }
+  .gx-grid label { display: flex; flex-direction: column; gap: 4px; font-size: var(--text-xs); color: var(--text-secondary); }
+  .gx-form-actions { display: flex; gap: var(--space-2); margin-top: var(--space-3); flex-wrap: wrap; align-items: center; }
+  .gx-note { margin-top: var(--space-2); font-size: var(--text-xs); color: var(--text-secondary); white-space: pre-wrap; }
+  .gx-code { font-family: var(--font-mono, monospace); font-size: 11px; background: var(--bg-surface); padding: 6px 8px; border-radius: var(--radius-sm, 4px); display: block; margin-top: 6px; overflow-x: auto; white-space: nowrap; }
+  details.gx-more { margin-top: var(--space-3); }
+  details.gx-more summary { cursor: pointer; font-size: var(--text-xs); color: var(--text-secondary); }
+
+  @media (max-width: 860px) {
+    .gx-eng { grid-template-columns: 1fr 1fr; }
+    .gx-eng > .gx-wide { grid-column: span 2; }
+    .gx-wk { grid-template-columns: 14px 1fr auto; }
+    .gx-wk > .gx-wide { display: none; }
+    .gx-row.hdr.gx-eng > :nth-child(n+3) { display: none; }
   }
 </style>
 {{ end }}
 
 {{ define "engines-panel" }}
 <div class="config-sections" id="engines-panel">
-  <div class="wk-banner" id="wk-local-banner">
-    Local only is on: every engine runs on this machine's installs. The pools
-    below stay configured but get no work until you turn it off.
-  </div>
-
+  <!-- 1. Where GPU work runs -->
   <div class="config-card config-card--blue">
-    <label class="wk-switch">
-      <input type="checkbox" id="wk-local-only" />
-      <span class="wk-track" aria-hidden="true"></span>
-      <span>
-        <b>Local only</b><br />
-        <span class="wk-muted">
-          Run loki-retouch, loki-reshoot, loki-dream, loki-segment and loki-scribe on this
-          machine's GPU whatever the strategy and routes below say. Applies at
-          once; jobs already on a worker finish there.
-        </span>
-      </span>
-    </label>
-    <div class="wk-note" id="wk-local-note"></div>
-  </div>
-
-  <div class="config-card config-card--blue">
-    <div class="wk-head">
-      <div class="section-title">🖥️ This machine</div>
-      <span class="wk-muted" id="wk-local-busy"></span>
+    <div class="gx-head">
+      <div class="section-title">🧭 Where GPU work runs</div>
+      <span class="gx-status" id="gx-status"></span>
     </div>
     <div class="section-subtitle">
-      The engines installed here: a build on PATH wins over the managed
-      download. Models download on the first run, or install them now.
+      Descriptions, image editing, video, image generation and object selection
+      run on GPU engines. They can use this machine's GPU, worker pools (other
+      GPUs: another PC, a cloud VM, RunPod), or both. Changes on this tab apply
+      immediately; jobs already running finish where they are.
     </div>
-    <div class="wk-table" id="wk-local-tools">
-      <div class="wk-row local"><span></span><span class="wk-muted">Loading…</span></div>
+    <div class="gx-seg" id="gx-mode" role="radiogroup" aria-label="Default placement">
+      <button type="button" data-mode="local" role="radio">This machine<small>its own GPU</small></button>
+      <button type="button" data-mode="pool" role="radio">Worker pools<small>remote GPUs only</small></button>
+      <button type="button" data-mode="hybrid" role="radio">Both<small>this GPU is one more worker</small></button>
     </div>
-  </div>
-
-  <div class="config-card config-card--purple">
-    <div class="wk-head">
-      <div class="section-title">🧭 Placement</div>
-      <span class="wk-muted" id="wk-placement-live"></span>
-    </div>
-    <div class="section-subtitle">Where each engine runs when Local only is off.</div>
-    <div class="wk-inline">
-      <label style="display:flex;flex-direction:column;gap:4px;font-size:var(--text-xs);color:var(--text-secondary)">Strategy
-        <select class="input" id="wk-strategy">
-          <option value="local">Local: this machine's GPU (default)</option>
-          <option value="pool">Pool: remote GPU workers only</option>
-          <option value="hybrid">Hybrid: this GPU plus the pools</option>
-        </select>
+    <div class="gx-help" id="gx-mode-help"></div>
+    <div class="gx-opts">
+      <label class="gx-opt" id="gx-fallback-row">
+        <span class="gx-switch"><input type="checkbox" id="gx-fallback" /><span></span></span>
+        <span><b>Use this machine when no worker answers</b><br /><span class="gx-muted">For engines set to worker pools only: if every worker is down, run here instead of failing the job.</span></span>
       </label>
-      <label><input type="checkbox" id="wk-fallback" /> fall back to this GPU when no worker is reachable</label>
+      <label class="gx-opt" id="gx-pause-row">
+        <span class="gx-switch"><input type="checkbox" id="gx-pause" /><span></span></span>
+        <span><b>Pause worker pools</b><br /><span class="gx-muted">Run everything on this machine for now (working offline, or while the cloud misbehaves). Pools and per-engine choices are kept.</span></span>
+      </label>
     </div>
-    <div class="wk-grid" style="margin-top: var(--space-3)" id="wk-routes"></div>
-    <div class="wk-actions">
-      <button class="btn btn-primary" id="wk-save-placement">Save placement</button>
-      <span class="wk-muted" id="wk-placement-note"></span>
-    </div>
+    <div class="gx-banner" id="gx-pause-banner" hidden>Worker pools are paused: every engine runs on this machine until you turn this off.</div>
   </div>
 
-  <div class="wk-pools" id="wk-pools"></div>
-
-  <div class="config-card config-card--cyan">
-    <div class="wk-head">
-      <div class="section-title">➕ Add a worker node</div>
-      <span class="wk-muted">a loki-worker container on a RunPod pod, a cloud VM, or another PC</span>
+  <!-- 2. Engines -->
+  <div class="config-card config-card--purple">
+    <div class="gx-head">
+      <div class="section-title">⚙️ Engines</div>
+      <span class="gx-muted" id="gx-gpu"></span>
     </div>
-    <div class="wk-grid">
-      <label>Pool<input class="input" id="wk-node-pool" value="gpu" /></label>
-      <label>URL<input class="input" id="wk-node-url" placeholder="https://abc123-8080.proxy.runpod.net" /></label>
-      <label>Token<input class="input" id="wk-node-token" type="password" placeholder="LOKI_WORKER_TOKEN of the worker" /></label>
-      <label>Name (optional)<input class="input" id="wk-node-name" placeholder="defaults to the URL" /></label>
+    <div class="section-subtitle">
+      Each engine follows the choice above unless you give it its own place
+      (say, object selection here for snappy clicks while video goes to the
+      cloud). An engine runs on this machine only once it is installed here; it
+      installs itself on first use, or install it now.
     </div>
-    <div class="wk-actions">
-      <button class="btn btn-secondary" id="wk-node-probe">Test</button>
-      <button class="btn btn-primary" id="wk-node-add">Add node</button>
-      <span class="wk-muted">Start one with <code>docker run --gpus all -p 8080:8080 -e LOKI_WORKER_TOKEN=... -v models:/models ghcr.io/stevecastle/loki-worker</code>, or <code>lokictl pool create runpod-pods</code>.</span>
-    </div>
-    <div class="wk-note" id="wk-node-note"></div>
+    <div class="gx-table" id="gx-engines"><div class="gx-row"><span class="gx-muted">Loading…</span></div></div>
   </div>
 
-  <div class="config-card config-card--cyan">
-    <div class="wk-head">
-      <div class="section-title">➕ Add a RunPod serverless endpoint</div>
-      <span class="wk-muted">queue-based; scales from zero, files go through a bucket</span>
+  <!-- 3. Worker pools -->
+  <div class="config-card config-card--pink">
+    <div class="gx-head">
+      <div class="section-title">☁️ Worker pools</div>
+      <button class="btn btn-secondary gx-small" id="gx-add-toggle" type="button">Add workers</button>
     </div>
-    <div class="wk-grid">
-      <label>Pool<input class="input" id="wk-rp-pool" value="serverless" /></label>
-      <label>Endpoint ID<input class="input" id="wk-rp-endpoint" placeholder="e.g. abc123xyz" /></label>
-      <label>RunPod API key<input class="input" id="wk-rp-key" type="password" /></label>
-      <label>Max jobs in flight<input class="input" id="wk-rp-max" type="number" min="1" value="4" /></label>
-      <label>Engines (empty: all)<input class="input" id="wk-rp-engines" placeholder="loki-retouch, loki-dream" /></label>
-      <label>Transfer: S3 storage root label<input class="input" id="wk-rp-root" placeholder="a configured S3 root (optional)" /></label>
-      <label>…or bucket<input class="input" id="wk-rp-bucket" placeholder="bucket name (optional)" /></label>
-      <label>Bucket endpoint<input class="input" id="wk-rp-s3-endpoint" placeholder="https://s3.us-east-1.amazonaws.com" /></label>
-      <label>Bucket region<input class="input" id="wk-rp-s3-region" placeholder="us-east-1" /></label>
-      <label>Access key<input class="input" id="wk-rp-s3-access" /></label>
-      <label>Secret key<input class="input" id="wk-rp-s3-secret" type="password" /></label>
+    <div class="section-subtitle">
+      A pool is a group of interchangeable GPU workers running
+      <code>loki-worker</code>. Each job goes to the least busy healthy worker,
+      preferring one that already has the engine's models loaded.
     </div>
-    <div class="wk-actions">
-      <button class="btn btn-secondary" id="wk-rp-probe">Test</button>
-      <button class="btn btn-primary" id="wk-rp-add">Add endpoint</button>
-      <span class="wk-muted">Without a bucket, files up to 7 MB go inline (stills work; videos need a bucket). Create one with <code>lokictl pool create runpod-serverless</code>.</span>
+    <div id="gx-pools"></div>
+
+    <div class="gx-add" id="gx-add" hidden>
+      <div class="gx-seg" id="gx-add-kind" role="radiogroup" aria-label="Worker type">
+        <button type="button" data-kind="nodes" class="on">Worker node<small>a machine you run: PC, VM, RunPod pod</small></button>
+        <button type="button" data-kind="runpod">RunPod serverless<small>scales from zero, pay per second</small></button>
+      </div>
+
+      <div id="gx-add-nodes">
+        <div class="gx-grid">
+          <label>Address<input class="input" id="gx-node-url" placeholder="http://192.168.1.20:8080 or https://abc-8080.proxy.runpod.net" /></label>
+          <label>Token<input class="input" id="gx-node-token" type="password" placeholder="the worker's LOKI_WORKER_TOKEN" /></label>
+          <label>Pool<input class="input" id="gx-node-pool" list="gx-pool-names" value="gpu" /></label>
+          <label>Name (optional)<input class="input" id="gx-node-name" placeholder="defaults to the address" /></label>
+        </div>
+        <div class="gx-note">Start a worker on any machine with an NVIDIA GPU:
+          <span class="gx-code">docker run --gpus all -p 8080:8080 -e LOKI_WORKER_TOKEN=&lt;secret&gt; -v loki-models:/models ghcr.io/stevecastle/loki-worker</span>
+          or let <code>lokictl pool create runpod-pods</code> rent and register pods for you.</div>
+        <div class="gx-form-actions">
+          <button class="btn btn-secondary" id="gx-node-test" type="button">Test connection</button>
+          <button class="btn btn-primary" id="gx-node-add" type="button">Add worker</button>
+        </div>
+        <div class="gx-note" id="gx-node-note"></div>
+      </div>
+
+      <div id="gx-add-runpod" hidden>
+        <div class="gx-grid">
+          <label>Endpoint ID<input class="input" id="gx-rp-endpoint" placeholder="e.g. abc123xyz" /></label>
+          <label>RunPod API key<input class="input" id="gx-rp-key" type="password" /></label>
+          <label>Pool name<input class="input" id="gx-rp-pool" value="serverless" /></label>
+          <label>Jobs at once<input class="input" id="gx-rp-max" type="number" min="1" value="4" /></label>
+        </div>
+        <details class="gx-more">
+          <summary>Engines and file transfer (needed for videos and files over 7 MB)</summary>
+          <div class="gx-grid">
+            <label>Engines (empty: all)<input class="input" id="gx-rp-engines" placeholder="retouch, dream" /></label>
+            <label>Use an S3 storage root (label)<input class="input" id="gx-rp-root" placeholder="optional" /></label>
+            <label>…or a bucket<input class="input" id="gx-rp-bucket" placeholder="bucket name" /></label>
+            <label>Bucket endpoint<input class="input" id="gx-rp-s3-endpoint" placeholder="https://s3.us-east-1.amazonaws.com" /></label>
+            <label>Region<input class="input" id="gx-rp-s3-region" placeholder="us-east-1" /></label>
+            <label>Access key<input class="input" id="gx-rp-s3-access" /></label>
+            <label>Secret key<input class="input" id="gx-rp-s3-secret" type="password" /></label>
+          </div>
+        </details>
+        <div class="gx-note">Deploy the <code>ghcr.io/stevecastle/loki-worker</code> image as a queue-based endpoint, or run <code>lokictl pool create runpod-serverless</code>. Serverless workers cannot hold interactive sessions: object selection needs a worker node or this machine.</div>
+        <div class="gx-form-actions">
+          <button class="btn btn-secondary" id="gx-rp-test" type="button">Test endpoint</button>
+          <button class="btn btn-primary" id="gx-rp-add" type="button">Add endpoint</button>
+        </div>
+        <div class="gx-note" id="gx-rp-note"></div>
+      </div>
+      <datalist id="gx-pool-names"></datalist>
     </div>
-    <div class="wk-note" id="wk-rp-note"></div>
   </div>
 </div>
 <script>
-  // GPU Engines tab: Config.Engines (placement, pools, Local only) through
-  // /api/engines, plus this machine's engine installs. Polls only while the
-  // tab is showing (window.enginesPanel.show / hide).
+  // GPU Engines tab: Config.Engines (default placement, per-engine routes,
+  // fallback, pause = localOnly, pools) through /api/engines, plus this
+  // machine's installs. Every control saves at once (PUT /api/engines).
+  // Polls only while the tab is showing (window.enginesPanel.show / hide).
   window.enginesPanel = (function () {
-    const ENGINES = ['loki-retouch', 'loki-reshoot', 'loki-dream', 'loki-segment', 'loki-scribe'];
-    let cfg = null, status = null, local = null, timer = null, placementDirty = false;
-    const $ = (id) => document.getElementById('wk-' + id);
+    const ENGINES = [
+      ['loki-scribe', 'Descriptions & text', 'describe, captions'],
+      ['loki-retouch', 'Image editing', 'Transform: edit, upscale, restore'],
+      ['loki-reshoot', 'Video', 'Transform: video with sound'],
+      ['loki-dream', 'Image generation', 'Generate, Reimagine, Scene layers'],
+      ['loki-segment', 'Object selection', 'Scene editor select tool and roto'],
+    ];
+    const MODE_HELP = {
+      local: 'Every engine runs on this machine. Add workers below and switch to Worker pools or Both to spread the work.',
+      pool: 'Engines run on the worker pools; this machine needs no GPU for them. Jobs wait for a free worker.',
+      hybrid: 'This machine\'s GPU takes jobs alongside the workers: a job goes to whichever is free first, this machine before a remote worker.',
+    };
+    const BUSY = ['queued', 'downloading', 'verifying', 'extracting'];
+    let cfg = null, status = null, local = [], timer = null, saving = false;
+    const $ = (id) => document.getElementById('gx-' + id);
     const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
     const gb = (b) => (b ? (b / 1e9).toFixed(b >= 1e10 ? 0 : 1) + ' GB' : '');
+    const short = (e) => e.replace('loki-', '');
+
     async function api(method, url, body) {
       const r = await fetch(url, { method, headers: body ? { 'Content-Type': 'application/json' } : {}, body: body ? JSON.stringify(body) : undefined });
       const t = await r.text();
@@ -166,245 +221,379 @@
       if (!r.ok) throw new Error(j.error || t || r.status);
       return j;
     }
+    function flash(msg, kind) {
+      const el = $('status');
+      el.textContent = msg;
+      el.className = 'gx-status ' + (kind || '');
+      if (kind === 'ok') setTimeout(() => { if (el.textContent === msg) el.textContent = ''; }, 2500);
+    }
     async function load() {
       const j = await api('GET', '/api/engines?local=1');
       cfg = j.config; status = j.status; local = j.local || [];
-      if (!placementDirty) renderPlacement();
-      renderLocalOnly(); renderLocal(); renderPools();
+      render();
     }
-    function clone() { return JSON.parse(JSON.stringify(cfg)); }
-    async function save(next, noteEl) {
+    const clone = () => JSON.parse(JSON.stringify(cfg));
+    async function save(next, what) {
+      saving = true;
+      flash('Saving…');
       try {
         const j = await api('PUT', '/api/engines', next);
         cfg = j.config; status = j.status;
-        placementDirty = false;
-        renderPlacement(); renderLocalOnly(); renderLocal(); renderPools();
-        if (noteEl) noteEl.textContent = 'Saved.';
+        flash((what || 'Saved') + '.', 'ok');
+        render();
         return true;
       } catch (e) {
-        if (noteEl) noteEl.textContent = 'Error: ' + e.message; else alert(e.message);
+        flash('Not saved: ' + e.message, 'err');
+        render();
         return false;
+      } finally {
+        saving = false;
       }
     }
-
-    // --- Local only
-    function renderLocalOnly() {
-      const on = !!cfg.localOnly;
-      $('local-only').checked = on;
-      $('local-banner').classList.toggle('on', on);
-      $('pools').classList.toggle('overridden', on);
-      const pools = (cfg.pools || []).filter((p) => !p.disabled).length;
-      $('local-note').textContent = on
-        ? (pools ? `${pools} pool(s) kept but idle.` : '')
-        : (pools ? '' : 'No pools configured yet: engines run here either way.');
-      const envPools = (cfg.pools || []).filter((p) => p.fromEnv).length;
-      if (envPools) $('local-note').textContent += (envPools ? ` ${envPools} pool(s) come from the environment (LOWKEY_ENGINES / LOWKEY_WORKER_NODES) and are not saved.` : '');
+    function render() {
+      renderMode(); renderEngines(); renderPools();
     }
-    $('local-only').addEventListener('change', async (ev) => {
+
+    // --- placement wording
+    const pools = () => (cfg.pools || []);
+    const activePools = () => pools().filter((p) => !p.disabled);
+    function placeText(r) {
+      if (!r || r === 'local') return 'this machine';
+      if (r === 'pool') return 'worker pools';
+      if (r === 'hybrid') return 'this machine + pools';
+      if (r.startsWith('pool:')) return 'pool ' + r.slice(5);
+      return r;
+    }
+    const usesPools = (r) => r === 'pool' || r === 'hybrid' || (r || '').startsWith('pool:');
+
+    // --- 1. mode
+    function renderMode() {
+      const mode = cfg.strategy || 'local';
+      $('mode').querySelectorAll('button').forEach((b) => {
+        b.classList.toggle('on', b.dataset.mode === mode);
+        b.setAttribute('aria-checked', b.dataset.mode === mode);
+      });
+      let help = MODE_HELP[mode];
+      if (mode !== 'local' && !activePools().length) help += ' No worker pool is set up yet: add workers below.';
+      $('mode-help').textContent = help;
+      const routes = Object.values(cfg.routes || {});
+      const poolOnly = mode === 'pool' || routes.some((r) => r === 'pool' || (r || '').startsWith('pool:'));
+      $('fallback-row').hidden = !poolOnly;
+      $('fallback').checked = !!cfg.fallback;
+      const anyPoolUse = usesPools(mode) || routes.some(usesPools);
+      $('pause-row').hidden = !(pools().length && (anyPoolUse || cfg.localOnly));
+      $('pause').checked = !!cfg.localOnly;
+      $('pause-banner').hidden = !cfg.localOnly;
+    }
+    $('mode').addEventListener('click', (ev) => {
+      const b = ev.target.closest('button[data-mode]');
+      if (!b || saving || b.dataset.mode === (cfg.strategy || 'local')) return;
       const c = clone();
-      c.localOnly = ev.target.checked;
-      $('local-note').textContent = 'Saving…';
-      if (!(await save(c, $('local-note')))) ev.target.checked = !ev.target.checked;
+      c.strategy = b.dataset.mode;
+      save(c, 'Placement saved');
     });
+    $('fallback').addEventListener('change', (ev) => { const c = clone(); c.fallback = ev.target.checked; save(c); });
+    $('pause').addEventListener('change', (ev) => { const c = clone(); c.localOnly = ev.target.checked; save(c, ev.target.checked ? 'Pools paused' : 'Pools resumed'); });
 
-    // --- This machine
-    function stateChip(it) {
+    // --- 2. engines
+    function installChip(it) {
       const st = it.state;
-      if (st === 'installed') return `<span class="wk-chip ok">installed${it.source === 'user' ? ' (PATH)' : ''}</span>`;
-      if (st === 'queued' || st === 'downloading' || st === 'verifying' || st === 'extracting') {
+      if (st === 'installed') return `<span class="gx-chip ok" title="${esc(it.path || '')}">installed${it.source === 'user' ? ' (your build)' : ''}</span>`;
+      if (BUSY.includes(st)) {
         const d = it.detail || {};
-        const pct = d.bytes_total ? Math.floor((d.bytes_done || 0) * 100 / d.bytes_total) + '%' : '';
-        return `<span class="wk-chip busy">${esc(st)} ${pct}</span>`;
+        const pct = d.bytes_total ? ' ' + Math.floor((d.bytes_done || 0) * 100 / d.bytes_total) + '%' : '';
+        return `<span class="gx-chip busy">${esc(st)}${pct}</span>`;
       }
-      if (st === 'failed') return `<span class="wk-chip bad" title="${esc(it.error)}">failed</span>`;
-      return `<span class="wk-chip">not installed</span>`;
+      if (st === 'failed') return `<span class="gx-chip bad" title="${esc(it.error)}">install failed</span>`;
+      return '';
     }
-    const installable = (it) => !['installed', 'queued', 'downloading', 'verifying', 'extracting'].includes(it.state);
-    function renderLocal() {
-      const lt = status.targets.find((t) => t.kind === 'local');
-      $('local-busy').textContent = lt ? `GPU: ${lt.running}/${lt.slots} busy` : '';
-      const rows = local.filter((e) => ENGINES.includes(e.engine)).map((e) => {
-        const tool = e.tool;
-        const ok = tool.state === 'installed' && (e.models || []).every((m) => m.state === 'installed');
-        const dot = ok ? 'ok' : tool.state === 'installed' ? 'busy' : 'bad';
-        const placement = (status.placement || {})[e.engine] || 'local';
-        const missing = [tool].concat(e.models || []).filter(installable);
-        return `<div class="wk-row local">
-          <span class="wk-dot ${dot}"></span>
-          <span><b>${esc(e.engine.replace('loki-', ''))}</b>${e.version ? ` <span class="wk-muted">v${esc(e.version)}</span>` : ''}<br><span class="wk-muted">runs: ${esc(placement)}</span></span>
-          <span>${stateChip(tool)}<div class="wk-path">${esc(tool.path || '')}</div>${tool.error ? `<div class="wk-err">${esc(tool.error)}</div>` : ''}</span>
-          <span class="wide wk-muted">${gb((e.models || []).reduce((n, m) => n + (m.size_bytes || 0), 0))}</span>
-          <span class="wide">${(e.models || []).map((m) => `<div>${esc(m.name || m.id)} ${stateChip(m)}</div>`).join('')}</span>
-          <span>${missing.length ? `<button class="btn btn-secondary wk-small" data-wk-install="${esc(missing.map((m) => m.id).join(','))}">Install</button>` : ''}</span>
+    function hereCell(e) {
+      if (!e) return '<span class="gx-muted">not available on this platform</span>';
+      const parts = [e.tool].concat(e.models || []);
+      const missing = parts.filter((x) => x.state !== 'installed' && !BUSY.includes(x.state));
+      const busy = parts.filter((x) => BUSY.includes(x.state));
+      let html = '';
+      if (!missing.length && !busy.length) {
+        html = installChip(e.tool) + (e.version ? `<span class="gx-muted"> v${esc(e.version)}</span>` : '');
+      } else {
+        html = busy.map(installChip).join('');
+        if (missing.length) {
+          const size = missing.reduce((n, m) => n + (m.size_bytes || 0), 0);
+          html += `<button class="btn btn-secondary gx-small" type="button" data-gx-install="${esc(missing.map((m) => m.id).join(','))}">Install${size ? ' (' + gb(size) + ')' : ''}</button>`;
+        }
+      }
+      if (e.engine === 'loki-scribe' && !(e.models || []).length) html += '<span class="gx-muted" style="display:block">model: the one set under AI Models</span>';
+      const err = parts.find((x) => x.state === 'failed' && x.error);
+      if (err) html += `<div class="gx-err">${esc(err.error)}</div>`;
+      return html;
+    }
+    function workersCell(engine) {
+      const chips = [];
+      for (const t of status.targets || []) {
+        if (t.kind !== 'node' || !t.info) continue;
+        const tool = (t.info.tools || []).find((x) => x.name === engine);
+        if (!tool) continue;
+        const name = t.key.split('/').slice(1).join('/') || t.key;
+        const busy = (tool.states || []).includes('busy');
+        const warm = (tool.resident || []).length > 0;
+        if (busy) chips.push(`<span class="gx-chip busy" title="running a job">${esc(name)} · busy</span>`);
+        else if (warm) chips.push(`<span class="gx-chip ok" title="${esc(tool.resident.map((r) => r.key + ' ' + r.mb + ' MB').join('\n'))}">${esc(name)} · loaded</span>`);
+        else chips.push(`<span class="gx-chip" title="installed, no model loaded">${esc(name)}</span>`);
+      }
+      for (const t of status.targets || []) {
+        if (t.kind === 'runpod' && (!t.engines || !t.engines.length || t.engines.includes(engine))) chips.push(`<span class="gx-chip" title="serverless endpoint">${esc(t.key)}</span>`);
+      }
+      return chips.join('') || '<span class="gx-muted">—</span>';
+    }
+    // pool targets a route can use that actually run the engine
+    function servingTargets(engine, route) {
+      return (status.targets || []).filter((t) => {
+        if (t.kind === 'local' || !t.healthy) return false;
+        if (route.startsWith('pool:') && t.pool !== route.slice(5)) return false;
+        const p = pools().find((x) => x.name === t.pool);
+        if (!p || p.disabled) return false;
+        if (p.engines && p.engines.length && !p.engines.includes(engine)) return false;
+        if (t.kind === 'node') return !t.info || (t.info.tools || []).some((x) => x.name === engine);
+        return true;
+      });
+    }
+    function routeSelect(engine) {
+      const cur = (cfg.routes || {})[engine] || '';
+      const def = cfg.strategy || 'local';
+      const opts = [['', `Default (${placeText(def)})`], ['local', 'This machine'], ['pool', 'Worker pools'], ['hybrid', 'This machine + pools']]
+        .concat(pools().map((p) => ['pool:' + p.name, 'Pool ' + p.name + (p.disabled ? ' (disabled)' : '')]));
+      if (engine === 'loki-segment') {
+        // selection sessions need an addressable machine
+        for (const o of opts) if (o[0].startsWith('pool:') && (pools().find((p) => 'pool:' + p.name === o[0]) || {}).kind === 'runpod') o[1] += ' (no sessions)';
+      }
+      return `<select class="input" data-gx-route="${esc(engine)}" aria-label="Where ${esc(short(engine))} runs">${opts.map(([v, l]) => `<option value="${esc(v)}" ${v === cur ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>`;
+    }
+    function renderEngines() {
+      const lt = (status.targets || []).find((t) => t.kind === 'local');
+      $('gpu').textContent = lt ? `This GPU: ${lt.running ? lt.running + ' job(s) running' : 'idle'}` : '';
+      const byEngine = {};
+      for (const e of local) byEngine[e.engine] = e;
+      const rows = ENGINES.map(([engine, title, what]) => {
+        const eff = (status.placement || {})[engine] || 'local';
+        const own = (cfg.routes || {})[engine];
+        const e = byEngine[engine];
+        const needsHere = eff === 'local' || eff === 'hybrid' || cfg.fallback;
+        const installed = e && e.tool.state === 'installed' && (e.models || []).every((m) => m.state === 'installed');
+        const effNote = cfg.localOnly && usesPools(own || cfg.strategy) ? 'pools paused: running on this machine' : '';
+        let problem = '';
+        if (!cfg.localOnly && (eff === 'pool' || eff.startsWith('pool:')) && !servingTargets(engine, eff).length) {
+          problem = cfg.fallback ? 'no reachable worker runs it: jobs fall back to this machine' : 'no reachable worker runs it: its jobs will fail';
+        }
+        // red: its jobs cannot run anywhere; amber: it needs this machine but is not installed here yet
+        const dot = problem && !cfg.fallback ? 'bad' : needsHere && !installed ? 'busy' : 'ok';
+        const warn = needsHere && e && !installed ? '<span class="gx-muted" style="display:block">installs on first use here</span>' : '';
+        const usedHere = needsHere || problem;
+        return `<div class="gx-row gx-eng">
+          <span class="gx-name"><span class="gx-dot ${dot}"></span> <b>${esc(title)}</b> <span class="gx-muted">${esc(short(engine))} · ${esc(what)}</span></span>
+          <span>${routeSelect(engine)}${effNote ? `<span class="gx-muted" style="display:block">${esc(effNote)}</span>` : ''}${problem ? `<span class="gx-warn">${esc(problem)}</span>` : ''}</span>
+          <span class="gx-wide">${usedHere ? hereCell(e) + warn : '<span class="gx-muted">not used: runs on workers</span>'}</span>
+          <span class="gx-wide">${workersCell(engine)}</span>
         </div>`;
       });
-      $('local-tools').innerHTML = `<div class="wk-row local hdr"><span></span><span>Engine</span><span>Executable</span><span class="wide">Size</span><span class="wide">Models</span><span></span></div>` +
-        (rows.join('') || '<div class="wk-row local"><span></span><span class="wk-muted">No engines available on this platform.</span></div>');
+      $('engines').innerHTML = `<div class="gx-row gx-eng hdr"><span>Engine</span><span>Runs on</span><span>On this machine</span><span>On workers</span></div>` + rows.join('');
     }
-
-    // --- Placement
-    function routeOptions(cur) {
-      const pools = (cfg.pools || []).map((p) => p.name);
-      const opts = [['', 'follow the strategy'], ['local', 'this machine'], ['pool', 'any pool'], ['hybrid', 'this machine + pools']].concat(pools.map((n) => ['pool:' + n, 'pool ' + n]));
-      return opts.map(([v, l]) => `<option value="${esc(v)}" ${v === (cur || '') ? 'selected' : ''}>${esc(l)}</option>`).join('');
-    }
-    function renderPlacement() {
-      $('strategy').value = cfg.strategy || 'local';
-      $('fallback').checked = !!cfg.fallback;
-      $('routes').innerHTML = ENGINES.map((e) => `<label>${e}<select class="input" data-engine="${e}">${routeOptions((cfg.routes || {})[e])}</select></label>`).join('');
-      $('placement-live').textContent = 'now: ' + ENGINES.map((e) => e.replace('loki-', '') + ' → ' + (status.placement || {})[e]).join(' · ');
-    }
-    document.getElementById('engines-panel').addEventListener('change', (ev) => {
-      if (ev.target.closest('#wk-routes') || ev.target.id === 'wk-strategy' || ev.target.id === 'wk-fallback') placementDirty = true;
-    });
-    $('save-placement').onclick = () => {
+    $('engines').addEventListener('change', (ev) => {
+      const s = ev.target.closest('select[data-gx-route]');
+      if (!s) return;
       const c = clone();
-      c.strategy = $('strategy').value;
-      c.fallback = $('fallback').checked;
-      c.routes = {};
-      document.querySelectorAll('#wk-routes select').forEach((s) => { if (s.value) c.routes[s.dataset.engine] = s.value; });
-      save(c, $('placement-note'));
-    };
+      c.routes = c.routes || {};
+      if (s.value) c.routes[s.dataset.gxRoute] = s.value;
+      else delete c.routes[s.dataset.gxRoute];
+      save(c, short(s.dataset.gxRoute) + ' now runs on ' + placeText(s.value || c.strategy || 'local'));
+    });
 
-    // --- Pools
-    function gpuText(info) {
-      if (!info || !info.gpus) return '';
-      return info.gpus.map((g) => `${esc(g.name)} ${g.totalMb ? Math.round(g.totalMb / 1024) + ' GB' : ''}${g.busy ? ' (busy)' : ''}`).join(', ');
-    }
-    function enginesText(t) {
-      if (t.kind === 'runpod') {
-        const h = t.runpod;
-        return (t.engines && t.engines.length ? t.engines.map((e) => `<span class="wk-chip">${esc(e.replace('loki-', ''))}</span>`).join('') + '<br>' : '') +
-          (h ? `<span class="wk-muted">workers: ${h.workers.idle} idle, ${h.workers.running} running, ${h.workers.initializing} starting · queue ${h.jobs.inQueue}</span>` : '');
-      }
-      if (!t.info) return '';
-      return (t.info.tools || []).map((x) => `<span class="wk-chip ${x.resident && x.resident.length ? 'warm' : ''}" title="${esc((x.resident || []).map((r) => r.key + ' ' + r.mb + ' MB').join('\n') || 'no model loaded')}">${esc(x.name.replace('loki-', ''))}${x.resident && x.resident.length ? ' ●' : ''}</span>`).join('');
-    }
-    function targetRow(t) {
+    // --- 3. pools
+    function workerRow(t, p) {
       const dot = !t.healthy ? 'bad' : t.running > 0 ? 'busy' : 'ok';
       const name = t.key.includes('/') ? t.key.split('/').slice(1).join('/') : t.key;
-      return `<div class="wk-row">
-        <span class="wk-dot ${dot}"></span>
-        <span><b>${esc(name)}</b><br><span class="wk-muted">${esc(t.url || t.kind)}${t.info ? ' · v' + esc(t.info.version) : ''}</span>${t.error ? `<div class="wk-err">${esc(t.error)}</div>` : ''}</span>
-        <span class="wide">${enginesText(t)}</span>
-        <span class="wide wk-muted">${gpuText(t.info)}${t.transfer ? esc(t.transfer) : ''}</span>
-        <span>${t.running}/${t.slots}</span>
-        <span class="wide wk-muted">${t.info ? `${t.info.queued} queued · ${t.info.sessions} session(s)` : ''}</span>
-        <span>${t.kind === 'node' ? `<button class="btn btn-secondary wk-small" data-wk-remove-node="${esc(t.pool)}|${esc(t.url)}">Remove</button>` : ''}</span>
+      let what = '', gpu = '', load = `${t.running}/${t.slots}`;
+      if (t.kind === 'runpod') {
+        const h = t.runpod;
+        what = h ? `${h.workers.idle} idle · ${h.workers.running} running · ${h.workers.initializing} starting` : 'serverless endpoint';
+        gpu = esc(t.transfer || '');
+        if (h && h.jobs.inQueue) load += ` · ${h.jobs.inQueue} queued`;
+      } else if (t.info) {
+        what = (t.info.tools || []).map((x) => `<span class="gx-chip ${(x.resident || []).length ? 'ok' : ''}">${esc(short(x.name))}</span>`).join('');
+        gpu = (t.info.gpus || []).map((g) => `${esc(g.name)}${g.totalMb ? ' ' + Math.round(g.totalMb / 1024) + ' GB' : ''}`).join(', ');
+        if (t.info.queued) load += ` · ${t.info.queued} queued`;
+      }
+      const remove = t.kind === 'node' && !p.fromEnv ? `<button class="btn btn-secondary gx-small" type="button" data-gx-remove-node="${esc(p.name)}|${esc(t.url)}">Remove</button>` : '';
+      return `<div class="gx-row gx-wk">
+        <span class="gx-dot ${dot}" title="${!t.healthy ? 'unreachable' : t.running ? 'busy' : 'ready'}"></span>
+        <span class="gx-name"><b>${esc(name)}</b><span class="gx-muted">${esc(t.url || '')}${t.info ? ' · loki-worker ' + esc(t.info.version) : ''}</span>${t.error ? `<div class="gx-err">${esc(t.error)}</div>` : ''}</span>
+        <span class="gx-wide">${what}</span>
+        <span class="gx-wide gx-muted">${gpu}</span>
+        <span title="jobs running / GPU slots">${load}</span>
+        <span>${remove}</span>
       </div>`;
+    }
+    function poolEngines(p) {
+      // engines whose placement sends work to this pool and that its workers have
+      const ts = (status.targets || []).filter((t) => t.pool === p.name);
+      return ENGINES.map((x) => x[0]).filter((e) => {
+        const r = (status.placement || {})[e] || 'local';
+        const here = r === 'pool' || r === 'hybrid' || r === 'pool:' + p.name;
+        if (!here || (p.engines && p.engines.length && !p.engines.includes(e))) return false;
+        return p.kind === 'runpod' || ts.some((t) => !t.info || (t.info.tools || []).some((x) => x.name === e));
+      });
     }
     function renderPools() {
       const byPool = {};
-      for (const t of status.targets) if (t.pool) (byPool[t.pool] = byPool[t.pool] || []).push(t);
-      let html = '';
-      for (const p of cfg.pools || []) {
+      for (const t of status.targets || []) if (t.pool) (byPool[t.pool] = byPool[t.pool] || []).push(t);
+      $('pool-names').innerHTML = pools().filter((p) => p.kind !== 'runpod').map((p) => `<option value="${esc(p.name)}">`).join('');
+      if (!pools().length) {
+        $('pools').innerHTML = `<div class="gx-empty">No worker pools yet. Everything runs on this machine.<br>Add a worker to use another GPU: a second PC, a cloud VM or RunPod.</div>`;
+        $('add').hidden = false;
+        $('add-toggle').hidden = true;
+        return;
+      }
+      $('add-toggle').hidden = false;
+      $('pools').innerHTML = pools().map((p) => {
         const ts = byPool[p.name] || [];
-        const what = p.kind === 'runpod' ? 'RunPod serverless ' + esc(p.endpointId) : (p.nodes || []).length + ' node(s)';
-        html += `<div class="config-card config-card--pink" style="margin-bottom:var(--space-4)">
-          <div class="wk-head">
-            <div class="section-title">☁️ Pool ${esc(p.name)} <span class="wk-muted">(${what}${p.disabled ? ', disabled' : ''}${p.fromEnv ? ', from environment' : ''})</span></div>
-            <span class="wk-inline">
-              <button class="btn btn-secondary wk-small" data-wk-warm="${esc(p.name)}">Preload models</button>
-              ${p.fromEnv ? '' : `<button class="btn btn-secondary wk-small" data-wk-toggle="${esc(p.name)}">${p.disabled ? 'Enable' : 'Disable'}</button>
-              <button class="btn btn-secondary wk-small" data-wk-remove-pool="${esc(p.name)}">Remove pool</button>`}
+        const kind = p.kind === 'runpod' ? 'RunPod serverless · ' + esc(p.endpointId) : ts.length + ' worker' + (ts.length === 1 ? '' : 's');
+        const up = ts.filter((t) => t.healthy).length;
+        const serves = p.engines && p.engines.length ? ' · only ' + p.engines.map(short).join(', ') : '';
+        const routed = poolEngines(p);
+        const controls = p.fromEnv ? '<span class="gx-muted">from the environment (not saved)</span>' :
+          `<label class="gx-opt" style="align-items:center" title="A disabled pool keeps its settings but gets no work"><span class="gx-switch"><input type="checkbox" data-gx-toggle="${esc(p.name)}" ${p.disabled ? '' : 'checked'} /><span></span></span><span class="gx-muted">${p.disabled ? 'disabled' : 'enabled'}</span></label>
+           <button class="btn btn-secondary gx-small" type="button" data-gx-remove-pool="${esc(p.name)}">Remove pool</button>`;
+        return `<div class="gx-pool ${p.disabled ? 'off' : ''}">
+          <div class="gx-pool-head">
+            <span class="gx-name"><b>${esc(p.name)}</b><span class="gx-muted">${kind}${p.kind !== 'runpod' && ts.length ? ` · ${up} reachable` : ''}${serves}</span></span>
+            <span class="gx-actions">
+              <button class="btn btn-secondary gx-small" type="button" data-gx-warm="${esc(p.name)}" ${routed.length && !p.disabled ? '' : 'disabled'} title="${routed.length ? 'Load ' + routed.map(short).join(', ') + ' on every worker now, so the first job does not wait' : 'No engine runs on this pool yet'}">Preload models</button>
+              ${controls}
             </span>
           </div>
-          <div class="wk-table">
-            <div class="wk-row hdr"><span></span><span>Worker</span><span class="wide">Engines (● models loaded)</span><span class="wide">GPU</span><span>Busy</span><span class="wide">Queue</span><span></span></div>
-            ${ts.length ? ts.map(targetRow).join('') : `<div class="wk-row"><span></span><span class="wk-muted">${p.disabled ? 'Disabled.' : 'No active workers.'}</span></div>`}
+          <div class="gx-table">
+            <div class="gx-row gx-wk hdr"><span></span><span>Worker</span><span class="gx-wide">Engines (green: loaded)</span><span class="gx-wide">GPU</span><span>Busy</span><span></span></div>
+            ${ts.length ? ts.map((t) => workerRow(t, p)).join('') : `<div class="gx-row"><span class="gx-muted">${p.disabled ? 'Disabled.' : 'No workers in this pool.'}</span></div>`}
           </div>
         </div>`;
-      }
-      $('pools').innerHTML = html;
+      }).join('');
     }
+    $('add-toggle').onclick = () => { $('add').hidden = !$('add').hidden; };
+    $('add-kind').addEventListener('click', (ev) => {
+      const b = ev.target.closest('button[data-kind]');
+      if (!b) return;
+      $('add-kind').querySelectorAll('button').forEach((x) => x.classList.toggle('on', x === b));
+      $('add-nodes').hidden = b.dataset.kind !== 'nodes';
+      $('add-runpod').hidden = b.dataset.kind !== 'runpod';
+    });
 
-    // --- Add workers
-    $('node-probe').onclick = async () => {
+    // a new worker is no use while everything runs here: start using pools
+    function enablePools(c) {
+      if ((c.strategy || 'local') === 'local' && !Object.values(c.routes || {}).some(usesPools)) c.strategy = 'hybrid';
+    }
+    $('node-test').onclick = async () => {
       $('node-note').textContent = 'Testing…';
       try {
-        const j = await api('POST', '/api/engines/probe', { kind: 'nodes', url: $('node-url').value, token: $('node-token').value });
-        const i = j.info;
-        $('node-note').textContent = `OK: ${i.worker} (loki-worker ${i.version}), ${i.slots} GPU slot(s): ${(i.gpus || []).map((g) => g.name).join(', ')}; engines ${(i.tools || []).map((t) => t.name).join(', ')}${i.ready ? '' : ' — still preloading models'}`;
-      } catch (e) { $('node-note').textContent = 'Error: ' + e.message; }
+        const i = (await api('POST', '/api/engines/probe', { kind: 'nodes', url: $('node-url').value.trim(), token: $('node-token').value.trim() })).info;
+        $('node-note').textContent = `Connected: ${i.worker} (loki-worker ${i.version}) with ${(i.gpus || []).map((g) => g.name).join(', ') || 'no GPU'}; engines ${(i.tools || []).map((t) => short(t.name)).join(', ')}${i.ready ? '' : ' (still preloading models)'}.`;
+      } catch (e) { $('node-note').textContent = 'Could not reach the worker: ' + e.message; }
     };
-    $('node-add').onclick = () => {
+    $('node-add').onclick = async () => {
+      const url = $('node-url').value.trim();
+      if (!url) { $('node-note').textContent = 'Enter the worker\'s address.'; return; }
       const c = clone();
-      const pool = $('node-pool').value.trim() || 'gpu';
-      let p = (c.pools || []).find((x) => x.name.toLowerCase() === pool.toLowerCase());
-      if (!p) { p = { name: pool, kind: 'nodes', nodes: [] }; c.pools = (c.pools || []).concat([p]); }
-      if (p.kind === 'runpod') { $('node-note').textContent = 'Pool ' + pool + ' is a RunPod endpoint; pick another name.'; return; }
-      p.nodes = (p.nodes || []).concat([{ name: $('node-name').value.trim(), url: $('node-url').value.trim(), token: $('node-token').value.trim() }]);
-      if (c.strategy === 'local') c.strategy = 'pool';
-      save(c, $('node-note'));
+      const name = $('node-pool').value.trim() || 'gpu';
+      let p = (c.pools || []).find((x) => x.name.toLowerCase() === name.toLowerCase());
+      if (p && p.kind === 'runpod') { $('node-note').textContent = `${name} is a serverless pool; give this worker another pool name.`; return; }
+      if (!p) { p = { name, kind: 'nodes', nodes: [] }; c.pools = (c.pools || []).concat([p]); }
+      p.nodes = (p.nodes || []).concat([{ name: $('node-name').value.trim(), url, token: $('node-token').value.trim() }]);
+      const wasLocal = (c.strategy || 'local') === 'local';
+      enablePools(c);
+      if (await save(c, 'Worker added')) {
+        $('node-note').textContent = wasLocal ? 'Added. Placement switched to Both, so this machine and the new worker share the work; change it at the top.' : 'Added.';
+        ['node-url', 'node-token', 'node-name'].forEach((k) => ($(k).value = ''));
+      }
     };
     function rpPool() {
       const t = { root: $('rp-root').value.trim(), bucket: $('rp-bucket').value.trim(), endpoint: $('rp-s3-endpoint').value.trim(), region: $('rp-s3-region').value.trim(), accessKey: $('rp-s3-access').value.trim(), secretKey: $('rp-s3-secret').value.trim() };
       const engines = $('rp-engines').value.split(',').map((s) => s.trim()).filter(Boolean).map((s) => (s.startsWith('loki-') ? s : 'loki-' + s));
       return { name: $('rp-pool').value.trim() || 'serverless', kind: 'runpod', endpointId: $('rp-endpoint').value.trim(), apiKey: $('rp-key').value.trim(), maxJobs: parseInt($('rp-max').value, 10) || 4, engines, transfer: t.root || t.bucket ? t : null };
     }
-    $('rp-probe').onclick = async () => {
+    $('rp-test').onclick = async () => {
       $('rp-note').textContent = 'Testing…';
       try {
         const p = rpPool();
         const h = (await api('POST', '/api/engines/probe', { kind: 'runpod', endpointId: p.endpointId, apiKey: p.apiKey })).info;
-        $('rp-note').textContent = `OK: workers ${h.workers.idle} idle, ${h.workers.running} running; ${h.jobs.inQueue} queued`;
-      } catch (e) { $('rp-note').textContent = 'Error: ' + e.message; }
+        $('rp-note').textContent = `Connected: ${h.workers.idle} idle and ${h.workers.running} running worker(s), ${h.jobs.inQueue} job(s) queued.`;
+      } catch (e) { $('rp-note').textContent = 'Could not reach the endpoint: ' + e.message; }
     };
-    $('rp-add').onclick = () => {
-      const c = clone();
+    $('rp-add').onclick = async () => {
       const p = rpPool();
+      if (!p.endpointId || !p.apiKey) { $('rp-note').textContent = 'Enter the endpoint ID and API key.'; return; }
+      const c = clone();
       c.pools = (c.pools || []).filter((x) => x.name.toLowerCase() !== p.name.toLowerCase()).concat([p]);
-      if (c.strategy === 'local') c.strategy = 'pool';
-      save(c, $('rp-note'));
+      const wasLocal = (c.strategy || 'local') === 'local';
+      enablePools(c);
+      if (await save(c, 'Endpoint added')) $('rp-note').textContent = wasLocal ? 'Added. Placement switched to Both; change it at the top.' : 'Added.';
     };
 
-    // --- Row actions
+    // --- row actions
     document.getElementById('engines-panel').addEventListener('click', async (ev) => {
       const b = ev.target.closest('button');
       if (!b) return;
-      if (b.dataset.wkInstall) {
+      if (b.dataset.gxInstall) {
         b.disabled = true;
+        b.textContent = 'Starting…';
         try {
-          for (const id of b.dataset.wkInstall.split(',')) await api('POST', '/api/deps/models/' + encodeURIComponent(id) + '/download');
-        } catch (e) { alert(e.message); }
+          for (const id of b.dataset.gxInstall.split(',')) await api('POST', '/api/deps/models/' + encodeURIComponent(id) + '/download');
+          flash('Install started; progress shows here and on the Dependencies tab.', 'ok');
+        } catch (e) { flash('Install failed: ' + e.message, 'err'); }
         load().catch(() => {});
-      } else if (b.dataset.wkRemoveNode) {
-        const [pool, url] = b.dataset.wkRemoveNode.split('|');
-        if (!confirm('Remove ' + url + ' from pool ' + pool + '?')) return;
+      } else if (b.dataset.gxRemoveNode) {
+        const [pool, url] = b.dataset.gxRemoveNode.split('|');
+        if (!confirm(`Remove the worker ${url} from pool ${pool}? Its own machine keeps running.`)) return;
         const c = clone();
         const p = c.pools.find((x) => x.name === pool);
         p.nodes = p.nodes.filter((n) => n.url !== url);
-        save(c);
-      } else if (b.dataset.wkRemovePool) {
-        if (!confirm('Remove pool ' + b.dataset.wkRemovePool + '? (cloud resources it was created with keep running: use lokictl pool destroy)')) return;
+        if (!p.nodes.length) c.pools = c.pools.filter((x) => x !== p);
+        save(c, 'Worker removed');
+      } else if (b.dataset.gxRemovePool) {
+        if (!confirm(`Remove pool ${b.dataset.gxRemovePool}? Cloud machines it was created with keep running (lokictl pool destroy stops them).`)) return;
         const c = clone();
-        c.pools = c.pools.filter((x) => x.name !== b.dataset.wkRemovePool);
-        save(c);
-      } else if (b.dataset.wkToggle) {
-        const c = clone();
-        const p = c.pools.find((x) => x.name === b.dataset.wkToggle);
-        p.disabled = !p.disabled;
-        save(c);
-      } else if (b.dataset.wkWarm) {
-        const p = (cfg.pools || []).find((x) => x.name === b.dataset.wkWarm);
-        const which = prompt('Preload which engines? (comma separated)', (p && p.engines && p.engines.length ? p.engines : ['loki-retouch', 'loki-segment']).join(','));
-        if (!which) return;
+        c.pools = c.pools.filter((x) => x.name !== b.dataset.gxRemovePool);
+        for (const [e, r] of Object.entries(c.routes || {})) if (r === 'pool:' + b.dataset.gxRemovePool) delete c.routes[e];
+        save(c, 'Pool removed');
+      } else if (b.dataset.gxWarm) {
+        const p = pools().find((x) => x.name === b.dataset.gxWarm);
+        const engines = poolEngines(p);
+        b.disabled = true;
         try {
-          const j = await api('POST', '/api/engines/warm', { pool: b.dataset.wkWarm, engines: which.split(',').map((s) => s.trim()).filter(Boolean) });
-          alert(j.notes.join('\n'));
-        } catch (e) { alert(e.message); }
+          const j = await api('POST', '/api/engines/warm', { pool: p.name, engines });
+          const failed = j.notes.filter((n) => !/: warming /.test(n));
+          flash(failed.length ? 'Preload: ' + failed.join('; ') : 'Loading ' + engines.map(short).join(', ') + ' on ' + p.name + ' in the background.', failed.length ? 'err' : 'ok');
+        } catch (e) { flash('Preload failed: ' + e.message, 'err'); }
+        b.disabled = false;
       }
+    });
+    document.getElementById('engines-panel').addEventListener('change', (ev) => {
+      const t = ev.target.closest('input[data-gx-toggle]');
+      if (!t) return;
+      const c = clone();
+      const p = c.pools.find((x) => x.name === t.dataset.gxToggle);
+      p.disabled = !t.checked;
+      save(c, 'Pool ' + p.name + (p.disabled ? ' disabled' : ' enabled'));
     });
 
     return {
       show() {
-        load().catch((e) => { $('local-tools').innerHTML = '<div class="wk-row local"><span></span><span class="wk-err">' + esc(e.message) + '</span></div>'; });
-        if (!timer) timer = setInterval(() => load().catch(() => {}), 5000);
+        load().catch((e) => { $('engines').innerHTML = '<div class="gx-row"><span class="gx-err">' + esc(e.message) + '</span></div>'; });
+        if (!timer) timer = setInterval(() => { const a = document.activeElement; if (!saving && !(a && a.closest && a.closest('#gx-engines select'))) load().catch(() => {}); }, 5000);
       },
       hide() {
         if (timer) clearInterval(timer);
         timer = null;
       },
+      // for the AI Models tab: live placement + installs
+      fetch: () => api('GET', '/api/engines?local=1'),
     };
   })();
 </script>

@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -29,6 +30,10 @@ type TextModel struct {
 	// Managed: the dependency-managed default model.
 	Managed bool `json:"managed"`
 }
+
+// splitShard matches the second and later files of a split GGUF
+// (model-00002-of-00003.gguf): the first file stands for the model.
+var splitShard = regexp.MustCompile(`-0*([2-9]|[1-9]\d+)-of-\d+\.gguf$`)
 
 // textModelDirs are the folders loki-scribe searches, as far as the server
 // can tell: the managed default model's folder, $LOKI_MODELS and LM Studio's.
@@ -64,7 +69,7 @@ func LocalTextModels() []TextModel {
 				return nil
 			}
 			name := strings.ToLower(d.Name())
-			if !strings.HasSuffix(name, ".gguf") || strings.Contains(name, "mmproj") || seen[p] {
+			if !strings.HasSuffix(name, ".gguf") || strings.Contains(name, "mmproj") || seen[p] || splitShard.MatchString(name) {
 				return nil
 			}
 			seen[p] = true

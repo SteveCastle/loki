@@ -39,3 +39,13 @@ func mustWrite(t *testing.T, p string) {
 		t.Fatal(err)
 	}
 }
+
+func TestSplitShard(t *testing.T) {
+	for name, want := range map[string]bool{
+		"m-00001-of-00002.gguf": false, "m-00002-of-00002.gguf": true, "m-00010-of-00012.gguf": true, "m-q4_k_m.gguf": false,
+	} {
+		if got := splitShard.MatchString(name); got != want {
+			t.Errorf("splitShard(%q) = %v; want %v", name, got, want)
+		}
+	}
+}

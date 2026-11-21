@@ -287,6 +287,52 @@
         display: block;
       }
 
+      .ai-overview {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+        gap: var(--space-5, 20px);
+      }
+      .ai-col {
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-2);
+      }
+      .ai-col-title {
+        font-weight: 600;
+        color: var(--text-primary);
+      }
+      .ai-chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+      }
+      .ai-chip {
+        padding: 1px 8px;
+        border-radius: 10px;
+        font-size: 11px;
+        border: 1px solid var(--border-subtle);
+        background: var(--bg-surface);
+        color: var(--text-secondary);
+      }
+      .ai-link {
+        font-size: var(--text-sm);
+        color: var(--accent-primary);
+        text-decoration: none;
+      }
+      .ai-status {
+        font-size: var(--text-sm);
+        color: var(--text-secondary);
+        background: var(--bg-surface);
+        border: 1px solid var(--border-subtle);
+        border-radius: var(--radius-md);
+        padding: var(--space-2) var(--space-3);
+        margin-bottom: var(--space-4);
+      }
+      .ai-status.warn {
+        border-color: #d29922;
+        color: #d29922;
+      }
+
       .hint {
         color: var(--text-muted);
         font-size: var(--text-sm);
@@ -789,7 +835,7 @@
             General
           </button>
           <button class="tab-button" data-tab="ai">
-            AI &amp; Inference
+            AI Models
           </button>
           <button class="tab-button" data-tab="search">
             Search &amp; Faces
@@ -946,120 +992,139 @@
         <div id="tab-ai" class="tab-content">
           <div class="config-sections">
             <div class="config-card config-card--purple">
-              <div class="section-title">🧠 Text Model</div>
-              <div class="section-subtitle">
-                Descriptions and every other image &rarr; text or text &rarr;
-                text job run on loki-scribe, a standalone engine for
-                Qwen3.5 / Qwen3.8 GGUF models. It runs on this GPU (kept
-                loaded between jobs, released when idle or when an image or
-                video engine needs the GPU) or on a GPU worker pool: route
-                <code>loki-scribe</code> on the GPU Engines tab.
-              </div>
-              <div class="fields">
-                <div class="field">
-                  <label class="label">Model</label>
-                  <input
-                    id="text-model"
-                    class="input"
-                    type="text"
-                    list="text-model-list"
-                    placeholder="default: Qwen3.8 27B Q4_K_M (downloaded on first use)"
-                    value="{{.Config.TextModel}}"
-                  />
-                  <datalist id="text-model-list"></datalist>
-                  <small class="hint">
-                    A <code>.gguf</code> path, a Hugging Face
-                    <code>publisher/repo[/file.gguf]</code> (downloaded when
-                    missing, also on pool workers), or a model name found in
-                    LM Studio's folders. Architecture qwen35 (Qwen3.5 /
-                    Qwen3.8 dense); quantizations Q4_K, Q5_K, Q6_K, Q8_0, F16.
-                    <span id="text-model-found"></span>
-                  </small>
+              <div class="section-title">🧭 How AI runs here</div>
+              <div class="ai-overview">
+                <div class="ai-col">
+                  <div class="ai-col-title">GPU engines</div>
+                  <div class="hint">
+                    Descriptions &amp; text, image editing, video, image
+                    generation and object selection. They run on this
+                    machine's GPU or on worker pools.
+                  </div>
+                  <div id="ai-placement" class="ai-chips"></div>
+                  <a href="#engines" class="ai-link" data-goto="engines">Choose where they run &rarr;</a>
                 </div>
-                <div class="field">
-                  <label class="label">Vision projector (optional)</label>
-                  <input
-                    id="text-mmproj"
-                    class="input"
-                    type="text"
-                    placeholder="the mmproj*.gguf beside the model"
-                    value="{{.Config.TextMMProj}}"
-                  />
-                </div>
-                <div class="field">
-                  <label class="label">Requests decoded together</label>
-                  <input
-                    id="text-parallel"
-                    class="input"
-                    type="number"
-                    min="1"
-                    max="8"
-                    value="{{.Config.TextParallel}}"
-                  />
-                  <small class="hint">
-                    Sequences one engine generates at once (1-8). Decoding
-                    reads the weights once per step for all of them, so 8 is
-                    several times the throughput of 1; the engine lowers it
-                    when GPU memory runs short.
-                  </small>
-                </div>
-                <div class="field">
-                  <label class="label">Requests per engine run</label>
-                  <input
-                    id="text-batch"
-                    class="input"
-                    type="number"
-                    min="1"
-                    value="{{.Config.TextBatch}}"
-                  />
-                  <small class="hint">
-                    Concurrent describe items are gathered into runs of up to
-                    this many images (one run per GPU worker slot at a time).
-                  </small>
-                </div>
-                <div class="field">
-                  <label class="label">Max vision tokens per image</label>
-                  <input
-                    id="text-max-image-tokens"
-                    class="input"
-                    type="number"
-                    min="64"
-                    value="{{.Config.TextMaxImageTokens}}"
-                  />
-                  <small class="hint">
-                    One token per 32&times;32 pixels; larger images are scaled
-                    down. 2048 &asymp; 2 megapixels; raise it for small text.
-                  </small>
-                </div>
-              </div>
-
-              <!-- Prompts apply to whichever provider is active. -->
-              <div class="fields" style="margin-top: var(--space-4)">
-                <div class="field">
-                  <label class="label">Describe prompt</label>
-                  <textarea id="describe-prompt" class="input" rows="4">
-{{.Config.DescribePrompt}}</textarea
-                  >
-                </div>
-                <div class="field">
-                  <label class="label">Max concurrent local compute jobs</label>
+                <div class="ai-col">
+                  <div class="ai-col-title">Local models</div>
+                  <div class="hint">
+                    Auto-tagging (below), search embeddings and faces
+                    (Search &amp; Faces tab) and transcription always run on
+                    this machine, on the CPU or GPU.
+                  </div>
+                  <label class="label" for="local-compute-concurrency" style="margin-top: var(--space-3)">Heavy local jobs at once</label>
                   <input
                     id="local-compute-concurrency"
                     class="input"
                     type="number"
                     min="1"
+                    style="max-width: 120px"
                     value="{{.Config.LocalComputeConcurrency}}"
                   />
                   <small class="hint">
-                    Machine-wide cap across ALL resource-intensive local jobs
-                    — embedding, tagging, face scanning, transcription, and
-                    text generation — regardless of their individual
-                    limits above. 1 (recommended for a single GPU) runs one
-                    heavy job at a time; each job still parallelizes
-                    internally. Work sent to a GPU worker pool doesn't count
-                    against it.
+                    How many tagging, embedding, face, transcription and
+                    local text jobs may run at the same time. Each job already
+                    uses the whole machine, so 1 is right for a single GPU.
+                    Work on worker pools does not count.
                   </small>
                 </div>
+              </div>
+            </div>
+
+            <div class="config-card config-card--purple">
+              <div class="section-title">📝 Descriptions &amp; text</div>
+              <div class="section-subtitle">
+                Image descriptions, text read from images and LoRA captions run
+                on loki-scribe with a Qwen3.5 / Qwen3.8 model (vision included).
+              </div>
+              <div class="ai-status" id="ai-text-status">Checking…</div>
+              <div class="fields">
+                <div class="field">
+                  <label class="label" for="text-model-pick">Model</label>
+                  <select id="text-model-pick" class="input"></select>
+                  <input
+                    id="text-model"
+                    class="input"
+                    type="text"
+                    style="margin-top: var(--space-2)"
+                    placeholder="a .gguf path, a Hugging Face publisher/repo[/file.gguf], or a model name"
+                    value="{{.Config.TextModel}}"
+                    hidden
+                  />
+                  <small class="hint" id="text-model-hint">
+                    Models downloaded in LM Studio are found automatically. A
+                    Hugging Face repo downloads on first use, here and on
+                    workers.
+                  </small>
+                </div>
+                <div class="field">
+                  <label class="label" for="describe-prompt">Describe prompt</label>
+                  <textarea id="describe-prompt" class="input" rows="4">
+{{.Config.DescribePrompt}}</textarea
+                  >
+                  <small class="hint">
+                    Used by the Descriptions task unless a job gives its own
+                    prompt.
+                  </small>
+                </div>
+                <details>
+                  <summary class="label" style="cursor: pointer">Advanced: speed and memory</summary>
+                  <div class="field" style="margin-top: var(--space-3)">
+                    <label class="label" for="text-max-image-tokens">Image detail</label>
+                    <input
+                      id="text-max-image-tokens"
+                      class="input"
+                      type="number"
+                      min="64"
+                      value="{{.Config.TextMaxImageTokens}}"
+                    />
+                    <small class="hint">
+                      Most vision tokens per image (one per 32&times;32 pixels;
+                      bigger images are scaled down). 2048 &asymp; 2 megapixels.
+                      Raise it to read small text, lower it for speed.
+                    </small>
+                  </div>
+                  <div class="field-row">
+                    <div class="field">
+                      <label class="label" for="text-parallel">Images in flight per GPU</label>
+                      <input
+                        id="text-parallel"
+                        class="input"
+                        type="number"
+                        min="1"
+                        max="8"
+                        value="{{.Config.TextParallel}}"
+                      />
+                      <small class="hint">
+                        1-8 answers written at the same time. 8 is several
+                        times faster than 1 for little extra memory.
+                      </small>
+                    </div>
+                    <div class="field">
+                      <label class="label" for="text-batch">Images per run</label>
+                      <input
+                        id="text-batch"
+                        class="input"
+                        type="number"
+                        min="1"
+                        value="{{.Config.TextBatch}}"
+                      />
+                      <small class="hint">
+                        Waiting images are sent to a GPU in groups of up to
+                        this many.
+                      </small>
+                    </div>
+                  </div>
+                  <div class="field">
+                    <label class="label" for="text-mmproj">Vision projector</label>
+                    <input
+                      id="text-mmproj"
+                      class="input"
+                      type="text"
+                      placeholder="automatic: the mmproj*.gguf next to the model"
+                      value="{{.Config.TextMMProj}}"
+                    />
+                  </div>
+                </details>
               </div>
             </div>
 
@@ -2484,36 +2549,137 @@
           .catch((err) => setStatus('Error: ' + err, 'error'));
       });
 
-      // Text models on this machine, offered as suggestions for the model field.
-      (function populateTextModels() {
-        const list = document.getElementById('text-model-list');
-        const found = document.getElementById('text-model-found');
-        fetch('/api/text-models')
-          .then((r) => r.json())
-          .then((data) => {
-            const models = Array.isArray(data.models) ? data.models : [];
-            list.innerHTML = '';
-            let usable = 0;
-            for (const m of models) {
-              if (!m.supported) continue;
-              usable++;
-              const opt = document.createElement('option');
-              opt.value = m.spec;
-              const gb = (m.sizeBytes / 1e9).toFixed(1);
-              opt.label =
-                (m.managed ? 'default (managed) · ' : '') +
-                m.name +
-                ' · ' +
-                gb +
-                ' GB' +
-                (m.vision ? ' · vision' : ' · text only');
-              list.appendChild(opt);
+      // AI Models tab: the text-model picker (models found on this machine
+      // via /api/text-models), the engine/placement status line, and the live
+      // placement chips of the overview card.
+      (function aiModelsTab() {
+        const pick = document.getElementById('text-model-pick');
+        const input = document.getElementById('text-model');
+        const statusEl = document.getElementById('ai-text-status');
+        const OTHER = '\u0000other';
+        const NAMES = {
+          'loki-scribe': 'Descriptions',
+          'loki-retouch': 'Image editing',
+          'loki-reshoot': 'Video',
+          'loki-dream': 'Image generation',
+          'loki-segment': 'Selection',
+        };
+        const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9.]/g, '');
+        const gb = (b) => (b / 1e9).toFixed(1) + ' GB';
+        const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+        let models = [];
+        let engines = null;
+
+        // the found model a stored value refers to (spec, path, or a name the
+        // engine would match against the folder / file names)
+        function matchModel(v) {
+          if (!v) return models.find((m) => m.managed) || null;
+          const n = norm(v);
+          return (
+            models.find((m) => m.spec && m.spec.toLowerCase() === v.toLowerCase()) ||
+            models.find((m) => norm(m.path) === n) ||
+            models.find((m) => norm(m.spec + '/' + m.name).includes(n)) ||
+            null
+          );
+        }
+        function place(r) {
+          if (!r || r === 'local') return 'this machine';
+          if (r === 'pool') return 'worker pools';
+          if (r === 'hybrid') return 'this machine + pools';
+          return r.startsWith('pool:') ? 'pool ' + r.slice(5) : r;
+        }
+        function renderPicker() {
+          const cur = input.value.trim();
+          const supported = models.filter((m) => m.supported && !m.managed);
+          const other = models.filter((m) => !m.supported);
+          const managed = models.find((m) => m.managed);
+          let html = `<option value="">Default: Qwen3.8 27B Q4_K_M${managed ? ' (installed)' : ' (downloads on first use, 17.7 GB)'}</option>`;
+          if (supported.length) {
+            html += '<optgroup label="Found on this machine">' +
+              supported.map((m) => `<option value="${esc(m.spec)}">${esc(m.name.replace(/\.gguf$/i, ''))} · ${gb(m.sizeBytes)}${m.vision ? '' : ' · text only'}</option>`).join('') +
+              '</optgroup>';
+          }
+          if (other.length) {
+            const archs = [...new Set(other.map((m) => m.arch || 'unknown'))].join(', ');
+            html += `<option disabled>${other.length} other GGUF model(s) found but not supported (${esc(archs)}): needs Qwen3.5 / Qwen3.8</option>`;
+          }
+          html += `<option value="${OTHER}">Another model (path, Hugging Face repo or name)…</option>`;
+          pick.innerHTML = html;
+          const m = matchModel(cur);
+          if (!cur) pick.value = '';
+          else if (m && !m.managed && m.supported) pick.value = m.spec;
+          else pick.value = OTHER;
+          // a name or path that resolves to a listed model keeps its spelling
+          input.hidden = pick.value !== OTHER;
+        }
+        pick.addEventListener('change', () => {
+          if (pick.value === OTHER) {
+            input.hidden = false;
+            input.focus();
+          } else {
+            input.value = pick.value;
+            input.hidden = true;
+          }
+          renderStatus();
+        });
+        input.addEventListener('input', renderStatus);
+
+        function renderStatus() {
+          const cur = input.value.trim();
+          const m = matchModel(cur);
+          const parts = [];
+          let warn = false;
+          if (engines) {
+            const r = (engines.status.placement || {})['loki-scribe'] || 'local';
+            parts.push('Runs on ' + place(r));
+            const e = (engines.local || []).find((x) => x.engine === 'loki-scribe');
+            const runsHere = r === 'local' || r === 'hybrid';
+            if (runsHere && e) {
+              if (e.tool.state === 'installed') parts.push('engine installed' + (e.tool.source === 'user' ? ' (your build)' : ''));
+              else parts.push('engine installs on first use');
             }
-            found.textContent = usable
-              ? ' ' + usable + ' usable model(s) found on this machine: pick one from the list.'
-              : '';
+          }
+          if (m) {
+            parts.push((m.managed ? 'default model installed' : 'model found: ' + m.name) + ' (' + gb(m.sizeBytes) + (m.vision ? ', reads images' : ', text only: cannot describe images') + ')');
+            if (!m.vision) warn = true;
+          } else if (!cur) {
+            parts.push('default model downloads on first use (17.7 GB)');
+          } else if (cur.split('/').length >= 2 && !/^[a-zA-Z]:|^\//.test(cur)) {
+            parts.push('not on this machine: downloads from Hugging Face on first use');
+          } else {
+            parts.push('not found on this machine (workers may still have it)');
+            warn = true;
+          }
+          statusEl.textContent = parts.join(' · ');
+          statusEl.classList.toggle('warn', warn);
+        }
+        function renderPlacement() {
+          const el = document.getElementById('ai-placement');
+          if (!engines) return;
+          const pl = engines.status.placement || {};
+          el.innerHTML = Object.keys(NAMES)
+            .map((e) => `<span class="ai-chip">${NAMES[e]}: ${esc(place(pl[e]))}</span>`)
+            .join('');
+        }
+        document.querySelectorAll('[data-goto]').forEach((a) =>
+          a.addEventListener('click', (ev) => {
+            ev.preventDefault();
+            const b = document.querySelector(`.tab-button[data-tab="${a.dataset.goto}"]`);
+            if (b) b.click();
           })
-          .catch(() => {});
+        );
+        Promise.all([
+          fetch('/api/text-models').then((r) => r.json()).then((d) => { models = Array.isArray(d.models) ? d.models : []; }).catch(() => {}),
+          window.enginesPanel.fetch().then((j) => { engines = j; }).catch(() => {}),
+        ]).then(() => {
+          renderPicker();
+          renderStatus();
+          renderPlacement();
+        });
+        // placement can change on the GPU Engines tab
+        document.querySelector('.tab-button[data-tab="ai"]').addEventListener('click', () => {
+          window.enginesPanel.fetch().then((j) => { engines = j; renderStatus(); renderPlacement(); }).catch(() => {});
+        });
       })();
 
       // Data Transfer (export / import)
