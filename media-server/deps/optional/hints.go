@@ -15,12 +15,6 @@ func hintFor(o Optional) InstallHint {
 			{OS: "windows", Label: "pip", Command: "pip install --user gallery-dl"},
 			{OS: "linux", Label: "pipx", Command: "pipx install gallery-dl"},
 		}
-	case "ollama":
-		h.Commands = []OSCmd{
-			{OS: "darwin", Label: "Homebrew", Command: "brew install ollama"},
-			{OS: "windows", Label: "Download", Command: "Download installer from https://ollama.com/download/windows"},
-			{OS: "linux", Label: "Shell installer", Command: "curl -fsSL https://ollama.com/install.sh | sh"},
-		}
 	case "dce":
 		h.Commands = []OSCmd{
 			{OS: "darwin", Label: "Homebrew", Command: "brew install --cask discord-chat-exporter"},

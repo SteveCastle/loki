@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 )
 
@@ -11,12 +12,13 @@ import (
 func TestDefaultConfig(t *testing.T) {
 	cfg := defaultConfig()
 
-	if cfg.OllamaBaseURL != "http://localhost:11434" {
-		t.Errorf("Default OllamaBaseURL = %q; want %q", cfg.OllamaBaseURL, "http://localhost:11434")
+	// Text generation runs loki-scribe: no model configured means the engine
+	// default; the batching knobs have defaults.
+	if cfg.TextModel != "" {
+		t.Errorf("Default TextModel = %q; want empty (engine default)", cfg.TextModel)
 	}
-
-	if cfg.OllamaModel != "llama3.2-vision" {
-		t.Errorf("Default OllamaModel = %q; want %q", cfg.OllamaModel, "llama3.2-vision")
+	if cfg.TextParallel != DefaultTextParallel || cfg.TextBatch != DefaultTextBatch || cfg.TextMaxImageTokens != DefaultTextMaxImageTokens {
+		t.Errorf("Default text knobs = %d/%d/%d", cfg.TextParallel, cfg.TextBatch, cfg.TextMaxImageTokens)
 	}
 
 	if cfg.DescribePrompt == "" {
@@ -31,50 +33,6 @@ func TestDefaultConfig(t *testing.T) {
 		t.Errorf("Default CharacterThreshold = %f; want 0.85", cfg.OnnxTagger.CharacterThreshold)
 	}
 
-	// RunPod is opt-in; empty by default keeps Ollama as the vision backend.
-	if cfg.RunPodEndpoint != "" {
-		t.Errorf("Default RunPodEndpoint = %q; want empty", cfg.RunPodEndpoint)
-	}
-	if cfg.RunPodAPIKey != "" {
-		t.Errorf("Default RunPodAPIKey = %q; want empty", cfg.RunPodAPIKey)
-	}
-
-	// Default provider is "ollama" so fresh installs match the pre-tab
-	// behavior. Migration in Load() upgrades older configs with RunPod
-	// fields to "runpod" automatically.
-	if cfg.InferenceProvider != "ollama" {
-		t.Errorf("Default InferenceProvider = %q; want \"ollama\"", cfg.InferenceProvider)
-	}
-
-	// Per-provider concurrency defaults: Ollama / LM Studio / llama.cpp
-	// 1 (single-GPU local), RunPod 4 (serverless scales).
-	if cfg.InferenceConcurrency.Ollama != 1 {
-		t.Errorf("Default InferenceConcurrency.Ollama = %d; want 1", cfg.InferenceConcurrency.Ollama)
-	}
-	if cfg.InferenceConcurrency.RunPod != 4 {
-		t.Errorf("Default InferenceConcurrency.RunPod = %d; want 4", cfg.InferenceConcurrency.RunPod)
-	}
-	if cfg.InferenceConcurrency.LMStudio != 1 {
-		t.Errorf("Default InferenceConcurrency.LMStudio = %d; want 1", cfg.InferenceConcurrency.LMStudio)
-	}
-	if cfg.InferenceConcurrency.LlamaCpp != 1 {
-		t.Errorf("Default InferenceConcurrency.LlamaCpp = %d; want 1", cfg.InferenceConcurrency.LlamaCpp)
-	}
-	if cfg.InferenceConcurrency.Strata != 1 {
-		t.Errorf("Default InferenceConcurrency.Strata = %d; want 1", cfg.InferenceConcurrency.Strata)
-	}
-
-	// Defaults for the OpenAI-compatible local backends point at their
-	// upstream default ports.
-	if cfg.LMStudioBaseURL != "http://localhost:1234" {
-		t.Errorf("Default LMStudioBaseURL = %q; want %q", cfg.LMStudioBaseURL, "http://localhost:1234")
-	}
-	if cfg.LlamaCppBaseURL != "http://localhost:8080" {
-		t.Errorf("Default LlamaCppBaseURL = %q; want %q", cfg.LlamaCppBaseURL, "http://localhost:8080")
-	}
-	if cfg.StrataBaseURL != "http://127.0.0.1:8080" {
-		t.Errorf("Default StrataBaseURL = %q; want %q", cfg.StrataBaseURL, "http://127.0.0.1:8080")
-	}
 }
 
 // TestDefaultDownloadPath verifies the download path generation
@@ -103,10 +61,9 @@ func TestGetSet(t *testing.T) {
 	defer Set(original)
 
 	testConfig := Config{
-		DBPath:        "/test/path/db.sqlite",
-		DownloadPath:  "/test/downloads",
-		OllamaBaseURL: "http://test:11434",
-		OllamaModel:   "test-model",
+		DBPath:       "/test/path/db.sqlite",
+		DownloadPath: "/test/downloads",
+		TextModel:    "test-model",
 	}
 
 	Set(testConfig)
@@ -119,11 +76,8 @@ func TestGetSet(t *testing.T) {
 	if retrieved.DownloadPath != testConfig.DownloadPath {
 		t.Errorf("Get().DownloadPath = %q; want %q", retrieved.DownloadPath, testConfig.DownloadPath)
 	}
-	if retrieved.OllamaBaseURL != testConfig.OllamaBaseURL {
-		t.Errorf("Get().OllamaBaseURL = %q; want %q", retrieved.OllamaBaseURL, testConfig.OllamaBaseURL)
-	}
-	if retrieved.OllamaModel != testConfig.OllamaModel {
-		t.Errorf("Get().OllamaModel = %q; want %q", retrieved.OllamaModel, testConfig.OllamaModel)
+	if retrieved.TextModel != testConfig.TextModel {
+		t.Errorf("Get().TextModel = %q; want %q", retrieved.TextModel, testConfig.TextModel)
 	}
 }
 
@@ -244,8 +198,7 @@ func TestConfigStructFields(t *testing.T) {
 	cfg := Config{
 		DBPath:            "/path/to/db",
 		DownloadPath:      "/path/to/downloads",
-		OllamaBaseURL:     "http://localhost:11434",
-		OllamaModel:       "model",
+		TextModel:         "model",
 		DescribePrompt:    "describe prompt",
 		FasterWhisperPath: "/path/to/whisper",
 		DiscordToken:      "token",
@@ -286,7 +239,7 @@ func TestConfigJSONMarshal(t *testing.T) {
 	}
 
 	// Check expected keys exist
-	expectedKeys := []string{"dbPath", "downloadPath", "ollamaBaseUrl", "ollamaModel", "describePrompt", "onnxTagger"}
+	expectedKeys := []string{"dbPath", "downloadPath", "textModel", "describePrompt", "onnxTagger"}
 	for _, key := range expectedKeys {
 		if _, ok := parsed[key]; !ok {
 			t.Errorf("Expected key %q not found in JSON output", key)
@@ -299,8 +252,7 @@ func TestConfigJSONUnmarshal(t *testing.T) {
 	jsonData := `{
 		"dbPath": "/test/db.sqlite",
 		"downloadPath": "/test/downloads",
-		"ollamaBaseUrl": "http://test:11434",
-		"ollamaModel": "test-model",
+		"textModel": "org/repo/model.gguf",
 		"describePrompt": "describe",
 		"onnxTagger": {
 			"modelPath": "/model.onnx",
@@ -318,8 +270,8 @@ func TestConfigJSONUnmarshal(t *testing.T) {
 	if cfg.DBPath != "/test/db.sqlite" {
 		t.Errorf("DBPath = %q; want %q", cfg.DBPath, "/test/db.sqlite")
 	}
-	if cfg.OllamaBaseURL != "http://test:11434" {
-		t.Errorf("OllamaBaseURL = %q; want %q", cfg.OllamaBaseURL, "http://test:11434")
+	if cfg.TextModel != "org/repo/model.gguf" {
+		t.Errorf("TextModel = %q; want %q", cfg.TextModel, "org/repo/model.gguf")
 	}
 	if cfg.OnnxTagger.ModelPath != "/model.onnx" {
 		t.Errorf("OnnxTagger.ModelPath = %q; want %q", cfg.OnnxTagger.ModelPath, "/model.onnx")
@@ -478,31 +430,17 @@ func TestApplyEnvOverrides(t *testing.T) {
 
 	// Set env vars
 	envs := map[string]string{
-		"LOWKEY_DB_PATH":                        "/env/db.sqlite",
-		"LOWKEY_PORT":                           "9999",
-		"LOWKEY_DOWNLOAD_PATH":                  "/env/downloads",
-		"LOWKEY_OLLAMA_BASE_URL":                "http://env-ollama:11434",
-		"LOWKEY_OLLAMA_MODEL":                   "env-model",
-		"LOWKEY_INFERENCE_PROVIDER":             "runpod",
-		"LOWKEY_RUNPOD_ENDPOINT":                "https://api.runpod.ai/v2/abc123/run",
-		"LOWKEY_RUNPOD_API_KEY":                 "env-runpod-key",
-		"LOWKEY_INFERENCE_OLLAMA_CONCURRENCY":   "2",
-		"LOWKEY_INFERENCE_RUNPOD_CONCURRENCY":   "8",
-		"LOWKEY_LMSTUDIO_BASE_URL":              "http://env-lmstudio:1234",
-		"LOWKEY_LMSTUDIO_MODEL":                 "env-llava",
-		"LOWKEY_LMSTUDIO_API_KEY":               "env-lmstudio-key",
-		"LOWKEY_LLAMACPP_BASE_URL":              "http://env-llamacpp:8080",
-		"LOWKEY_LLAMACPP_MODEL":                 "env-llama",
-		"LOWKEY_LLAMACPP_API_KEY":               "env-llamacpp-key",
-		"LOWKEY_INFERENCE_LMSTUDIO_CONCURRENCY": "3",
-		"LOWKEY_INFERENCE_LLAMACPP_CONCURRENCY": "5",
-		"LOWKEY_STRATA_BASE_URL":                "http://env-strata:8080",
-		"LOWKEY_STRATA_MODEL":                   "env-qwen",
-		"LOWKEY_STRATA_API_KEY":                 "env-strata-key",
-		"LOWKEY_INFERENCE_STRATA_CONCURRENCY":   "2",
-		"LOWKEY_JWT_SECRET":                     "env-secret",
-		"LOWKEY_DISCORD_TOKEN":                  "env-discord",
-		"LOWKEY_FASTER_WHISPER_PATH":            "/env/whisper",
+		"LOWKEY_DB_PATH":               "/env/db.sqlite",
+		"LOWKEY_PORT":                  "9999",
+		"LOWKEY_DOWNLOAD_PATH":         "/env/downloads",
+		"LOWKEY_TEXT_MODEL":            "org/repo/env.gguf",
+		"LOWKEY_TEXT_MMPROJ":           "/env/mmproj.gguf",
+		"LOWKEY_TEXT_PARALLEL":         "4",
+		"LOWKEY_TEXT_BATCH":            "32",
+		"LOWKEY_TEXT_MAX_IMAGE_TOKENS": "1024",
+		"LOWKEY_JWT_SECRET":            "env-secret",
+		"LOWKEY_DISCORD_TOKEN":         "env-discord",
+		"LOWKEY_FASTER_WHISPER_PATH":   "/env/whisper",
 	}
 	for k, v := range envs {
 		t.Setenv(k, v)
@@ -519,62 +457,11 @@ func TestApplyEnvOverrides(t *testing.T) {
 	if c.DownloadPath != "/env/downloads" {
 		t.Errorf("DownloadPath = %q; want %q", c.DownloadPath, "/env/downloads")
 	}
-	if c.OllamaBaseURL != "http://env-ollama:11434" {
-		t.Errorf("OllamaBaseURL = %q; want %q", c.OllamaBaseURL, "http://env-ollama:11434")
+	if c.TextModel != "org/repo/env.gguf" || c.TextMMProj != "/env/mmproj.gguf" {
+		t.Errorf("TextModel/TextMMProj = %q/%q; want the env values", c.TextModel, c.TextMMProj)
 	}
-	if c.OllamaModel != "env-model" {
-		t.Errorf("OllamaModel = %q; want %q", c.OllamaModel, "env-model")
-	}
-	if c.RunPodEndpoint != "https://api.runpod.ai/v2/abc123/run" {
-		t.Errorf("RunPodEndpoint = %q; want %q", c.RunPodEndpoint, "https://api.runpod.ai/v2/abc123/run")
-	}
-	if c.RunPodAPIKey != "env-runpod-key" {
-		t.Errorf("RunPodAPIKey = %q; want %q", c.RunPodAPIKey, "env-runpod-key")
-	}
-	if c.InferenceProvider != "runpod" {
-		t.Errorf("InferenceProvider = %q; want %q", c.InferenceProvider, "runpod")
-	}
-	if c.InferenceConcurrency.Ollama != 2 {
-		t.Errorf("InferenceConcurrency.Ollama = %d; want 2", c.InferenceConcurrency.Ollama)
-	}
-	if c.InferenceConcurrency.RunPod != 8 {
-		t.Errorf("InferenceConcurrency.RunPod = %d; want 8", c.InferenceConcurrency.RunPod)
-	}
-	if c.LMStudioBaseURL != "http://env-lmstudio:1234" {
-		t.Errorf("LMStudioBaseURL = %q; want %q", c.LMStudioBaseURL, "http://env-lmstudio:1234")
-	}
-	if c.LMStudioModel != "env-llava" {
-		t.Errorf("LMStudioModel = %q; want %q", c.LMStudioModel, "env-llava")
-	}
-	if c.LMStudioAPIKey != "env-lmstudio-key" {
-		t.Errorf("LMStudioAPIKey = %q; want %q", c.LMStudioAPIKey, "env-lmstudio-key")
-	}
-	if c.LlamaCppBaseURL != "http://env-llamacpp:8080" {
-		t.Errorf("LlamaCppBaseURL = %q; want %q", c.LlamaCppBaseURL, "http://env-llamacpp:8080")
-	}
-	if c.LlamaCppModel != "env-llama" {
-		t.Errorf("LlamaCppModel = %q; want %q", c.LlamaCppModel, "env-llama")
-	}
-	if c.LlamaCppAPIKey != "env-llamacpp-key" {
-		t.Errorf("LlamaCppAPIKey = %q; want %q", c.LlamaCppAPIKey, "env-llamacpp-key")
-	}
-	if c.InferenceConcurrency.LMStudio != 3 {
-		t.Errorf("InferenceConcurrency.LMStudio = %d; want 3", c.InferenceConcurrency.LMStudio)
-	}
-	if c.InferenceConcurrency.LlamaCpp != 5 {
-		t.Errorf("InferenceConcurrency.LlamaCpp = %d; want 5", c.InferenceConcurrency.LlamaCpp)
-	}
-	if c.StrataBaseURL != "http://env-strata:8080" {
-		t.Errorf("StrataBaseURL = %q; want %q", c.StrataBaseURL, "http://env-strata:8080")
-	}
-	if c.StrataModel != "env-qwen" {
-		t.Errorf("StrataModel = %q; want %q", c.StrataModel, "env-qwen")
-	}
-	if c.StrataAPIKey != "env-strata-key" {
-		t.Errorf("StrataAPIKey = %q; want %q", c.StrataAPIKey, "env-strata-key")
-	}
-	if c.InferenceConcurrency.Strata != 2 {
-		t.Errorf("InferenceConcurrency.Strata = %d; want 2", c.InferenceConcurrency.Strata)
+	if c.TextParallel != 4 || c.TextBatch != 32 || c.TextMaxImageTokens != 1024 {
+		t.Errorf("text knobs = %d/%d/%d; want 4/32/1024", c.TextParallel, c.TextBatch, c.TextMaxImageTokens)
 	}
 	if c.JWTSecret != "env-secret" {
 		t.Errorf("JWTSecret = %q; want %q", c.JWTSecret, "env-secret")
@@ -617,12 +504,12 @@ func TestDefaultPort(t *testing.T) {
 // TestApplyEnvOverridesUnset verifies unset env vars don't change config.
 func TestApplyEnvOverridesUnset(t *testing.T) {
 	c := defaultConfig()
-	original := c.OllamaBaseURL
+	original := c.TextModel
 
 	applyEnvOverrides(&c)
 
-	if c.OllamaBaseURL != original {
-		t.Errorf("OllamaBaseURL changed to %q; should remain %q when env unset", c.OllamaBaseURL, original)
+	if c.TextModel != original {
+		t.Errorf("TextModel changed to %q; should remain %q when env unset", c.TextModel, original)
 	}
 }
 
@@ -753,8 +640,8 @@ func TestLoadNewConfig(t *testing.T) {
 	if path != cfgFile {
 		t.Errorf("path = %q; want %q", path, cfgFile)
 	}
-	if c.OllamaBaseURL != "http://localhost:11434" {
-		t.Errorf("OllamaBaseURL = %q; want default", c.OllamaBaseURL)
+	if c.TextBatch != DefaultTextBatch {
+		t.Errorf("TextBatch = %d; want default", c.TextBatch)
 	}
 	if _, err := os.Stat(cfgFile); err != nil {
 		t.Errorf("config file not created: %v", err)
@@ -1019,60 +906,55 @@ func TestDownloadPathMigration(t *testing.T) {
 	}
 }
 
-// TestInferenceProviderMigration verifies a pre-tab config that has RunPod
-// credentials but no inferenceProvider field is auto-upgraded to "runpod"
-// instead of silently falling back to Ollama (which would break a working
-// install).
-func TestInferenceProviderMigration(t *testing.T) {
-	dir := t.TempDir()
-	cfgFile := filepath.Join(dir, "config.json")
-
-	legacy := map[string]interface{}{
-		"dbPath":         filepath.Join(dir, "media.db"),
-		"jwtSecret":      "test-secret",
-		"runpodEndpoint": "https://api.runpod.ai/v2/abc123/run",
-		"runpodApiKey":   "sk-test",
+// TestLegacyTextModelMigration: a config of the HTTP-provider era keeps its
+// local GGUF server's model as the text model (LM Studio, llama.cpp, Strata),
+// gets none from Ollama / RunPod, and loses the retired keys on save.
+func TestLegacyTextModelMigration(t *testing.T) {
+	cases := []struct {
+		name   string
+		legacy map[string]interface{}
+		want   string
+	}{
+		{"lmstudio", map[string]interface{}{"inferenceProvider": "lmstudio", "lmstudioModel": "qwen3.8-27b-uncensored", "ollamaModel": "llava"}, "qwen3.8-27b-uncensored"},
+		{"llamacpp", map[string]interface{}{"inferenceProvider": "llamacpp", "llamacppModel": "org/repo/m.gguf"}, "org/repo/m.gguf"},
+		{"ollama", map[string]interface{}{"inferenceProvider": "ollama", "ollamaModel": "llava", "lmstudioModel": "unused"}, ""},
+		{"runpod", map[string]interface{}{"inferenceProvider": "runpod", "runpodEndpoint": "https://api.runpod.ai/v2/x/run", "runpodApiKey": "k"}, ""},
 	}
-	data, _ := json.Marshal(legacy)
-	os.WriteFile(cfgFile, data, 0644)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			cfgFile := filepath.Join(dir, "config.json")
+			tc.legacy["dbPath"] = filepath.Join(dir, "media.db")
+			tc.legacy["jwtSecret"] = "test-secret"
+			data, _ := json.Marshal(tc.legacy)
+			os.WriteFile(cfgFile, data, 0644)
 
-	orig := getConfigPath
-	defer func() { getConfigPath = orig }()
-	getConfigPath = func() (string, error) { return cfgFile, nil }
+			orig := getConfigPath
+			defer func() { getConfigPath = orig }()
+			getConfigPath = func() (string, error) { return cfgFile, nil }
 
-	c, _, err := Load()
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if c.InferenceProvider != "runpod" {
-		t.Errorf("InferenceProvider = %q; want %q (migrated from RunPod creds)", c.InferenceProvider, "runpod")
-	}
-}
-
-// TestInferenceProviderMigrationNoRunPod verifies a pre-tab config without
-// RunPod credentials defaults to "ollama" — matches behavior before the
-// tabs existed.
-func TestInferenceProviderMigrationNoRunPod(t *testing.T) {
-	dir := t.TempDir()
-	cfgFile := filepath.Join(dir, "config.json")
-
-	legacy := map[string]interface{}{
-		"dbPath":    filepath.Join(dir, "media.db"),
-		"jwtSecret": "test-secret",
-	}
-	data, _ := json.Marshal(legacy)
-	os.WriteFile(cfgFile, data, 0644)
-
-	orig := getConfigPath
-	defer func() { getConfigPath = orig }()
-	getConfigPath = func() (string, error) { return cfgFile, nil }
-
-	c, _, err := Load()
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if c.InferenceProvider != "ollama" {
-		t.Errorf("InferenceProvider = %q; want %q (default)", c.InferenceProvider, "ollama")
+			c, _, err := Load()
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if c.TextModel != tc.want {
+				t.Errorf("TextModel = %q; want %q", c.TextModel, tc.want)
+			}
+			if _, err := Save(c); err != nil {
+				t.Fatalf("Save: %v", err)
+			}
+			var onDisk map[string]json.RawMessage
+			raw, _ := os.ReadFile(cfgFile)
+			_ = json.Unmarshal(raw, &onDisk)
+			for _, k := range retiredKeys {
+				if _, ok := onDisk[k]; ok {
+					t.Errorf("retired key %q still in the saved file", k)
+				}
+			}
+			if tc.want != "" && string(onDisk["textModel"]) != strconv.Quote(tc.want) {
+				t.Errorf("saved textModel = %s; want %q", onDisk["textModel"], tc.want)
+			}
+		})
 	}
 }
 

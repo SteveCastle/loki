@@ -10,56 +10,38 @@ import (
 	"github.com/stevecastle/shrike/jobqueue"
 )
 
-func setProvider(t *testing.T, provider string) {
+// routeScribe sends loki-scribe to "local" or a pool for one test.
+func routeScribe(t *testing.T, route string) {
 	t.Helper()
-	cur := appconfig.Get()
-	t.Cleanup(func() { appconfig.Set(cur) })
-	cfg := cur
-	cfg.InferenceProvider = provider
-	appconfig.Set(cfg)
+	cur := engineDisp.cfg
+	t.Cleanup(func() { ConfigureEngines(nil, cur) })
+	cfg := appconfig.EnginesConfig{Strategy: appconfig.EngineStrategyLocal}
+	if route != appconfig.EngineStrategyLocal {
+		cfg.Routes = map[string]string{scribeEngine: route}
+	}
+	ConfigureEngines(nil, cfg)
 }
 
-// TestInferenceHostMapping checks that the active vision provider drives the
-// concurrency bucket name. Adding a new engine should require updating this
-// table alongside the switch in InferenceHost.
+// TestInferenceHostMapping: every text-generation job lands in the scribe
+// bucket, wherever the engine runs.
 func TestInferenceHostMapping(t *testing.T) {
-	cases := []struct {
-		provider string
-		want     string
-	}{
-		{InferenceProviderOllama, HostBucketOllama},
-		{InferenceProviderRunPod, HostBucketRunPod},
-		{InferenceProviderLMStudio, HostBucketLMStudio},
-		{InferenceProviderLlamaCpp, HostBucketLlamaCpp},
-		{InferenceProviderStrata, HostBucketStrata},
-		{InferenceProviderOff, "localhost"},
-		{"", "localhost"},
-		{"something-new", "localhost"},
-	}
-	for _, c := range cases {
-		t.Run(c.provider, func(t *testing.T) {
-			setProvider(t, c.provider)
-			if got := InferenceHost(); got != c.want {
-				t.Errorf("InferenceHost() with provider=%q = %q; want %q", c.provider, got, c.want)
-			}
-		})
+	for _, route := range []string{appconfig.EngineStrategyLocal, appconfig.EngineStrategyPool} {
+		routeScribe(t, route)
+		if got := InferenceHost(); got != HostBucketScribe {
+			t.Errorf("InferenceHost() with route %s = %q; want %q", route, got, HostBucketScribe)
+		}
 	}
 }
 
-// TestResolveHostVisionTasks confirms the LLM-backed metadata task delegates to
-// InferenceHost (so the provider tab controls its bucket), while the local ONNX
-// tasks (autotag, embed) route to their own dedicated buckets and are NOT
-// affected by the LLM provider setting.
+// TestResolveHostVisionTasks confirms the text-generation tasks share the
+// scribe bucket, while the local ONNX tasks (autotag, embed) route to their
+// own dedicated buckets.
 func TestResolveHostVisionTasks(t *testing.T) {
-	setProvider(t, InferenceProviderRunPod)
-	if got := ResolveHost("metadata", "/tmp/whatever.jpg"); got != HostBucketRunPod {
-		t.Errorf("ResolveHost(metadata) = %q; want %q", got, HostBucketRunPod)
+	for _, cmd := range []string{"metadata", "describe"} {
+		if got := ResolveHost(cmd, "/tmp/whatever.jpg"); got != HostBucketScribe {
+			t.Errorf("ResolveHost(%s) = %q; want %q", cmd, got, HostBucketScribe)
+		}
 	}
-	setProvider(t, InferenceProviderOllama)
-	if got := ResolveHost("metadata", "/tmp/whatever.jpg"); got != HostBucketOllama {
-		t.Errorf("ResolveHost(metadata) = %q; want %q", got, HostBucketOllama)
-	}
-	// Local ONNX tasks have fixed dedicated buckets regardless of provider.
 	if got := ResolveHost("autotag", "/tmp/whatever.jpg"); got != HostBucketAutotag {
 		t.Errorf("ResolveHost(autotag) = %q; want %q", got, HostBucketAutotag)
 	}
@@ -109,7 +91,7 @@ func TestResolveResources(t *testing.T) {
 		return false
 	}
 
-	setProvider(t, InferenceProviderOllama)
+	routeScribe(t, appconfig.EngineStrategyLocal)
 
 	cases := []struct {
 		name      string
@@ -128,13 +110,13 @@ func TestResolveResources(t *testing.T) {
 		{name: "transcribe", command: "transcribe",
 			want: []string{HostBucketLocalCompute}},
 		{name: "describe local LLM", command: "describe",
-			want: []string{HostBucketOllama, HostBucketLocalCompute}},
+			want: []string{HostBucketScribe, HostBucketLocalCompute}},
 		{name: "process cheap ops", command: "process",
 			arguments: []string{"--ops=hash,dimensions"},
 			absent:    []string{HostBucketLocalCompute, HostBucketEmbed}},
 		{name: "process heavy union", command: "process",
 			arguments: []string{"--ops=describe,embed,faces"},
-			want:      []string{HostBucketOllama, HostBucketLocalCompute, HostBucketEmbed, HostBucketFaces}},
+			want:      []string{HostBucketScribe, HostBucketLocalCompute, HostBucketEmbed, HostBucketFaces}},
 		{name: "process ops in input", command: "process",
 			input: "--ops=embed --query64=eA==",
 			want:  []string{HostBucketEmbed, HostBucketLocalCompute}},
@@ -169,14 +151,14 @@ func TestResolveResources(t *testing.T) {
 		})
 	}
 
-	// Remote inference (RunPod) must not hold the local-compute slot.
-	setProvider(t, InferenceProviderRunPod)
+	// Text generation on a GPU pool must not hold the local-compute slot.
+	routeScribe(t, appconfig.EngineStrategyPool)
 	got := ResolveResources("describe", nil, "")
 	if has(got, HostBucketLocalCompute) {
 		t.Errorf("remote describe resources = %v; must not hold local-compute", got)
 	}
-	if !has(got, HostBucketRunPod) {
-		t.Errorf("remote describe resources = %v; missing runpod bucket", got)
+	if !has(got, HostBucketScribe) {
+		t.Errorf("remote describe resources = %v; missing the scribe bucket", got)
 	}
 }
 
@@ -192,7 +174,7 @@ func TestLocalComputeSerializesHeavyJobs(t *testing.T) {
 		jobqueue.SetHostResolver(nil)
 		jobqueue.SetResourceResolver(nil)
 	})
-	setProvider(t, InferenceProviderOllama)
+	routeScribe(t, appconfig.EngineStrategyLocal)
 
 	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
@@ -269,7 +251,7 @@ func TestApplyHostLimitsConcurrentClaims(t *testing.T) {
 	jobqueue.SetHostResolver(ResolveHost)
 	t.Cleanup(func() { jobqueue.SetHostResolver(nil) })
 
-	setProvider(t, InferenceProviderRunPod)
+	routeScribe(t, appconfig.EngineStrategyPool)
 
 	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
@@ -277,60 +259,35 @@ func TestApplyHostLimitsConcurrentClaims(t *testing.T) {
 	}
 	t.Cleanup(func() { db.Close() })
 	q := jobqueue.NewQueueWithDB(db)
+	ApplyHostLimits(q, appconfig.Get())
 
-	// Limit RunPod bucket to 2; everything else stays at default 1.
-	cfg := appconfig.Get()
-	cfg.InferenceConcurrency.RunPod = 2
-	cfg.InferenceConcurrency.Ollama = 1
-	ApplyHostLimits(q, cfg)
-
-	// Use "metadata" (an LLM-backed task) — it routes to the RunPod inference
-	// bucket. autotag/embed now have their own buckets and would not exercise
-	// the inference cap here.
-	for i := 0; i < 3; i++ {
+	// "metadata" (a text-generation task) routes to the scribe bucket, which
+	// takes one job at a time: every job feeds the same batcher.
+	for i := 0; i < 2; i++ {
 		if _, err := q.AddJob("", "metadata", nil, "/tmp/whatever.jpg", nil); err != nil {
 			t.Fatalf("AddJob %d: %v", i, err)
 		}
 	}
-
-	// First two claims should succeed (bucket capacity 2).
 	first, err := q.ClaimJob()
 	if err != nil || first == nil {
 		t.Fatalf("ClaimJob #1 returned (%v, %v)", first, err)
 	}
-	if first.Host != HostBucketRunPod {
-		t.Errorf("first.Host = %q; want %q", first.Host, HostBucketRunPod)
+	if first.Host != HostBucketScribe {
+		t.Errorf("first.Host = %q; want %q", first.Host, HostBucketScribe)
 	}
-
 	second, err := q.ClaimJob()
-	if err != nil || second == nil {
-		t.Fatalf("ClaimJob #2 returned (%v, %v)", second, err)
-	}
-
-	// Third claim should be blocked because RunPod is at capacity.
-	third, err := q.ClaimJob()
 	if err != nil {
-		t.Fatalf("ClaimJob #3 error: %v", err)
+		t.Fatalf("ClaimJob #2 error: %v", err)
 	}
-	if third != nil {
-		t.Errorf("ClaimJob #3 returned a job (id=%s) but RunPod bucket should be full", third.ID)
+	if second != nil {
+		t.Errorf("ClaimJob #2 returned a job (id=%s) but the scribe bucket should be full", second.ID)
 	}
-
-	// Lowering the bucket to 1 and finishing one job should still leave
-	// the bucket overdrawn (1 running vs limit 1) — no new claim until
-	// completion releases the slot.
-	cfg.InferenceConcurrency.RunPod = 1
-	ApplyHostLimits(q, cfg)
 	if err := q.CompleteJob(first.ID); err != nil {
 		t.Fatalf("CompleteJob: %v", err)
 	}
-	// One in-flight (second), limit 1 → still nothing claimable.
-	blocked, err := q.ClaimJob()
-	if err != nil {
-		t.Fatalf("ClaimJob after lowering limit: %v", err)
-	}
-	if blocked != nil {
-		t.Errorf("ClaimJob returned %s while bucket should be at capacity", blocked.ID)
+	next, err := q.ClaimJob()
+	if err != nil || next == nil {
+		t.Fatalf("ClaimJob after completion returned (%v, %v)", next, err)
 	}
 }
 

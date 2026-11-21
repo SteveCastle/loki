@@ -57,7 +57,7 @@ func cmdConfigSet(a *App, args []string) int {
 		return a.Usage(fs, err.Error())
 	}
 	if *jsonArg == "" {
-		return a.Usage(fs, `usage: lokictl config set --json '{"ollamaModel":"llava"}'`)
+		return a.Usage(fs, `usage: lokictl config set --json '{"textModel":"lmstudio-community/Qwen3.8-27B-GGUF"}'`)
 	}
 	b, err := readBodyArg(*jsonArg, os.Stdin)
 	if err != nil {

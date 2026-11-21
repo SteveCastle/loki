@@ -2,8 +2,8 @@
 # =============================================================================
 # loki-worker — the GPU engines as a resident worker node
 # =============================================================================
-# One image, every engine: loki-retouch, loki-reshoot, loki-dream and
-# loki-segment (built from tools/), run by loki-worker (media-server/cmd/
+# One image, every engine: loki-retouch, loki-reshoot, loki-dream,
+# loki-segment and loki-scribe (built from tools/), run by loki-worker (media-server/cmd/
 # loki-worker), which keeps each engine's models on the GPU between jobs and
 # serves them to the Lowkey Media Server:
 #
@@ -25,7 +25,7 @@
 #
 # GPUs: loki-retouch, loki-reshoot and loki-dream use FP8 tensor cores (Ada
 # sm_89, Hopper sm_90, Blackwell through PTX): RTX 4090 / 5090, L4, L40S,
-# RTX 6000 Ada, H100, H200, B200. loki-segment also runs on Ampere (A100,
+# RTX 6000 Ada, H100, H200, B200. loki-segment and loki-scribe also run on Ampere (A100,
 # A6000, A40, RTX 3090). 24 GB of VRAM is the floor; with 48 GB or
 # more several engines keep their models loaded side by side.
 # =============================================================================
@@ -52,14 +52,14 @@ COPY tools/ tools/
 # SASS per engine (retouch, reshoot and dream use FP8 tensor cores: sm_89+;
 # segment also runs on Ampere), plus compute_90 PTX the driver JITs on newer
 # GPUs. ENGINES limits the build (e.g. "loki-segment").
-ARG ENGINES="loki-retouch loki-reshoot loki-dream loki-segment"
+ARG ENGINES="loki-retouch loki-reshoot loki-dream loki-segment loki-scribe"
 ARG FP8_ARCHS=89,90
 ARG ARCHS=80,86,89,90
 RUN --mount=type=cache,target=/opt/cargo/registry \
     --mount=type=cache,target=/src/target \
     set -eux; mkdir -p /out; \
     for e in $ENGINES; do \
-      case "$e" in loki-segment) a="$ARCHS" ;; *) a="$FP8_ARCHS" ;; esac; \
+      case "$e" in loki-segment|loki-scribe) a="$ARCHS" ;; *) a="$FP8_ARCHS" ;; esac; \
       LOKI_CUDA_ARCHS="$a" LOKI_CUDA_PTX=90 cargo build --release --locked \
         --manifest-path "tools/$e/Cargo.toml" --target-dir "/src/target/$e" --bin "$e"; \
       cp "/src/target/$e/release/$e" /out/; \
@@ -117,7 +117,7 @@ COPY --from=worker /out/loki-worker /usr/local/bin/loki-worker
 COPY --from=ffmpeg /out/ /usr/local/bin/
 ARG VERSION=dev
 LABEL org.opencontainers.image.title="loki-worker" \
-      org.opencontainers.image.description="Lowkey GPU engines (loki-retouch, loki-reshoot, loki-dream, loki-segment) as a resident worker node" \
+      org.opencontainers.image.description="Lowkey GPU engines (loki-retouch, loki-reshoot, loki-dream, loki-segment, loki-scribe) as a resident worker node" \
       org.opencontainers.image.source="https://github.com/SteveCastle/loki" \
       org.opencontainers.image.version="${VERSION}"
 ENV LOKI_MODELS=/models \

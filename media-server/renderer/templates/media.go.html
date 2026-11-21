@@ -1783,9 +1783,9 @@
               >
               <input
                 type="text"
-                id="ollama-model"
-                value="{{.DefaultOllamaModel}}"
-                placeholder="e.g., llama3.2-vision"
+                id="gen-text-model"
+                value="{{.DefaultTextModel}}"
+                placeholder="the configured text model"
                 style="
                   padding: 6px 10px;
                   background-color: #1e1e1e;
@@ -1993,9 +1993,9 @@
                 >
                 <input
                   type="text"
-                  id="lora-ollama-model"
-                  value="{{.DefaultOllamaModel}}"
-                  placeholder="e.g., llama3.2-vision"
+                  id="lora-text-model"
+                  value="{{.DefaultTextModel}}"
+                  placeholder="the configured text model"
                   style="
                     padding: 6px 10px;
                     background-color: #1e1e1e;
@@ -2582,7 +2582,7 @@
           if (ops.length === 0 || !genHasTarget()) return;
 
           const overwrite = genOverwrite();
-          const model = document.getElementById('ollama-model').value.trim();
+          const model = document.getElementById('gen-text-model').value.trim();
           const tail = buildTargetTail();
 
           // Every op — faces included — joins ONE job: a single pass that
@@ -2735,7 +2735,7 @@
               .getElementById('lora-concept-prefix')
               .value.trim();
             const loraModel = document
-              .getElementById('lora-ollama-model')
+              .getElementById('lora-text-model')
               .value.trim();
 
             // Validate required fields

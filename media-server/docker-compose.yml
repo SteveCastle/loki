@@ -84,9 +84,8 @@ services:
       LOWKEY_DOWNLOAD_PATH: /data/downloads
       XDG_DATA_HOME: /data
 
-      # ---- Ollama ----
-      LOWKEY_OLLAMA_BASE_URL: ${LOWKEY_OLLAMA_BASE_URL:-http://host.docker.internal:11434}
-      LOWKEY_OLLAMA_MODEL: ${LOWKEY_OLLAMA_MODEL:-llama3.2-vision}
+      # ---- Text model (loki-scribe, run on a GPU worker pool) ----
+      LOWKEY_TEXT_MODEL: ${LOWKEY_TEXT_MODEL:-}
       LOWKEY_JWT_SECRET: ${LOWKEY_JWT_SECRET:-}
 
       # ---- Storage roots ----
@@ -116,8 +115,8 @@ services:
       minio-setup:
         condition: service_completed_successfully
     extra_hosts:
-      # Lets Linux Docker Engine resolve host.docker.internal for Ollama
-      # access (Docker Desktop on Mac/Windows handles this automatically).
+      # Lets Linux Docker Engine resolve host.docker.internal for services on
+      # the host (Docker Desktop on Mac/Windows handles this automatically).
       - "host.docker.internal:host-gateway"
 
 volumes:

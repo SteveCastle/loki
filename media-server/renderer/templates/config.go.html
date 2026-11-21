@@ -287,57 +287,6 @@
         display: block;
       }
 
-      /* Inference tabs: same visual look as the page-level tabs but
-         scoped to a single config card so the page-level click handler
-         doesn't touch them. Adding a new provider = one .inference-tab
-         + one .inference-panel below; no JS changes required. */
-      .inference-tabs {
-        display: flex;
-        gap: var(--space-1);
-        border-bottom: 1px solid var(--border-subtle);
-        margin-bottom: var(--space-4);
-        overflow-x: auto;
-        -webkit-overflow-scrolling: touch;
-        scrollbar-width: none;
-      }
-
-      .inference-tabs::-webkit-scrollbar {
-        display: none;
-      }
-
-      .inference-tab {
-        flex-shrink: 0;
-        white-space: nowrap;
-        padding: var(--space-2) var(--space-3);
-        background: transparent;
-        border: none;
-        border-bottom: 2px solid transparent;
-        border-radius: 0;
-        color: var(--text-muted);
-        font-size: var(--text-sm);
-        font-weight: 500;
-        cursor: pointer;
-        transition: all var(--transition-fast);
-        margin-bottom: -1px;
-      }
-
-      .inference-tab:hover {
-        color: var(--text-primary);
-      }
-
-      .inference-tab.active {
-        color: var(--accent-purple);
-        border-bottom-color: var(--accent-purple);
-      }
-
-      .inference-panel {
-        display: none;
-      }
-
-      .inference-panel.active {
-        display: block;
-      }
-
       .hint {
         color: var(--text-muted);
         font-size: var(--text-sm);
@@ -924,7 +873,7 @@
 
             <div class="config-card config-card--purple">
               <div class="section-title">📂 Storage Roots</div>
-              <div class="section-subtitle">Configure local directories or S3-compatible buckets for the web file browser.</div>
+              <div class="section-subtitle">Configure local directories or S3-compatible buckets for the web file browser. Saved in the current library database, so switching databases switches roots.</div>
               <div id="storage-roots-list"></div>
               <button type="button" class="btn btn-secondary" id="add-root-btn" style="margin-top: var(--space-3)">+ Add Storage Root</button>
             </div>
@@ -997,339 +946,90 @@
         <div id="tab-ai" class="tab-content">
           <div class="config-sections">
             <div class="config-card config-card--purple">
-              <div class="section-title">🧠 Inference</div>
+              <div class="section-title">🧠 Text Model</div>
               <div class="section-subtitle">
-                Picks which backend handles vision LLM calls (describe and
-                auto-tag). The selected tab is the active provider.
+                Descriptions and every other image &rarr; text or text &rarr;
+                text job run on loki-scribe, a standalone engine for
+                Qwen3.5 / Qwen3.8 GGUF models. It runs on this GPU (kept
+                loaded between jobs, released when idle or when an image or
+                video engine needs the GPU) or on a GPU worker pool: route
+                <code>loki-scribe</code> on the GPU Engines tab.
               </div>
-
-              <div
-                class="inference-tabs"
-                role="tablist"
-                id="inference-tabs"
-              >
-                <button
-                  type="button"
-                  class="inference-tab"
-                  data-provider="off"
-                  role="tab"
-                >
-                  Off
-                </button>
-                <button
-                  type="button"
-                  class="inference-tab"
-                  data-provider="ollama"
-                  role="tab"
-                >
-                  Ollama
-                </button>
-                <button
-                  type="button"
-                  class="inference-tab"
-                  data-provider="runpod"
-                  role="tab"
-                >
-                  RunPod
-                </button>
-                <button
-                  type="button"
-                  class="inference-tab"
-                  data-provider="lmstudio"
-                  role="tab"
-                >
-                  LM Studio
-                </button>
-                <button
-                  type="button"
-                  class="inference-tab"
-                  data-provider="llamacpp"
-                  role="tab"
-                >
-                  llama.cpp
-                </button>
-                <button
-                  type="button"
-                  class="inference-tab"
-                  data-provider="strata"
-                  role="tab"
-                >
-                  Strata
-                </button>
-              </div>
-
-              <input
-                type="hidden"
-                id="inference-provider"
-                value="{{.Config.InferenceProvider}}"
-              />
-
-              <div class="inference-panel" data-provider="off" role="tabpanel">
-                <p class="hint">
-                  Inference is disabled. Vision tasks (image description and
-                  auto-tagging) will return an error until you pick a
-                  provider above.
-                </p>
-              </div>
-
-              <div
-                class="inference-panel"
-                data-provider="ollama"
-                role="tabpanel"
-              >
-                <div class="fields">
-                  <div class="field">
-                    <label class="label">Base URL</label>
-                    <input
-                      id="ollama-base-url"
-                      class="input"
-                      type="text"
-                      value="{{.Config.OllamaBaseURL}}"
-                    />
-                  </div>
-                  <div class="field">
-                    <label class="label">Model</label>
-                    <select id="ollama-model" class="input">
-                      <option value="{{.Config.OllamaModel}}">
-                        {{.Config.OllamaModel}}
-                      </option>
-                    </select>
-                  </div>
-                  <div class="field">
-                    <label class="label">Max concurrent jobs</label>
-                    <input
-                      id="ollama-concurrency"
-                      class="input"
-                      type="number"
-                      min="1"
-                      value="{{.Config.InferenceConcurrency.Ollama}}"
-                    />
-                    <small class="hint">
-                      Caps how many describe/auto-tag jobs run against
-                      Ollama in parallel. Local single-GPU installs
-                      typically want 1.
-                    </small>
-                  </div>
+              <div class="fields">
+                <div class="field">
+                  <label class="label">Model</label>
+                  <input
+                    id="text-model"
+                    class="input"
+                    type="text"
+                    list="text-model-list"
+                    placeholder="default: Qwen3.8 27B Q4_K_M (downloaded on first use)"
+                    value="{{.Config.TextModel}}"
+                  />
+                  <datalist id="text-model-list"></datalist>
+                  <small class="hint">
+                    A <code>.gguf</code> path, a Hugging Face
+                    <code>publisher/repo[/file.gguf]</code> (downloaded when
+                    missing, also on pool workers), or a model name found in
+                    LM Studio's folders. Architecture qwen35 (Qwen3.5 /
+                    Qwen3.8 dense); quantizations Q4_K, Q5_K, Q6_K, Q8_0, F16.
+                    <span id="text-model-found"></span>
+                  </small>
                 </div>
-              </div>
-
-              <div
-                class="inference-panel"
-                data-provider="runpod"
-                role="tabpanel"
-              >
-                <div class="fields">
-                  <div class="field">
-                    <label class="label">Serverless endpoint</label>
-                    <input
-                      id="runpod-endpoint"
-                      class="input"
-                      type="text"
-                      placeholder="https://api.runpod.ai/v2/&lt;id&gt;/run or /runsync"
-                      value="{{.Config.RunPodEndpoint}}"
-                    />
-                  </div>
-                  <div class="field">
-                    <label class="label">API key</label>
-                    <input
-                      id="runpod-api-key"
-                      class="input"
-                      type="password"
-                      autocomplete="off"
-                      value="{{.Config.RunPodAPIKey}}"
-                    />
-                  </div>
-                  <div class="field">
-                    <label class="label">Max concurrent jobs</label>
-                    <input
-                      id="runpod-concurrency"
-                      class="input"
-                      type="number"
-                      min="1"
-                      value="{{.Config.InferenceConcurrency.RunPod}}"
-                    />
-                    <small class="hint">
-                      RunPod serverless scales out per request, so this
-                      can run well above 1. Match it to whatever your
-                      worker config can support.
-                    </small>
-                  </div>
-                  <div class="field">
-                    <small class="hint">
-                      Model is configured on the RunPod worker side
-                      (OLLAMA_MODEL_NAME env on the worker, per the
-                      SvenBrnn/runpod-worker-ollama convention).
-                    </small>
-                  </div>
+                <div class="field">
+                  <label class="label">Vision projector (optional)</label>
+                  <input
+                    id="text-mmproj"
+                    class="input"
+                    type="text"
+                    placeholder="the mmproj*.gguf beside the model"
+                    value="{{.Config.TextMMProj}}"
+                  />
                 </div>
-              </div>
-
-              <div
-                class="inference-panel"
-                data-provider="lmstudio"
-                role="tabpanel"
-              >
-                <div class="fields">
-                  <div class="field">
-                    <label class="label">Base URL</label>
-                    <input
-                      id="lmstudio-base-url"
-                      class="input"
-                      type="text"
-                      placeholder="http://localhost:1234"
-                      value="{{.Config.LMStudioBaseURL}}"
-                    />
-                  </div>
-                  <div class="field">
-                    <label class="label">Model</label>
-                    <input
-                      id="lmstudio-model"
-                      class="input"
-                      type="text"
-                      placeholder="e.g. llava-1.5-7b"
-                      value="{{.Config.LMStudioModel}}"
-                    />
-                    <small class="hint">
-                      Match the identifier shown for the loaded model in
-                      LM Studio's Local Server tab.
-                    </small>
-                  </div>
-                  <div class="field">
-                    <label class="label">API key (optional)</label>
-                    <input
-                      id="lmstudio-api-key"
-                      class="input"
-                      type="password"
-                      autocomplete="off"
-                      value="{{.Config.LMStudioAPIKey}}"
-                    />
-                    <small class="hint">
-                      Only needed if you've put LM Studio behind a proxy
-                      that enforces auth. Local installs leave this blank.
-                    </small>
-                  </div>
-                  <div class="field">
-                    <label class="label">Max concurrent jobs</label>
-                    <input
-                      id="lmstudio-concurrency"
-                      class="input"
-                      type="number"
-                      min="1"
-                      value="{{.Config.InferenceConcurrency.LMStudio}}"
-                    />
-                  </div>
+                <div class="field">
+                  <label class="label">Requests decoded together</label>
+                  <input
+                    id="text-parallel"
+                    class="input"
+                    type="number"
+                    min="1"
+                    max="8"
+                    value="{{.Config.TextParallel}}"
+                  />
+                  <small class="hint">
+                    Sequences one engine generates at once (1-8). Decoding
+                    reads the weights once per step for all of them, so 8 is
+                    several times the throughput of 1; the engine lowers it
+                    when GPU memory runs short.
+                  </small>
                 </div>
-              </div>
-
-              <div
-                class="inference-panel"
-                data-provider="llamacpp"
-                role="tabpanel"
-              >
-                <div class="fields">
-                  <div class="field">
-                    <label class="label">Base URL</label>
-                    <input
-                      id="llamacpp-base-url"
-                      class="input"
-                      type="text"
-                      placeholder="http://localhost:8080"
-                      value="{{.Config.LlamaCppBaseURL}}"
-                    />
-                  </div>
-                  <div class="field">
-                    <label class="label">Model (optional)</label>
-                    <input
-                      id="llamacpp-model"
-                      class="input"
-                      type="text"
-                      placeholder="leave empty to use the loaded model"
-                      value="{{.Config.LlamaCppModel}}"
-                    />
-                    <small class="hint">
-                      The llama.cpp server usually serves whatever model
-                      was loaded at startup; the model name is mostly
-                      cosmetic but some setups require an explicit value.
-                    </small>
-                  </div>
-                  <div class="field">
-                    <label class="label">API key (optional)</label>
-                    <input
-                      id="llamacpp-api-key"
-                      class="input"
-                      type="password"
-                      autocomplete="off"
-                      value="{{.Config.LlamaCppAPIKey}}"
-                    />
-                  </div>
-                  <div class="field">
-                    <label class="label">Max concurrent jobs</label>
-                    <input
-                      id="llamacpp-concurrency"
-                      class="input"
-                      type="number"
-                      min="1"
-                      value="{{.Config.InferenceConcurrency.LlamaCpp}}"
-                    />
-                  </div>
+                <div class="field">
+                  <label class="label">Requests per engine run</label>
+                  <input
+                    id="text-batch"
+                    class="input"
+                    type="number"
+                    min="1"
+                    value="{{.Config.TextBatch}}"
+                  />
+                  <small class="hint">
+                    Concurrent describe items are gathered into runs of up to
+                    this many images (one run per GPU worker slot at a time).
+                  </small>
                 </div>
-              </div>
-
-              <div
-                class="inference-panel"
-                data-provider="strata"
-                role="tabpanel"
-              >
-                <div class="fields">
-                  <div class="field">
-                    <label class="label">Base URL</label>
-                    <input
-                      id="strata-base-url"
-                      class="input"
-                      type="text"
-                      placeholder="http://127.0.0.1:8080"
-                      value="{{.Config.StrataBaseURL}}"
-                    />
-                    <small class="hint">
-                      Strata must be set up with images ("Images?" in its
-                      setup). Thinking is turned off for these requests so
-                      answers fit the output cap.
-                    </small>
-                  </div>
-                  <div class="field">
-                    <label class="label">Model (optional)</label>
-                    <input
-                      id="strata-model"
-                      class="input"
-                      type="text"
-                      placeholder="leave empty to use the loaded model"
-                      value="{{.Config.StrataModel}}"
-                    />
-                  </div>
-                  <div class="field">
-                    <label class="label">API key</label>
-                    <input
-                      id="strata-api-key"
-                      class="input"
-                      type="password"
-                      autocomplete="off"
-                      value="{{.Config.StrataAPIKey}}"
-                    />
-                    <small class="hint">
-                      Required when Strata's config sets "api_key"
-                      (strata-api-key.txt in the Strata folder).
-                    </small>
-                  </div>
-                  <div class="field">
-                    <label class="label">Max concurrent jobs</label>
-                    <input
-                      id="strata-concurrency"
-                      class="input"
-                      type="number"
-                      min="1"
-                      value="{{.Config.InferenceConcurrency.Strata}}"
-                    />
-                  </div>
+                <div class="field">
+                  <label class="label">Max vision tokens per image</label>
+                  <input
+                    id="text-max-image-tokens"
+                    class="input"
+                    type="number"
+                    min="64"
+                    value="{{.Config.TextMaxImageTokens}}"
+                  />
+                  <small class="hint">
+                    One token per 32&times;32 pixels; larger images are scaled
+                    down. 2048 &asymp; 2 megapixels; raise it for small text.
+                  </small>
                 </div>
               </div>
 
@@ -1353,10 +1053,10 @@
                   <small class="hint">
                     Machine-wide cap across ALL resource-intensive local jobs
                     — embedding, tagging, face scanning, transcription, and
-                    local LLM inference — regardless of their individual
+                    text generation — regardless of their individual
                     limits above. 1 (recommended for a single GPU) runs one
                     heavy job at a time; each job still parallelizes
-                    internally. Remote providers like RunPod don't count
+                    internally. Work sent to a GPU worker pool doesn't count
                     against it.
                   </small>
                 </div>
@@ -2616,74 +2316,18 @@
           port:
             parseInt(document.getElementById('server-port').value, 10) || 0,
           discordToken: document.getElementById('discord-token').value.trim(),
-          ollamaBaseUrl: document
-            .getElementById('ollama-base-url')
-            .value.trim(),
-          ollamaModel: document.getElementById('ollama-model').value.trim(),
           describePrompt: document.getElementById('describe-prompt').value,
-          inferenceProvider: document
-            .getElementById('inference-provider')
-            .value.trim(),
-          runpodEndpoint: document
-            .getElementById('runpod-endpoint')
-            .value.trim(),
-          runpodApiKey: document
-            .getElementById('runpod-api-key')
-            .value.trim(),
-          lmstudioBaseUrl: document
-            .getElementById('lmstudio-base-url')
-            .value.trim(),
-          lmstudioModel: document
-            .getElementById('lmstudio-model')
-            .value.trim(),
-          lmstudioApiKey: document
-            .getElementById('lmstudio-api-key')
-            .value.trim(),
-          llamacppBaseUrl: document
-            .getElementById('llamacpp-base-url')
-            .value.trim(),
-          llamacppModel: document
-            .getElementById('llamacpp-model')
-            .value.trim(),
-          llamacppApiKey: document
-            .getElementById('llamacpp-api-key')
-            .value.trim(),
-          strataBaseUrl: document
-            .getElementById('strata-base-url')
-            .value.trim(),
-          strataModel: document
-            .getElementById('strata-model')
-            .value.trim(),
-          strataApiKey: document
-            .getElementById('strata-api-key')
-            .value.trim(),
-          inferenceConcurrency: {
-            ollama:
-              parseInt(
-                document.getElementById('ollama-concurrency').value,
-                10
-              ) || 0,
-            runpod:
-              parseInt(
-                document.getElementById('runpod-concurrency').value,
-                10
-              ) || 0,
-            lmstudio:
-              parseInt(
-                document.getElementById('lmstudio-concurrency').value,
-                10
-              ) || 0,
-            llamacpp:
-              parseInt(
-                document.getElementById('llamacpp-concurrency').value,
-                10
-              ) || 0,
-            strata:
-              parseInt(
-                document.getElementById('strata-concurrency').value,
-                10
-              ) || 0,
-          },
+          textModel: document.getElementById('text-model').value.trim(),
+          textMmproj: document.getElementById('text-mmproj').value.trim(),
+          textParallel:
+            parseInt(document.getElementById('text-parallel').value, 10) || 0,
+          textBatch:
+            parseInt(document.getElementById('text-batch').value, 10) || 0,
+          textMaxImageTokens:
+            parseInt(
+              document.getElementById('text-max-image-tokens').value,
+              10
+            ) || 0,
           localComputeConcurrency:
             parseInt(
               document.getElementById('local-compute-concurrency').value,
@@ -2840,71 +2484,34 @@
           .catch((err) => setStatus('Error: ' + err, 'error'));
       });
 
-      // Inference provider tabs. Selecting a tab updates the hidden
-      // #inference-provider input — which is what the save payload reads —
-      // and shows the matching panel. Adding a new provider takes one new
-      // .inference-tab button + one .inference-panel; no JS changes needed.
-      (function initInferenceTabs() {
-        const tabs = document.querySelectorAll(
-          '#inference-tabs .inference-tab'
-        );
-        const panels = document.querySelectorAll('.inference-panel');
-        const hidden = document.getElementById('inference-provider');
-
-        function setActive(provider) {
-          const target = provider || 'off';
-          tabs.forEach((t) =>
-            t.classList.toggle('active', t.dataset.provider === target)
-          );
-          panels.forEach((p) =>
-            p.classList.toggle('active', p.dataset.provider === target)
-          );
-          hidden.value = target;
-        }
-
-        tabs.forEach((tab) => {
-          tab.addEventListener('click', () => setActive(tab.dataset.provider));
-        });
-
-        setActive(hidden.value);
-      })();
-
-      // Populate Ollama models select
-      (function populateOllamaModels() {
-        const select = document.getElementById('ollama-model');
-        const current = select.value.trim();
-        fetch('/ollama/models')
+      // Text models on this machine, offered as suggestions for the model field.
+      (function populateTextModels() {
+        const list = document.getElementById('text-model-list');
+        const found = document.getElementById('text-model-found');
+        fetch('/api/text-models')
           .then((r) => r.json())
           .then((data) => {
             const models = Array.isArray(data.models) ? data.models : [];
-            select.innerHTML = '';
-            if (models.length === 0 && current) {
-              const opt = document.createElement('option');
-              opt.value = current;
-              opt.textContent = current;
-              select.appendChild(opt);
-              return;
-            }
-            const placeholder = document.createElement('option');
-            placeholder.value = '';
-            placeholder.textContent = 'Select a model';
-            select.appendChild(placeholder);
+            list.innerHTML = '';
+            let usable = 0;
             for (const m of models) {
+              if (!m.supported) continue;
+              usable++;
               const opt = document.createElement('option');
-              opt.value = m;
-              opt.textContent = m;
-              select.appendChild(opt);
+              opt.value = m.spec;
+              const gb = (m.sizeBytes / 1e9).toFixed(1);
+              opt.label =
+                (m.managed ? 'default (managed) · ' : '') +
+                m.name +
+                ' · ' +
+                gb +
+                ' GB' +
+                (m.vision ? ' · vision' : ' · text only');
+              list.appendChild(opt);
             }
-            if (current) {
-              select.value = current;
-              if (select.value !== current) {
-                const opt = document.createElement('option');
-                opt.value = current;
-                opt.textContent = current + ' (current)';
-                select.insertBefore(opt, select.firstChild.nextSibling);
-                select.value = current;
-              }
-            }
+            found.textContent = usable
+              ? ' ' + usable + ' usable model(s) found on this machine: pick one from the list.'
+              : '';
           })
           .catch(() => {});
       })();

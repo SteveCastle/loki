@@ -109,66 +109,30 @@ type Config struct {
 	// Overridable via the LOWKEY_EXTRACTORS env var.
 	ExtractorsPath string `json:"extractorsPath,omitempty"`
 
-	// Active vision-inference backend. One of: "off", "ollama", "runpod",
-	// "lmstudio", "llamacpp", "strata".
-	// Drives the routing in tasks.callVisionLLM — provider-specific fields
-	// below (OllamaBaseURL/Model, RunPodEndpoint/APIKey) are only consulted
-	// for the matching provider. New engines slot in by adding a constant
-	// + a switch case + a config sub-section; the field stays a string so
-	// the on-disk format doesn't break when the set of providers grows.
-	InferenceProvider string `json:"inferenceProvider"`
-
-	// Ollama / LLM settings
-	OllamaBaseURL  string `json:"ollamaBaseUrl"`
-	OllamaModel    string `json:"ollamaModel"`
-	DescribePrompt string `json:"describePrompt"`
-
-	// RunPod serverless vision settings. Active when InferenceProvider ==
-	// "runpod". The worker is expected to expose an OpenAI-compatible
-	// chat-completions interface (e.g. SvenBrnn/runpod-worker-ollama).
-	// The endpoint may point at either `/run` (async, polled) or `/runsync`
-	// (inline response).
-	RunPodEndpoint string `json:"runpodEndpoint"`
-	RunPodAPIKey   string `json:"runpodApiKey"`
-
-	// LM Studio vision settings. Active when InferenceProvider == "lmstudio".
-	// LM Studio exposes an OpenAI-compatible /v1/chat/completions endpoint
-	// (default base http://localhost:1234). API key is rarely needed for
-	// local installs but supported for proxied / remote setups.
-	LMStudioBaseURL string `json:"lmstudioBaseUrl"`
-	LMStudioModel   string `json:"lmstudioModel"`
-	LMStudioAPIKey  string `json:"lmstudioApiKey"`
-
-	// llama.cpp server vision settings. Active when InferenceProvider ==
-	// "llamacpp". The official llama.cpp `server` binary exposes an
-	// OpenAI-compatible /v1/chat/completions endpoint (default base
-	// http://localhost:8080). API key is optional and only honored if set.
-	LlamaCppBaseURL string `json:"llamacppBaseUrl"`
-	LlamaCppModel   string `json:"llamacppModel"`
-	LlamaCppAPIKey  string `json:"llamacppApiKey"`
-
-	// Strata vision settings. Active when InferenceProvider == "strata".
-	// Strata (github.com/Niko1221/Strata) serves Qwen3.8-Flash-Next behind an
-	// OpenAI-compatible /v1/chat/completions endpoint (default base
-	// http://127.0.0.1:8080); images need its "vision" setup. The API key is
-	// required only when Strata's config sets "api_key". The model name is
-	// informational — Strata serves whatever model it loaded.
-	StrataBaseURL string `json:"strataBaseUrl"`
-	StrataModel   string `json:"strataModel"`
-	StrataAPIKey  string `json:"strataApiKey"`
-
-	// Per-provider concurrency caps. Drives the jobqueue host-bucket limit
-	// for the corresponding inference bucket — a single GPU local install
-	// typically wants 1 at a time, while RunPod serverless can absorb many
-	// concurrent requests because it scales out per-call. Add one field
-	// per new engine; values <= 0 leave the queue at its default of 1.
-	InferenceConcurrency struct {
-		Ollama   int `json:"ollama"`
-		RunPod   int `json:"runpod"`
-		LMStudio int `json:"lmstudio"`
-		LlamaCpp int `json:"llamacpp"`
-		Strata   int `json:"strata"`
-	} `json:"inferenceConcurrency"`
+	// Text generation (descriptions and every other image -> text or
+	// text -> text job) runs loki-scribe, the standalone engine for
+	// Qwen3.5/3.8 ("qwen35") GGUF models. Like the other loki-* engines it
+	// runs on this GPU or on a GPU worker pool (Engines routes
+	// "loki-scribe"); locally the server keeps it resident between jobs.
+	//
+	// TextModel names the GGUF: a path, a Hugging Face
+	// publisher/repo[/file.gguf] (also LM Studio's folder layout; the
+	// engine downloads it when missing), or a name matched against the
+	// model folders (the dependency folder, $LOKI_MODELS, LM Studio's
+	// ~/.lmstudio/models). Empty: the engine default, Qwen3.8 27B Q4_K_M
+	// (a managed dependency). TextMMProj overrides the vision projector
+	// (default: the mmproj*.gguf beside the model).
+	TextModel  string `json:"textModel"`
+	TextMMProj string `json:"textMmproj,omitempty"`
+	// TextParallel is how many requests one engine decodes together (1-8);
+	// TextBatch how many requests go to it per run (the server coalesces
+	// concurrent describe items into runs of up to this many images);
+	// TextMaxImageTokens caps the vision tokens per image (one per 32x32
+	// pixels, larger images are scaled down). Values <= 0 take defaults.
+	TextParallel       int    `json:"textParallel,omitempty"`
+	TextBatch          int    `json:"textBatch,omitempty"`
+	TextMaxImageTokens int    `json:"textMaxImageTokens,omitempty"`
+	DescribePrompt     string `json:"describePrompt"`
 
 	// AutoProcessOps is the comma-separated per-item op list the scheduled
 	// combined job runs. Empty = every op (hash, dimensions, describe,
@@ -425,47 +389,74 @@ func DefaultConfigDir() string {
 	return platform.GetDataDir()
 }
 
+// Text-generation defaults (loki-scribe).
+const (
+	DefaultTextParallel       = 8
+	DefaultTextBatch          = 16
+	DefaultTextMaxImageTokens = 2048
+)
+
+// retiredKeys are config keys of removed features, dropped from the file on
+// save (Save otherwise keeps keys it does not know, for the viewer's sake).
+var retiredKeys = []string{
+	"inferenceProvider", "inferenceConcurrency",
+	"ollamaBaseUrl", "ollamaModel",
+	"runpodEndpoint", "runpodApiKey",
+	"lmstudioBaseUrl", "lmstudioModel", "lmstudioApiKey",
+	"llamacppBaseUrl", "llamacppModel", "llamacppApiKey",
+	"strataBaseUrl", "strataModel", "strataApiKey",
+}
+
+// migrateLegacyTextModel returns the model a config of the HTTP-provider era
+// used, when it was a local GGUF server (LM Studio, llama.cpp, Strata) whose
+// model loki-scribe can load by name; "" otherwise (Ollama tags and RunPod
+// endpoints name nothing the engine can find).
+func migrateLegacyTextModel(data []byte) string {
+	var old struct {
+		Provider string `json:"inferenceProvider"`
+		LMStudio string `json:"lmstudioModel"`
+		LlamaCpp string `json:"llamacppModel"`
+		Strata   string `json:"strataModel"`
+	}
+	if json.Unmarshal(data, &old) != nil {
+		return ""
+	}
+	switch strings.ToLower(strings.TrimSpace(old.Provider)) {
+	case "lmstudio":
+		return strings.TrimSpace(old.LMStudio)
+	case "llamacpp":
+		return strings.TrimSpace(old.LlamaCpp)
+	case "strata":
+		return strings.TrimSpace(old.Strata)
+	}
+	return ""
+}
+
 // defaultConfig returns a Config populated with sensible defaults.
 func defaultConfig() Config {
 	return Config{
-		DBPath:                 DefaultDBPath(),
-		Port:                   DefaultPort,
-		DownloadPath:           defaultDownloadPath(),
-		InferenceProvider:      "ollama",
-		EmbeddingModel:         DefaultEmbeddingModel,
-		EmbeddingProvider:      "cpu",
-		EmbeddingPerformance:   "balanced",
-		AutotagModel:           DefaultAutotagModel,
-		AutotagProvider:        "cpu",
-		AutotagPerformance:     "balanced",
-		FaceModel:              DefaultFaceModel,
-		FaceProvider:           "cpu",
-		FacePerformance:        "balanced",
-		FaceRouting:            "auto",
-		OnnxFileTimeoutSeconds: 120,
-		TranscriptionProvider:  DefaultTranscriptionProvider,
-		TranscriptionModel:     DefaultTranscriptionModel,
-		TranscriptionLanguage:  "en",
-		TranscriptionVADFilter: true,
-		OllamaBaseURL:          "http://localhost:11434",
-		OllamaModel:            "llama3.2-vision",
-		DescribePrompt:         "Please describe this image, paying special attention to the people, the color of hair, clothing, items, text and captions, and actions being performed.",
-		LMStudioBaseURL:        "http://localhost:1234",
-		LlamaCppBaseURL:        "http://localhost:8080",
-		StrataBaseURL:          "http://127.0.0.1:8080",
-		InferenceConcurrency: struct {
-			Ollama   int `json:"ollama"`
-			RunPod   int `json:"runpod"`
-			LMStudio int `json:"lmstudio"`
-			LlamaCpp int `json:"llamacpp"`
-			Strata   int `json:"strata"`
-		}{
-			Ollama:   1, // local single-GPU Ollama: one at a time
-			RunPod:   4, // serverless scales out per request
-			LMStudio: 1, // local single-GPU LM Studio: one at a time
-			LlamaCpp: 1, // local single-GPU llama.cpp: one at a time
-			Strata:   1, // Strata answers one request at a time by default
-		},
+		DBPath:                  DefaultDBPath(),
+		Port:                    DefaultPort,
+		DownloadPath:            defaultDownloadPath(),
+		EmbeddingModel:          DefaultEmbeddingModel,
+		EmbeddingProvider:       "cpu",
+		EmbeddingPerformance:    "balanced",
+		AutotagModel:            DefaultAutotagModel,
+		AutotagProvider:         "cpu",
+		AutotagPerformance:      "balanced",
+		FaceModel:               DefaultFaceModel,
+		FaceProvider:            "cpu",
+		FacePerformance:         "balanced",
+		FaceRouting:             "auto",
+		OnnxFileTimeoutSeconds:  120,
+		TranscriptionProvider:   DefaultTranscriptionProvider,
+		TranscriptionModel:      DefaultTranscriptionModel,
+		TranscriptionLanguage:   "en",
+		TranscriptionVADFilter:  true,
+		DescribePrompt:          "Please describe this image, paying special attention to the people, the color of hair, clothing, items, text and captions, and actions being performed.",
+		TextParallel:            DefaultTextParallel,
+		TextBatch:               DefaultTextBatch,
+		TextMaxImageTokens:      DefaultTextMaxImageTokens,
 		LocalComputeConcurrency: 1, // one heavy local model workload at a time
 		OnnxTagger: struct {
 			ModelPath            string  `json:"modelPath"`
@@ -633,6 +624,7 @@ func Load() (Config, string, error) {
 				def.Roots[0].Path = def.DownloadPath
 			}
 
+			applyLibraryRoots(&def)
 			Set(def)
 			return def, savedPath, nil
 		}
@@ -692,23 +684,24 @@ func Load() (Config, string, error) {
 	if c.DownloadPath == "" {
 		c.DownloadPath = def.DownloadPath
 	}
-	if c.OllamaBaseURL == "" {
-		c.OllamaBaseURL = def.OllamaBaseURL
-	}
-	if c.OllamaModel == "" {
-		c.OllamaModel = def.OllamaModel
-	}
-	// InferenceProvider migration: configs predating this field need a
-	// sensible value. If the user already set RunPod credentials assume
-	// they wanted RunPod (matches the old "auto-detect from fields"
-	// behavior); otherwise default to ollama so vision tasks keep working.
-	if c.InferenceProvider == "" {
-		if strings.TrimSpace(c.RunPodEndpoint) != "" && strings.TrimSpace(c.RunPodAPIKey) != "" {
-			c.InferenceProvider = "runpod"
-		} else {
-			c.InferenceProvider = def.InferenceProvider
+	// Text inference used to go to an HTTP server (LM Studio, llama.cpp,
+	// Strata, Ollama, RunPod); it now runs loki-scribe. A local server's GGUF
+	// model name carries over (the engine finds LM Studio's downloads by
+	// name); the retired keys are dropped from the file on the next save.
+	if c.TextModel == "" {
+		if m := migrateLegacyTextModel(data); m != "" {
+			c.TextModel = m
+			needsSave = true
 		}
-		needsSave = true
+	}
+	if c.TextParallel <= 0 {
+		c.TextParallel = def.TextParallel
+	}
+	if c.TextBatch <= 0 {
+		c.TextBatch = def.TextBatch
+	}
+	if c.TextMaxImageTokens <= 0 {
+		c.TextMaxImageTokens = def.TextMaxImageTokens
 	}
 	if c.DescribePrompt == "" {
 		c.DescribePrompt = def.DescribePrompt
@@ -776,36 +769,8 @@ func Load() (Config, string, error) {
 	if c.OnnxTagger.CharacterThreshold == 0 {
 		c.OnnxTagger.CharacterThreshold = def.OnnxTagger.CharacterThreshold
 	}
-	// Fill in inference-concurrency defaults for configs predating these
-	// fields; treat 0 as "use default" so users can deliberately raise the
-	// cap to a large number but won't accidentally land at zero (which
-	// would stall the bucket entirely).
-	if c.InferenceConcurrency.Ollama <= 0 {
-		c.InferenceConcurrency.Ollama = def.InferenceConcurrency.Ollama
-	}
-	if c.InferenceConcurrency.RunPod <= 0 {
-		c.InferenceConcurrency.RunPod = def.InferenceConcurrency.RunPod
-	}
-	if c.InferenceConcurrency.LMStudio <= 0 {
-		c.InferenceConcurrency.LMStudio = def.InferenceConcurrency.LMStudio
-	}
-	if c.InferenceConcurrency.LlamaCpp <= 0 {
-		c.InferenceConcurrency.LlamaCpp = def.InferenceConcurrency.LlamaCpp
-	}
-	if c.InferenceConcurrency.Strata <= 0 {
-		c.InferenceConcurrency.Strata = def.InferenceConcurrency.Strata
-	}
 	if c.LocalComputeConcurrency <= 0 {
 		c.LocalComputeConcurrency = def.LocalComputeConcurrency
-	}
-	if c.LMStudioBaseURL == "" {
-		c.LMStudioBaseURL = def.LMStudioBaseURL
-	}
-	if c.LlamaCppBaseURL == "" {
-		c.LlamaCppBaseURL = def.LlamaCppBaseURL
-	}
-	if c.StrataBaseURL == "" {
-		c.StrataBaseURL = def.StrataBaseURL
 	}
 	if c.JWTSecret == "" {
 		c.JWTSecret = uuid.New().String()
@@ -853,6 +818,7 @@ func Load() (Config, string, error) {
 	if migratedDownloadRoot && !EnvRootsActive() && len(c.Roots) == 1 {
 		c.Roots[0].Path = c.DownloadPath
 	}
+	applyLibraryRoots(&c)
 
 	Set(c)
 	return c, path, nil
@@ -892,83 +858,22 @@ func applyEnvOverrides(c *Config) {
 	if v := os.Getenv("LOWKEY_EXTRACTORS"); v != "" {
 		c.ExtractorsPath = v
 	}
-	if v := os.Getenv("LOWKEY_OLLAMA_BASE_URL"); v != "" {
-		c.OllamaBaseURL = v
+	if v := os.Getenv("LOWKEY_TEXT_MODEL"); v != "" {
+		c.TextModel = strings.TrimSpace(v)
 	}
-	if v := os.Getenv("LOWKEY_OLLAMA_MODEL"); v != "" {
-		c.OllamaModel = v
+	if v := os.Getenv("LOWKEY_TEXT_MMPROJ"); v != "" {
+		c.TextMMProj = strings.TrimSpace(v)
 	}
-	if v := os.Getenv("LOWKEY_INFERENCE_PROVIDER"); v != "" {
-		c.InferenceProvider = strings.ToLower(strings.TrimSpace(v))
-	}
-	if v := os.Getenv("LOWKEY_RUNPOD_ENDPOINT"); v != "" {
-		c.RunPodEndpoint = v
-	}
-	if v := os.Getenv("LOWKEY_RUNPOD_API_KEY"); v != "" {
-		c.RunPodAPIKey = v
-	}
-	// Per-provider concurrency caps. Parse as int; warn and skip on bad
-	// values rather than silently zeroing the bucket.
-	if v := os.Getenv("LOWKEY_INFERENCE_OLLAMA_CONCURRENCY"); v != "" {
-		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n > 0 {
-			c.InferenceConcurrency.Ollama = n
-		} else {
-			log.Printf("Warning: LOWKEY_INFERENCE_OLLAMA_CONCURRENCY=%q is not a positive integer; ignored", v)
-		}
-	}
-	if v := os.Getenv("LOWKEY_INFERENCE_RUNPOD_CONCURRENCY"); v != "" {
-		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n > 0 {
-			c.InferenceConcurrency.RunPod = n
-		} else {
-			log.Printf("Warning: LOWKEY_INFERENCE_RUNPOD_CONCURRENCY=%q is not a positive integer; ignored", v)
-		}
-	}
-	if v := os.Getenv("LOWKEY_LMSTUDIO_BASE_URL"); v != "" {
-		c.LMStudioBaseURL = v
-	}
-	if v := os.Getenv("LOWKEY_LMSTUDIO_MODEL"); v != "" {
-		c.LMStudioModel = v
-	}
-	if v := os.Getenv("LOWKEY_LMSTUDIO_API_KEY"); v != "" {
-		c.LMStudioAPIKey = v
-	}
-	if v := os.Getenv("LOWKEY_LLAMACPP_BASE_URL"); v != "" {
-		c.LlamaCppBaseURL = v
-	}
-	if v := os.Getenv("LOWKEY_LLAMACPP_MODEL"); v != "" {
-		c.LlamaCppModel = v
-	}
-	if v := os.Getenv("LOWKEY_LLAMACPP_API_KEY"); v != "" {
-		c.LlamaCppAPIKey = v
-	}
-	if v := os.Getenv("LOWKEY_STRATA_BASE_URL"); v != "" {
-		c.StrataBaseURL = v
-	}
-	if v := os.Getenv("LOWKEY_STRATA_MODEL"); v != "" {
-		c.StrataModel = v
-	}
-	if v := os.Getenv("LOWKEY_STRATA_API_KEY"); v != "" {
-		c.StrataAPIKey = v
-	}
-	if v := os.Getenv("LOWKEY_INFERENCE_LMSTUDIO_CONCURRENCY"); v != "" {
-		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n > 0 {
-			c.InferenceConcurrency.LMStudio = n
-		} else {
-			log.Printf("Warning: LOWKEY_INFERENCE_LMSTUDIO_CONCURRENCY=%q is not a positive integer; ignored", v)
-		}
-	}
-	if v := os.Getenv("LOWKEY_INFERENCE_LLAMACPP_CONCURRENCY"); v != "" {
-		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n > 0 {
-			c.InferenceConcurrency.LlamaCpp = n
-		} else {
-			log.Printf("Warning: LOWKEY_INFERENCE_LLAMACPP_CONCURRENCY=%q is not a positive integer; ignored", v)
-		}
-	}
-	if v := os.Getenv("LOWKEY_INFERENCE_STRATA_CONCURRENCY"); v != "" {
-		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n > 0 {
-			c.InferenceConcurrency.Strata = n
-		} else {
-			log.Printf("Warning: LOWKEY_INFERENCE_STRATA_CONCURRENCY=%q is not a positive integer; ignored", v)
+	for _, e := range []struct {
+		name string
+		dst  *int
+	}{{"LOWKEY_TEXT_PARALLEL", &c.TextParallel}, {"LOWKEY_TEXT_BATCH", &c.TextBatch}, {"LOWKEY_TEXT_MAX_IMAGE_TOKENS", &c.TextMaxImageTokens}} {
+		if v := os.Getenv(e.name); v != "" {
+			if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n > 0 {
+				*e.dst = n
+			} else {
+				log.Printf("Warning: %s=%q is not a positive integer; ignored", e.name, v)
+			}
 		}
 	}
 	if v := os.Getenv("LOWKEY_TRANSCRIPTION_PROVIDER"); v != "" {
@@ -1124,6 +1029,51 @@ func applyEnvOverrides(c *Config) {
 	envRootsMu.Unlock()
 }
 
+// Library roots: storage roots live in the library database (see the main
+// package's library_roots.go). Once the active library's roots are known they
+// replace the config file's on every Load, so re-reading config.json (config
+// GETs do) never reverts to another library's roots. Env roots still win.
+var (
+	libraryRootsMu  sync.Mutex
+	libraryRoots    []StorageRoot
+	libraryRootsSet bool
+)
+
+// SetLibraryRoots makes roots the active library's storage roots, both in the
+// in-memory config now and on every later Load.
+func SetLibraryRoots(roots []StorageRoot) {
+	libraryRootsMu.Lock()
+	libraryRoots = append([]StorageRoot{}, roots...)
+	libraryRootsSet = true
+	libraryRootsMu.Unlock()
+	cfgMu.Lock()
+	applyLibraryRoots(&cfg)
+	cfgMu.Unlock()
+}
+
+// ClearLibraryRoots forgets the library roots so Load uses the config file's
+// again (tests).
+func ClearLibraryRoots() {
+	libraryRootsMu.Lock()
+	libraryRoots, libraryRootsSet = nil, false
+	libraryRootsMu.Unlock()
+}
+
+func applyLibraryRoots(c *Config) {
+	if EnvRootsActive() {
+		return
+	}
+	libraryRootsMu.Lock()
+	defer libraryRootsMu.Unlock()
+	if !libraryRootsSet {
+		return
+	}
+	c.Roots = append([]StorageRoot{}, libraryRoots...)
+	if v := os.Getenv("LOWKEY_DEFAULT_ROOT"); v != "" {
+		applyDefaultRoot(c, v)
+	}
+}
+
 // applyDefaultRoot marks one root as default based on a 1-based index or label.
 func applyDefaultRoot(c *Config, v string) {
 	// Clear any existing defaults first
@@ -1252,6 +1202,9 @@ func Save(c Config) (string, error) {
 	}
 	envRootsMu.Unlock()
 
+	for _, k := range retiredKeys {
+		delete(base, k)
+	}
 	deepMergeJSON(base, incoming)
 
 	mergedData, err := json.MarshalIndent(base, "", "  ")

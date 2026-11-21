@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/stevecastle/shrike/appconfig"
 	"github.com/stevecastle/shrike/media"
 	"github.com/stevecastle/shrike/mediaext"
 	"github.com/stevecastle/shrike/transcribe"
@@ -31,11 +30,13 @@ func registerBuiltinItemOps() {
 		ID:   "describe",
 		Name: "Description (LLM Vision)",
 		Options: []TaskOption{
-			{Name: "model", Label: "Vision Model", Type: "string", Description: "Override the configured vision model for descriptions"},
+			{Name: "model", Label: "Text Model", Type: "string", Description: "Override the configured text model (a GGUF path, Hugging Face publisher/repo, or model name)"},
 			{Name: "prompt", Label: "Custom Prompt", Type: "string", Description: "Override the configured describe prompt for this run"},
 		},
-		Applies: extAppliesFn(append(append([]string{}, imageExts...), videoExts...)...),
-		Prepare: prepareDescribeOp,
+		// enough items in flight for loki-scribe's batches (see scribe.go)
+		Concurrency: scribeConcurrency,
+		Applies:     extAppliesFn(append(append([]string{}, imageExts...), videoExts...)...),
+		Prepare:     prepareDescribeOp,
 	})
 
 	RegisterItemOp(ItemOp{
@@ -68,16 +69,13 @@ func registerBuiltinItemOps() {
 func prepareDescribeOp(run *ItemRun) (*ItemProcessor, error) {
 	q, jobID := run.Queue, run.Job.ID
 	model, _ := run.Opts["model"].(string)
-	if model == "" {
-		model = appconfig.Get().OllamaModel
-	}
 	prompt, _ := run.Opts["prompt"].(string)
 	db := q.Db
 
 	return &ItemProcessor{
 		SkipExisting: func(path string) (bool, error) { return hasExistingMetadata(db, path, "description") },
 		Process: func(ctx context.Context, path, localPath string) (*ItemCommit, error) {
-			description, err := describeFileWithOllama(ctx, q, jobID, localPath, model, prompt)
+			description, err := describeFile(ctx, q, jobID, localPath, model, prompt)
 			if err != nil {
 				return nil, err
 			}

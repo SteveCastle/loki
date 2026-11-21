@@ -37,13 +37,14 @@ Lowkey Media Server is the back-end companion to the Lowkey Media Viewer. It man
 - **HLS adaptive streaming** — on-demand transcode to 480p / 720p / 1080p with on-disk segment cache (`/media/hls/...`).
 - **Swipe mode** — paginated random-sample view designed for quick triage on touch devices.
 - **File system browser** — list local roots and S3 buckets, drill into folders, ingest in-place.
-- **Auto-tagging** — ONNX (WD-EVA02-Large-Tagger v3) or Ollama vision models against the tag set already in your DB.
+- **Auto-tagging** — ONNX (WD-EVA02-Large-Tagger v3) against the tag set already in your DB.
+- **Descriptions** — [loki-scribe](../tools/loki-scribe) (Qwen3.8 27B or any Qwen3.5/3.8 GGUF) on this GPU or a GPU worker pool, batched.
 - **Transcription** — Faster-Whisper integration (bundled under the "Generate Metadata" task).
 - **Ingestion** — bulk import from local paths, YouTube (yt-dlp), arbitrary galleries (gallery-dl), or Discord exports.
 - **FFmpeg toolkit** — 16 preset operations (scale, convert, extract audio, screenshot, thumbnail sheet, blur, crop, reverse, speed, caption, etc.) plus raw passthrough.
 - **LoRA dataset builder** — assemble a captioned image dataset from tagged media.
 - **Storage abstraction** — multiple local roots and S3-compatible buckets side-by-side. Per-root thumbnail prefixes. Default-root configurable.
-- **Bundled binaries** — `ffmpeg`, `ffprobe`, `ffplay`, `exiftool`, `onnxtag`, and `onnxruntime` ship inside the release archive (no first-run downloads, no Gatekeeper headaches on macOS). Optional tools (`yt-dlp`, `gallery-dl`, `ollama`) are detected on PATH with copy-paste install instructions per OS. AI models are downloaded on demand from a checksummed manifest.
+- **Bundled binaries** — `ffmpeg`, `ffprobe`, `ffplay`, `exiftool`, `onnxtag`, and `onnxruntime` ship inside the release archive (no first-run downloads, no Gatekeeper headaches on macOS). Optional tools (`yt-dlp`, `gallery-dl`) are detected on PATH with copy-paste install instructions per OS. AI models are downloaded on demand from a checksummed manifest.
 - **SSE updates** — `/stream` pushes live job state and download progress to all connected clients.
 - **System tray** — Windows and macOS get a tray icon with Open Web UI / Quit shortcuts.
 - **Browser extensions** — Chrome and Firefox extensions for sending the current URL to the job queue.
@@ -112,8 +113,7 @@ All configuration can be set via environment variables — no config file needed
 |----------|---------|-------------|
 | `LOWKEY_DB_PATH` | `/data/db/media.db` | SQLite database path |
 | `LOWKEY_DOWNLOAD_PATH` | `/data/downloads` | Download directory (deprecated — prefer a default root) |
-| `LOWKEY_OLLAMA_BASE_URL` | `http://host.docker.internal:11434` | Ollama API endpoint |
-| `LOWKEY_OLLAMA_MODEL` | `llama3.2-vision` | Vision model for descriptions and tagging |
+| `LOWKEY_TEXT_MODEL` | engine default (Qwen3.8 27B) | loki-scribe's GGUF model for descriptions (the container has no GPU engines: route `loki-scribe` to a GPU worker pool) |
 | `LOWKEY_JWT_SECRET` | auto-generated and persisted | JWT signing secret. Override to share sessions across replicas. |
 | `LOWKEY_DISCORD_TOKEN` | | Discord token for Discord export ingestion |
 | `LOWKEY_FASTER_WHISPER_PATH` | | Path to faster-whisper binary (overrides the on-demand download) |
@@ -219,12 +219,12 @@ Prebuilt binaries for Windows (x64), macOS (arm64 + amd64), and Linux (amd64) ar
 
 2. **Open <http://localhost:10111>.** Log in as `admin` / `admin`. You'll be redirected to a setup wizard — pick a real username and password. The default admin is deleted automatically once a real user exists.
 
-3. **Open the Config tab** to verify the Lowkey Database path and configure model paths for ONNX tagging, Ollama, or Faster Whisper.
+3. **Open the Config tab** to verify the Lowkey Database path and configure model paths for ONNX tagging, the text model, or Faster Whisper.
 
-4. **Walk the welcome wizard** at <http://localhost:10111/> on first run. It shows what's bundled, gives install instructions for optional tools (`yt-dlp`, `gallery-dl`, `ollama`), and lets you pick which AI models to download. You can skip it and revisit any time.
+4. **Walk the welcome wizard** at <http://localhost:10111/> on first run. It shows what's bundled, gives install instructions for optional tools (`yt-dlp`, `gallery-dl`), and lets you pick which AI models to download. You can skip it and revisit any time.
 
    - [Download model files for the ONNX tagger](https://huggingface.co/SmilingWolf/wd-eva02-large-tagger-v3/tree/main)
-   - [Install Ollama for LLM-based descriptions and tagging](https://ollama.com/)
+   - AI descriptions run on loki-scribe: the wizard's "AI descriptions and text" step installs it and its model (an RTX 40-series GPU with 24 GB), or route it to a GPU worker pool
    - Faster-Whisper for transcription downloads with one click from the wizard's AI features step (or bring your own [standalone build](https://github.com/Purfview/whisper-standalone-win) via `fasterWhisperPath`)
 
    <img width="1233" height="1693" alt="Screenshot 2025-09-20 080416" src="https://github.com/user-attachments/assets/5eb008ae-88fb-4519-af03-4e55afbb6601" />
@@ -300,7 +300,7 @@ For full functionality you'll want the following tools. Bundled ones ship with t
 | Faster-Whisper | Video transcription | Welcome wizard → AI features (one-click download), or set `fasterWhisperPath` to your own binary |
 | [yt-dlp](https://github.com/yt-dlp/yt-dlp) | YouTube and other video downloads | Optional — install via `brew`/`winget`/`pipx`; wizard shows the command |
 | [gallery-dl](https://github.com/mikf/gallery-dl) | Image gallery downloads | Optional — install via `brew`/`pip`/`pipx`; wizard shows the command |
-| [Ollama](https://ollama.com/) | LLM-based image descriptions / vision tagging | Optional — install via the official installer |
+| loki-scribe + Qwen3.8 27B | AI descriptions and text | Welcome wizard → AI features, or installed on first use |
 
 ### Building from Source
 
@@ -412,7 +412,7 @@ media-server/
 ├── tasks/                  # Self-registering task implementations
 │   ├── registry.go         # init() registers every built-in task
 │   ├── autotag.go          # ONNX auto-tagging
-│   ├── autotag_vision.go   # Ollama vision-based tagging
+│   ├── scribe.go           # Text generation (loki-scribe): batching, resident engine, pools
 │   ├── metadata_ops.go     # Descriptions + transcripts + hashes + dimensions
 │   ├── ffmpeg*.go          # 16 ffmpeg preset variants + custom passthrough
 │   ├── hls.go              # HLS transcode task
@@ -464,8 +464,7 @@ Most settings can also be set via environment variables (see the Docker section 
   "dbPath": "C:\\path\\to\\database.db",
   "jwtSecret": "auto-generated-on-first-run",
 
-  "ollamaBaseUrl": "http://localhost:11434",
-  "ollamaModel": "llama3.2-vision",
+  "textModel": "lmstudio-community/Qwen3.8-27B-GGUF",
   "describePrompt": "Please describe this image...",
 
   "onnxTagger": {

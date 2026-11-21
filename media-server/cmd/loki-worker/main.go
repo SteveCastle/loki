@@ -1,5 +1,5 @@
 // Command loki-worker runs the loki-* GPU engines (loki-retouch,
-// loki-reshoot, loki-dream, loki-segment) on a GPU host and serves them to
+// loki-reshoot, loki-dream, loki-segment, loki-scribe) on a GPU host and serves them to
 // the Lowkey Media Server: one resident engine process per GPU keeps its
 // models in VRAM between jobs, jobs queue per node, and files travel with
 // the jobs. It runs as an HTTP server (a persistent node: a RunPod pod, an

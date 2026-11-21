@@ -89,12 +89,12 @@ func (m MediaItem) MarshalJSON() ([]byte, error) {
 
 // TemplateData represents data for the media template
 type TemplateData struct {
-	MediaItems         []MediaItem `json:"media_items"`
-	Offset             int         `json:"offset"`
-	HasMore            bool        `json:"has_more"`
-	TotalCount         int         `json:"total_count"`
-	SearchQuery        string      `json:"search_query"`
-	DefaultOllamaModel string      `json:"default_ollama_model"`
+	MediaItems       []MediaItem `json:"media_items"`
+	Offset           int         `json:"offset"`
+	HasMore          bool        `json:"has_more"`
+	TotalCount       int         `json:"total_count"`
+	SearchQuery      string      `json:"search_query"`
+	DefaultTextModel string      `json:"default_text_model"`
 }
 
 // APIResponse represents the JSON response for the API endpoint
@@ -2179,6 +2179,10 @@ func InitializeSchema(db *sql.DB) error {
 	`)
 	if err != nil {
 		return fmt.Errorf("failed to create media_tag_by_category table: %w", err)
+	}
+
+	if err := ensureLibrarySettingsTable(db); err != nil {
+		return err
 	}
 
 	// Create cache table

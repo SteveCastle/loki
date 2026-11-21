@@ -55,7 +55,7 @@
       <span>
         <b>Local only</b><br />
         <span class="wk-muted">
-          Run loki-retouch, loki-reshoot, loki-dream and loki-segment on this
+          Run loki-retouch, loki-reshoot, loki-dream, loki-segment and loki-scribe on this
           machine's GPU whatever the strategy and routes below say. Applies at
           once; jobs already on a worker finish there.
         </span>
@@ -153,7 +153,7 @@
   // /api/engines, plus this machine's engine installs. Polls only while the
   // tab is showing (window.enginesPanel.show / hide).
   window.enginesPanel = (function () {
-    const ENGINES = ['loki-retouch', 'loki-reshoot', 'loki-dream', 'loki-segment'];
+    const ENGINES = ['loki-retouch', 'loki-reshoot', 'loki-dream', 'loki-segment', 'loki-scribe'];
     let cfg = null, status = null, local = null, timer = null, placementDirty = false;
     const $ = (id) => document.getElementById('wk-' + id);
     const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));

@@ -15,7 +15,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"reflect"
@@ -169,6 +168,10 @@ func switchDatabase(newDBPath string) error {
 	// engine, pending CLI auth codes, and SPA session state. See
 	// resetDBDerivedState (db_state_reset.go, shared by all platform mains).
 	resetDBDerivedState(newDB)
+
+	// Storage roots live in the library database: switch to the new
+	// library's roots (seeding it with the current ones if it has none).
+	applyStorageRoots(deps.Storage, adoptLibraryRoots(newDB))
 
 	// Start new runners for the new queue
 	log.Println("Starting new runners for new queue...")
@@ -607,12 +610,12 @@ func mediaHandler(deps *Dependencies) http.HandlerFunc {
 		}
 
 		data := media.TemplateData{
-			MediaItems:         items,
-			Offset:             len(items),
-			HasMore:            hasMore,
-			TotalCount:         totalCount,
-			SearchQuery:        searchQuery,
-			DefaultOllamaModel: currentConfig.OllamaModel,
+			MediaItems:       items,
+			Offset:           len(items),
+			HasMore:          hasMore,
+			TotalCount:       totalCount,
+			SearchQuery:      searchQuery,
+			DefaultTextModel: currentConfig.TextModel,
 		}
 
 		if err := renderer.Templates().ExecuteTemplate(w, "media", data); err != nil {
@@ -1114,70 +1117,6 @@ func workflowHandler(deps *Dependencies) http.HandlerFunc {
 }
 
 // -----------------------------------------------------------------------------
-// Ollama models handler â€“ lists available models via `ollama ls`
-// -----------------------------------------------------------------------------
-
-func ollamaModelsHandler(deps *Dependencies) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.Error(w, "Use GET", http.StatusMethodNotAllowed)
-			return
-		}
-
-		// Run `ollama ls --quiet` to get just model names, one per line.
-		// Fallback to `ollama ls` parsing if --quiet is unavailable.
-		var models []string
-
-		run := func(args ...string) ([]byte, error) {
-			cmd := exec.Command("ollama", args...)
-			platform.HideSubprocessWindow(cmd)
-			// Best-effort timeout via context is not critical here; rely on default.
-			return cmd.Output()
-		}
-
-		// Try quiet first
-		out, err := run("ls", "--quiet")
-		if err != nil || len(out) == 0 {
-			// Fallback to regular `ollama ls` and parse first column
-			out, err = run("ls")
-		}
-		if err != nil {
-			log.Printf("ollama ls error: %v", err)
-			http.Error(w, "failed to list ollama models", http.StatusInternalServerError)
-			return
-		}
-
-		for _, line := range strings.Split(string(out), "\n") {
-			line = strings.TrimSpace(line)
-			if line == "" {
-				continue
-			}
-			// When not quiet, lines are like: "llama3:latest  4.7 GB  2 weeks ago"
-			// Take the first whitespace-separated token.
-			if strings.Contains(line, " ") {
-				line = strings.Fields(line)[0]
-			}
-			// Some outputs include tags like name:tag â€“ keep as-is so user can choose full ref.
-			models = append(models, line)
-		}
-
-		// Deduplicate while preserving order
-		seen := map[string]struct{}{}
-		unique := make([]string, 0, len(models))
-		for _, m := range models {
-			if _, ok := seen[m]; ok {
-				continue
-			}
-			seen[m] = struct{}{}
-			unique = append(unique, m)
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"models": unique})
-	}
-}
-
-// -----------------------------------------------------------------------------
 // Stats page handler
 // -----------------------------------------------------------------------------
 
@@ -1265,31 +1204,17 @@ type configTemplateData struct {
 }
 
 type updateConfigRequest struct {
-	DBPath               string `json:"dbPath"`
-	Port                 int    `json:"port"`
-	DownloadPath         string `json:"downloadPath"`
-	OllamaBaseURL        string `json:"ollamaBaseUrl"`
-	OllamaModel          string `json:"ollamaModel"`
-	DescribePrompt       string `json:"describePrompt"`
-	InferenceProvider    string `json:"inferenceProvider"`
-	RunPodEndpoint       string `json:"runpodEndpoint"`
-	RunPodAPIKey         string `json:"runpodApiKey"`
-	LMStudioBaseURL      string `json:"lmstudioBaseUrl"`
-	LMStudioModel        string `json:"lmstudioModel"`
-	LMStudioAPIKey       string `json:"lmstudioApiKey"`
-	LlamaCppBaseURL      string `json:"llamacppBaseUrl"`
-	LlamaCppModel        string `json:"llamacppModel"`
-	LlamaCppAPIKey       string `json:"llamacppApiKey"`
-	StrataBaseURL        string `json:"strataBaseUrl"`
-	StrataModel          string `json:"strataModel"`
-	StrataAPIKey         string `json:"strataApiKey"`
-	InferenceConcurrency struct {
-		Ollama   int `json:"ollama"`
-		RunPod   int `json:"runpod"`
-		LMStudio int `json:"lmstudio"`
-		LlamaCpp int `json:"llamacpp"`
-		Strata   int `json:"strata"`
-	} `json:"inferenceConcurrency"`
+	DBPath         string `json:"dbPath"`
+	Port           int    `json:"port"`
+	DownloadPath   string `json:"downloadPath"`
+	DescribePrompt string `json:"describePrompt"`
+	// TextModel: nil keeps the stored model (partial POSTs), "" resets it to
+	// the engine default.
+	TextModel                 *string `json:"textModel"`
+	TextMMProj                *string `json:"textMmproj"`
+	TextParallel              int     `json:"textParallel"`
+	TextBatch                 int     `json:"textBatch"`
+	TextMaxImageTokens        int     `json:"textMaxImageTokens"`
 	LocalComputeConcurrency   int     `json:"localComputeConcurrency"`
 	OnnxModelPath             string  `json:"onnxModelPath"`
 	OnnxLabelsPath            string  `json:"onnxLabelsPath"`
@@ -1517,72 +1442,25 @@ func configHandler(deps *Dependencies) http.HandlerFunc {
 			if strings.TrimSpace(req.DownloadPath) != "" {
 				newCfg.DownloadPath = strings.TrimSpace(req.DownloadPath)
 			}
-			if strings.TrimSpace(req.OllamaBaseURL) != "" {
-				newCfg.OllamaBaseURL = strings.TrimSpace(req.OllamaBaseURL)
-			}
-			if strings.TrimSpace(req.OllamaModel) != "" {
-				newCfg.OllamaModel = strings.TrimSpace(req.OllamaModel)
-			}
 			if req.DescribePrompt != "" {
 				newCfg.DescribePrompt = req.DescribePrompt
 			}
-			// Inference provider: assign unconditionally so changing tabs
-			// (including selecting Off) takes immediate effect.
-			if v := strings.ToLower(strings.TrimSpace(req.InferenceProvider)); v != "" {
-				newCfg.InferenceProvider = v
+			if req.TextModel != nil {
+				newCfg.TextModel = strings.TrimSpace(*req.TextModel)
 			}
-			// RunPod fields: only overwrite when the payload includes a
-			// non-empty value. Matches the protective pattern used for
-			// every other persisted credential field and prevents partial
-			// callers (e.g. the Electron client posting just {dbPath} on
-			// startup) from accidentally wiping saved RunPod creds.
-			if v := strings.TrimSpace(req.RunPodEndpoint); v != "" {
-				newCfg.RunPodEndpoint = v
+			if req.TextMMProj != nil {
+				newCfg.TextMMProj = strings.TrimSpace(*req.TextMMProj)
 			}
-			if v := keepStoredIfRedacted(req.RunPodAPIKey, newCfg.RunPodAPIKey); v != "" {
-				newCfg.RunPodAPIKey = v
+			// Positive values overwrite; zero / negative (a misshaped or partial
+			// payload) leave the stored value alone.
+			if req.TextParallel > 0 {
+				newCfg.TextParallel = min(req.TextParallel, 8)
 			}
-			if v := strings.TrimSpace(req.LMStudioBaseURL); v != "" {
-				newCfg.LMStudioBaseURL = v
+			if req.TextBatch > 0 {
+				newCfg.TextBatch = req.TextBatch
 			}
-			if v := strings.TrimSpace(req.LMStudioModel); v != "" {
-				newCfg.LMStudioModel = v
-			}
-			if v := keepStoredIfRedacted(req.LMStudioAPIKey, newCfg.LMStudioAPIKey); v != "" {
-				newCfg.LMStudioAPIKey = v
-			}
-			if v := strings.TrimSpace(req.LlamaCppBaseURL); v != "" {
-				newCfg.LlamaCppBaseURL = v
-			}
-			if v := strings.TrimSpace(req.LlamaCppModel); v != "" {
-				newCfg.LlamaCppModel = v
-			}
-			if v := keepStoredIfRedacted(req.LlamaCppAPIKey, newCfg.LlamaCppAPIKey); v != "" {
-				newCfg.LlamaCppAPIKey = v
-			}
-			if v := strings.TrimSpace(req.StrataBaseURL); v != "" {
-				newCfg.StrataBaseURL = v
-			}
-			if v := strings.TrimSpace(req.StrataModel); v != "" {
-				newCfg.StrataModel = v
-			}
-			if v := keepStoredIfRedacted(req.StrataAPIKey, newCfg.StrataAPIKey); v != "" {
-				newCfg.StrataAPIKey = v
-			}
-			if req.InferenceConcurrency.Ollama > 0 {
-				newCfg.InferenceConcurrency.Ollama = req.InferenceConcurrency.Ollama
-			}
-			if req.InferenceConcurrency.RunPod > 0 {
-				newCfg.InferenceConcurrency.RunPod = req.InferenceConcurrency.RunPod
-			}
-			if req.InferenceConcurrency.LMStudio > 0 {
-				newCfg.InferenceConcurrency.LMStudio = req.InferenceConcurrency.LMStudio
-			}
-			if req.InferenceConcurrency.LlamaCpp > 0 {
-				newCfg.InferenceConcurrency.LlamaCpp = req.InferenceConcurrency.LlamaCpp
-			}
-			if req.InferenceConcurrency.Strata > 0 {
-				newCfg.InferenceConcurrency.Strata = req.InferenceConcurrency.Strata
+			if req.TextMaxImageTokens > 0 {
+				newCfg.TextMaxImageTokens = req.TextMaxImageTokens
 			}
 			if req.LocalComputeConcurrency > 0 {
 				newCfg.LocalComputeConcurrency = req.LocalComputeConcurrency
@@ -1696,6 +1574,13 @@ func configHandler(deps *Dependencies) http.HandlerFunc {
 				// "<redacted>" placeholder (both the config page and
 				// GET /api/config redact them on read).
 				newCfg.Roots = mergeIncomingRoots(req.Roots, currentConfig.Roots)
+				// Roots belong to the library: store them in the database
+				// that is active now (the one being left, if dbPath changed
+				// in the same request).
+				if err := persistLibraryRoots(deps.DB, newCfg.Roots, currentConfig.Roots); err != nil {
+					http.Error(w, "failed to save storage roots to the library database: "+err.Error(), http.StatusInternalServerError)
+					return
+				}
 			}
 			cfgPath, err := appconfig.Save(newCfg)
 			if err != nil {
@@ -1720,6 +1605,8 @@ func configHandler(deps *Dependencies) http.HandlerFunc {
 					MaxAge:   -1,
 				})
 				log.Println("Auth session cleared due to database switch")
+				// switchDatabase adopted the new library's storage roots.
+				newCfg.Roots = currentConfig.Roots
 			}
 			currentConfig = newCfg
 
@@ -2487,6 +2374,7 @@ func main() {
 	}
 
 	// â€“â€“â€“ create dependencies struct â€“â€“â€“
+	adoptLibraryRoots(db)
 	storageReg, storageErrs := storage.BuildRegistry(currentConfig.Roots)
 	for _, err := range storageErrs {
 		log.Printf("Warning: storage backend init error: %v", err)
@@ -2562,7 +2450,7 @@ func main() {
 	mux.HandleFunc("/api/prompts/describe", renderer.ApplyMiddlewares(describePromptHandler, renderer.RoleAdmin))
 	mux.HandleFunc("/config", renderer.ApplyMiddlewares(configHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/stats", renderer.ApplyMiddlewares(statsHandler(deps), renderer.RoleAdmin))
-	mux.HandleFunc("/ollama/models", renderer.ApplyMiddlewares(ollamaModelsHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/text-models", renderer.ApplyMiddlewares(textModelsHandler, renderer.RoleAdmin))
 	mux.HandleFunc("/tasks", renderer.ApplyMiddlewares(tasksHandler(deps), renderer.RoleAdmin))
 	RegisterDepsRoutes(mux, deps)
 	registerSetupRoutes(mux, deps)

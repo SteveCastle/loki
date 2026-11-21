@@ -87,7 +87,7 @@ func TestResizeImageIfNeededNormalizesSmallNonSafeFormat(t *testing.T) {
 
 // Oversized images are still downscaled (and emitted as PNG) as before.
 func TestResizeImageIfNeededResizesOversized(t *testing.T) {
-	src := writeTestImage(t, "big.png", 2000, 1000, png.Encode)
+	src := writeTestImage(t, "big.png", 4000, 2000, png.Encode)
 	got, err := resizeImageIfNeeded(src)
 	if err != nil {
 		t.Fatalf("resizeImageIfNeeded: %v", err)
@@ -104,8 +104,8 @@ func TestResizeImageIfNeededResizesOversized(t *testing.T) {
 	if h > w {
 		long = h
 	}
-	if long != 1280 {
-		t.Fatalf("expected long side clamped to 1280, got %dx%d", w, h)
+	if long != 2560 {
+		t.Fatalf("expected long side clamped to 2560, got %dx%d", w, h)
 	}
 }
 

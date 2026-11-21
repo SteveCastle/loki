@@ -455,20 +455,6 @@ components:
           items:
             type: number
           description: Per-channel RGB std on the 0..255 scale.
-    InferenceConcurrency:
-      type: object
-      description: Per-provider concurrency caps for vision inference.
-      properties:
-        ollama:
-          type: integer
-        runpod:
-          type: integer
-        lmstudio:
-          type: integer
-        llamacpp:
-          type: integer
-        strata:
-          type: integer
     ServerConfig:
       type: object
       description: >-
@@ -485,45 +471,25 @@ components:
           type: string
         extractorsPath:
           type: string
-        inferenceProvider:
+        textModel:
           type: string
-          enum:
-            - 'off'
-            - ollama
-            - runpod
-            - lmstudio
-            - llamacpp
-            - strata
-        ollamaBaseUrl:
+          description: >-
+            loki-scribe's model: a GGUF path, a Hugging Face publisher/repo[/file.gguf], or a name matched
+            against the model folders. Empty = the engine default (Qwen3.8 27B Q4_K_M).
+        textMmproj:
           type: string
-        ollamaModel:
-          type: string
+          description: Vision projector override (default the mmproj*.gguf beside the model).
+        textParallel:
+          type: integer
+          description: Requests one engine decodes together (1-8, default 8).
+        textBatch:
+          type: integer
+          description: Requests per engine run (concurrent describe items are coalesced; default 16).
+        textMaxImageTokens:
+          type: integer
+          description: Most vision tokens per image (one per 32x32 pixels; default 2048).
         describePrompt:
           type: string
-        runpodEndpoint:
-          type: string
-        runpodApiKey:
-          type: string
-        lmstudioBaseUrl:
-          type: string
-        lmstudioModel:
-          type: string
-        lmstudioApiKey:
-          type: string
-        llamacppBaseUrl:
-          type: string
-        llamacppModel:
-          type: string
-        llamacppApiKey:
-          type: string
-        strataBaseUrl:
-          type: string
-        strataModel:
-          type: string
-        strataApiKey:
-          type: string
-        inferenceConcurrency:
-          $ref: '#/components/schemas/InferenceConcurrency'
         autoProcessOps:
           type: string
           description: Comma-separated ops for the auto scheduler's job; empty = all.
@@ -701,50 +667,25 @@ components:
           description: Applied on restart. Out-of-range or 0 is ignored.
         downloadPath:
           type: string
-        ollamaBaseUrl:
-          type: string
-        ollamaModel:
-          type: string
         describePrompt:
           type: string
-        inferenceProvider:
+        textModel:
           type: string
-          enum:
-            - 'off'
-            - ollama
-            - runpod
-            - lmstudio
-            - llamacpp
-            - strata
-          description: Lower-cased.
-        runpodEndpoint:
+          description: Omitted keeps the stored model; an empty string resets it to the engine default.
+        textMmproj:
           type: string
-        runpodApiKey:
-          type: string
-          description: '`<redacted>` keeps the stored key.'
-        lmstudioBaseUrl:
-          type: string
-        lmstudioModel:
-          type: string
-        lmstudioApiKey:
-          type: string
-          description: '`<redacted>` keeps the stored key.'
-        llamacppBaseUrl:
-          type: string
-        llamacppModel:
-          type: string
-        llamacppApiKey:
-          type: string
-          description: '`<redacted>` keeps the stored key.'
-        strataBaseUrl:
-          type: string
-        strataModel:
-          type: string
-        strataApiKey:
-          type: string
-          description: '`<redacted>` keeps the stored key.'
-        inferenceConcurrency:
-          $ref: '#/components/schemas/InferenceConcurrency'
+          description: Omitted keeps the stored value; empty = beside the model.
+        textParallel:
+          type: integer
+          minimum: 1
+          maximum: 8
+          description: Positive values overwrite.
+        textBatch:
+          type: integer
+          description: Positive values overwrite.
+        textMaxImageTokens:
+          type: integer
+          description: Positive values overwrite.
         localComputeConcurrency:
           type: integer
         onnxModelPath:
@@ -5647,9 +5588,8 @@ paths:
       summary: The active configuration as JSON, with secrets redacted.
       description: >
         Reloads the config file and returns it. Every non-empty secret is replaced by the literal
-        `<redacted>`: `jwtSecret`, `discordToken`, `runpodApiKey`, `lmstudioApiKey`,
-        `llamacppApiKey`, `strataApiKey`, storage-root `accessKey`/`secretKey`, and engine pool API
-        keys and node tokens. Empty secrets stay empty (and storage-root credentials, being
+        `<redacted>`: `jwtSecret`, `discordToken`, storage-root `accessKey`/`secretKey`, and engine
+        pool API keys and node tokens. Empty secrets stay empty (and storage-root credentials, being
         `omitempty`, are then absent). `POST /config` treats `<redacted>` as "keep the stored
         value", so a read-modify-write round trip is safe.
       x-access: admin
@@ -14477,21 +14417,23 @@ paths:
             text/plain:
               schema:
                 type: string
-  /ollama/models:
+  /api/text-models:
     get:
       tags:
         - Transform and Models
-      operationId: listOllamaModels
-      summary: List the models of the local Ollama install.
+      operationId: listTextModels
+      summary: List the GGUF text models on this machine.
       description: |
-        Runs `ollama ls --quiet` on the server host (falling back to parsing
-        the first column of `ollama ls`) and returns the model names, in order,
-        de-duplicated. It does not query a remote Ollama URL: the `ollama`
-        executable must be on the server's PATH.
+        Scans the folders loki-scribe searches (the managed default model's
+        dependency folder, `$LOKI_MODELS`, LM Studio's `~/.lmstudio/models` and
+        `~/.cache/lm-studio/models`, three levels deep) for `.gguf` models and
+        reads each file's architecture from its header. `spec` is the value for
+        `textModel` (empty for the managed default). Supported models (arch
+        `qwen35`) sort first.
       x-access: admin
       responses:
         '200':
-          description: Model references such as `llama3:latest` (an empty array when none).
+          description: The models found (an empty array when none).
           content:
             application/json:
               schema:
@@ -14500,25 +14442,24 @@ paths:
                   models:
                     type: array
                     items:
-                      type: string
-                required:
-                  - models
-              example:
-                models:
-                  - llama3:latest
-                  - qwen2.5vl:7b
-        '405':
-          description: Method other than GET. Plain text.
-          content:
-            text/plain:
-              schema:
-                type: string
-        '500':
-          description: '`ollama ls` failed or is not installed (`failed to list ollama models`). Plain text.'
-          content:
-            text/plain:
-              schema:
-                type: string
+                      type: object
+                      properties:
+                        spec:
+                          type: string
+                        path:
+                          type: string
+                        name:
+                          type: string
+                        sizeBytes:
+                          type: integer
+                        arch:
+                          type: string
+                        supported:
+                          type: boolean
+                        vision:
+                          type: boolean
+                        managed:
+                          type: boolean
   /api/embedding/directml/install:
     get:
       tags:

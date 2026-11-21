@@ -280,9 +280,15 @@
         </p>
         <ul>
           <li><strong>Setup wizard</strong>: the first-run <code>/setup</code> flow registers local and S3 roots, with a connection test for S3.</li>
-          <li><strong>Config page</strong> (<code>/config</code>) or <code>config.json</code>: the <code>roots</code> key. Saving applies immediately, no restart needed.</li>
-          <li><strong>Environment variables</strong>: <code>LOWKEY_ROOT_&lt;N&gt;</code> for local paths, or <code>LOWKEY_ROOTS</code> as a JSON array for anything (see <a href="#docker-env">Environment Variables</a>). Env-supplied roots fully replace the config file's roots for that run and are never written back to the file. This is what the <a href="#docker">Docker</a> examples use.</li>
+          <li><strong>Config page</strong> (<code>/config</code>): saving applies immediately, no restart needed.</li>
+          <li><strong>Environment variables</strong>: <code>LOWKEY_ROOT_&lt;N&gt;</code> for local paths, or <code>LOWKEY_ROOTS</code> as a JSON array for anything (see <a href="#docker-env">Environment Variables</a>). Env-supplied roots fully replace the library's roots for that run and are never written back to the file or the database. This is what the <a href="#docker">Docker</a> examples use.</li>
         </ul>
+        <p>
+          Roots belong to the library: they are stored in the library database (<code>dbPath</code>),
+          so switching databases switches roots. The <code>roots</code> key in <code>config.json</code>
+          only seeds a library that has none stored yet (an existing library the first time this
+          version opens it, or a brand-new one).
+        </p>
         <h4>S3 root fields</h4>
         <p>
           An S3 root is described by these fields, whether it's defined in the wizard,
@@ -374,7 +380,7 @@
         </p>
         <ul>
           <li><strong>Bundled binaries</strong>: <code>ffmpeg</code>, <code>ffprobe</code>, <code>exiftool</code>, the ONNX worker binaries, and the ONNX Runtime library ship in the <code>bin/</code> folder next to the server executable. Nothing to install.</li>
-          <li><strong>Optional tools</strong>: <code>yt-dlp</code>, <code>gallery-dl</code>, <code>ollama</code>, and DiscordChatExporter are detected on the system <code>PATH</code>. Install them with your package manager to turn on the corresponding tasks; the Dependencies page shows what each one enables.</li>
+          <li><strong>Optional tools</strong>: <code>yt-dlp</code>, <code>gallery-dl</code>, and DiscordChatExporter are detected on the system <code>PATH</code>. Install them with your package manager to turn on the corresponding tasks; the Dependencies page shows what each one enables.</li>
           <li><strong>Downloadable models</strong>: the AI models are downloaded on demand from the setup wizard or the <strong>Dependencies</strong> page (<code>/settings/dependencies</code>). Downloads are resumable and verified against pinned SHA-256 checksums before use.</li>
         </ul>
         <p>Downloaded models are stored under the server's data directory:</p>
@@ -527,15 +533,13 @@
           <a href="#docker-env">Configuration</a>. The image itself presets
           <code>LOWKEY_DB_PATH=/data/db/media.db</code>,
           <code>LOWKEY_DOWNLOAD_PATH=/data/downloads</code>,
-          <code>XDG_DATA_HOME=/data</code> (so config and models persist in the volume), and
-          <code>LOWKEY_OLLAMA_BASE_URL=http://host.docker.internal:11434</code>. The container
+          and <code>XDG_DATA_HOME=/data</code> (so config and models persist in the volume). The container
           listens on <code>10111</code>; pick the host port with <code>-p</code> rather than
           <code>LOWKEY_PORT</code>.
         </p>
         <p>
-          If you're running <a href="https://ollama.com" target="_blank">Ollama</a> on the host machine for AI descriptions,
-          the default <code>LOWKEY_OLLAMA_BASE_URL</code> will find it automatically on macOS and Windows.
-          On Linux, add <code>--add-host=host.docker.internal:host-gateway</code> to the <code>docker run</code> command.
+          AI descriptions run on loki-scribe, a GPU engine the container does not carry: add a GPU worker pool
+          (Config &rarr; GPU Engines, or the <code>loki-worker</code> image) and route <code>loki-scribe</code> to it.
         </p>
 
         <h3 id="docker-data">Data Persistence</h3>
@@ -583,7 +587,7 @@
         <ul>
           <li><strong>port</strong> - HTTP listen port (default 10111; restart to apply)</li>
           <li><strong>dbPath</strong> - Path to the SQLite database</li>
-          <li><strong>roots</strong> - <a href="#storage-roots">Storage roots</a> (local directories and S3 buckets); mark one <code>"default": true</code> to receive uploads and downloads</li>
+          <li><strong>roots</strong> - Initial <a href="#storage-roots">storage roots</a> for a library that has none stored yet (each library keeps its own roots in its database); mark one <code>"default": true</code> to receive uploads and downloads</li>
           <li><strong>downloadPath</strong> - Fallback download directory when no storage root is configured</li>
           <li><strong>defaultStartPath</strong> - Folder the web app opens on a fresh session</li>
           <li><strong>allowPublicAccess</strong> - View-only anonymous access (default false; applies without restart)</li>
@@ -593,11 +597,10 @@
         </ul>
         <h4>LLM &amp; Vision</h4>
         <ul>
-          <li><strong>inferenceProvider</strong> - <code>off</code>, <code>ollama</code> (default), <code>runpod</code>, <code>lmstudio</code>, or <code>llamacpp</code></li>
-          <li><strong>ollamaBaseUrl / ollamaModel</strong> - defaults <code>http://localhost:11434</code> / <code>llama3.2-vision</code></li>
-          <li><strong>lmstudioBaseUrl / lmstudioModel / lmstudioApiKey</strong>, <strong>llamacppBaseUrl / llamacppModel / llamacppApiKey</strong>, <strong>runpodEndpoint / runpodApiKey</strong> - alternate providers</li>
+          <li><strong>textModel</strong> - loki-scribe's GGUF model (path, Hugging Face <code>publisher/repo[/file.gguf]</code>, or a model name in LM Studio's folders); empty = Qwen3.8 27B Q4_K_M</li>
+          <li><strong>textMmproj</strong> - vision projector override (default: beside the model)</li>
+          <li><strong>textParallel / textBatch / textMaxImageTokens</strong> - requests decoded together (8), requests per engine run (16), vision tokens per image (2048)</li>
           <li><strong>describePrompt</strong> - Prompt used for image descriptions</li>
-          <li><strong>inferenceConcurrency</strong> - Per-provider request caps</li>
         </ul>
         <h4>Transcription</h4>
         <ul>
@@ -628,8 +631,7 @@
           <tr><td class="ref-key"><code>LOWKEY_ADMIN_USER</code> / <code>LOWKEY_ADMIN_PASSWORD</code></td><td class="ref-desc">Provision the admin account on first boot (headless setup)</td></tr>
           <tr><td class="ref-key"><code>LOWKEY_ALLOW_PUBLIC_ACCESS</code></td><td class="ref-meta" data-label="Default"><code>false</code></td><td class="ref-desc">View-only anonymous access to the gallery, search, and Swipe app</td></tr>
           <tr><td class="ref-key"><code>LOWKEY_JWT_SECRET</code></td><td class="ref-meta" data-label="Default">(auto-generated)</td><td class="ref-desc">JWT signing secret for authentication</td></tr>
-          <tr><td class="ref-key"><code>LOWKEY_OLLAMA_BASE_URL</code></td><td class="ref-meta" data-label="Default"><code><span class="tok">http://localhost:11434</span></code></td><td class="ref-desc">Ollama API endpoint for LLM features</td></tr>
-          <tr><td class="ref-key"><code>LOWKEY_OLLAMA_MODEL</code></td><td class="ref-meta" data-label="Default"><code><span class="tok">llama3.2-vision</span></code></td><td class="ref-desc">Vision model for image descriptions</td></tr>
+          <tr><td class="ref-key"><code>LOWKEY_TEXT_MODEL</code></td><td class="ref-meta" data-label="Default">(engine default)</td><td class="ref-desc">loki-scribe's GGUF model for descriptions and other text generation</td></tr>
           <tr><td class="ref-key"><code>LOWKEY_DISCORD_TOKEN</code></td><td class="ref-desc">Discord token for media export</td></tr>
           <tr><td class="ref-key"><code>LOWKEY_FASTER_WHISPER_PATH</code></td><td class="ref-desc">Path to an existing faster-whisper install</td></tr>
           <tr><td class="ref-key"><code>LOWKEY_ROOT_1</code>, <code>_2</code>, ...</td><td class="ref-desc">Local storage roots (<code>path</code> or <code>path:label</code>)</td></tr>
@@ -637,10 +639,8 @@
           <tr><td class="ref-key"><code>LOWKEY_ROOTS</code></td><td class="ref-desc">JSON array of storage roots, local and S3 (set <code>"default":true</code> on one); wins over <code>LOWKEY_ROOT_&lt;N&gt;</code></td></tr>
         </table>
         <p>
-          Every other config key has an env twin as well: inference providers
-          (<code>LOWKEY_INFERENCE_PROVIDER</code>, <code>LOWKEY_LMSTUDIO_*</code>,
-          <code>LOWKEY_LLAMACPP_*</code>, <code>LOWKEY_RUNPOD_*</code>,
-          <code>LOWKEY_INFERENCE_&lt;PROVIDER&gt;_CONCURRENCY</code>), transcription
+          Every other config key has an env twin as well: text generation
+          (<code>LOWKEY_TEXT_MMPROJ|PARALLEL|BATCH|MAX_IMAGE_TOKENS</code>), transcription
           (<code>LOWKEY_TRANSCRIPTION_PROVIDER|MODEL|LANGUAGE|VAD</code>), and ONNX task tuning
           (<code>LOWKEY_EMBEDDING_*</code>, <code>LOWKEY_AUTOTAG_*</code>, <code>LOWKEY_FACE_*</code>,
           <code>LOWKEY_ONNX_FILE_TIMEOUT</code>), matching the keys above.
@@ -886,7 +886,8 @@
 
         <h3 id="llm-vision">LLM Vision Descriptions</h3>
         <p>
-          Generate image descriptions using Ollama with vision models (llama3.2-vision, etc.).
+          Generate image descriptions with loki-scribe (Qwen3.8 27B, or any Qwen3.5/3.8 GGUF such as one already in
+          LM Studio), on this GPU or a GPU worker pool; concurrent items are batched into one engine run.
           Customize prompts for different use cases.
         </p>
         <div class="placeholder-video">LLM Description Demo Video</div>

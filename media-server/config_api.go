@@ -45,10 +45,6 @@ func redactConfig(cfg appconfig.Config) appconfig.Config {
 	}
 	cfg.JWTSecret = red(cfg.JWTSecret)
 	cfg.DiscordToken = red(cfg.DiscordToken)
-	cfg.RunPodAPIKey = red(cfg.RunPodAPIKey)
-	cfg.LMStudioAPIKey = red(cfg.LMStudioAPIKey)
-	cfg.LlamaCppAPIKey = red(cfg.LlamaCppAPIKey)
-	cfg.StrataAPIKey = red(cfg.StrataAPIKey)
 	cfg.Roots = redactRoots(cfg.Roots)
 	cfg.Engines = redactEngines(cfg.Engines)
 	return cfg

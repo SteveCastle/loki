@@ -1,6 +1,6 @@
 // Package workerapi is the wire contract between the Lowkey Media Server and
 // loki-worker, the node agent that runs the loki-* GPU engines (loki-retouch,
-// loki-reshoot, loki-dream, loki-segment) as resident processes on a GPU
+// loki-reshoot, loki-dream, loki-segment, loki-scribe) as resident processes on a GPU
 // host and serves them over HTTP (persistent nodes) or as a RunPod
 // queue-based serverless worker. It holds the shared types, the clients both
 // sides use, and the argument staging that lets a command line written for
@@ -29,7 +29,7 @@ const JobDir = "$JOB"
 const SessionDir = "$SESSION"
 
 // Engines are the tools a worker can host, by executable name.
-var Engines = []string{"loki-retouch", "loki-reshoot", "loki-dream", "loki-segment"}
+var Engines = []string{"loki-retouch", "loki-reshoot", "loki-dream", "loki-segment", "loki-scribe"}
 
 // EngineName normalizes an engine name: "retouch" and "loki-retouch" are the
 // same engine.

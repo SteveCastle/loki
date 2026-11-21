@@ -309,6 +309,16 @@ func runItemOps(j *jobqueue.Job, q *jobqueue.Queue, opIDs []string, prefixed boo
 		q.PushJobStdout(j.ID, "Scheduled run: workers execute at background OS priority")
 	}
 
+	// The resident text engine holds most of a GPU's memory: other local
+	// model work gets it back unless this run generates text itself.
+	usesText := false
+	for _, op := range ops {
+		usesText = usesText || op.ID == "describe"
+	}
+	if !usesText {
+		releaseScribeIdle()
+	}
+
 	run := &ItemRun{
 		Job:        j,
 		Queue:      q,

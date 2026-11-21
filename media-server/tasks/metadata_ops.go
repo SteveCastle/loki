@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"image"
+	"image/color"
 	_ "image/gif"
 	_ "image/jpeg"
 	"image/png"
@@ -167,7 +168,9 @@ func probeVideoDuration(ctx context.Context, videoPath string) float64 {
 	return d
 }
 
-func describeFileWithOllama(ctx context.Context, q *jobqueue.Queue, jobID, mediaPath, model, customPrompt string) (string, error) {
+// describeFile describes one media file with the text model: images as they
+// are (normalized), anything else through an ffmpeg frame.
+func describeFile(ctx context.Context, q *jobqueue.Queue, jobID, mediaPath, model, customPrompt string) (string, error) {
 	var tempImagePath string
 	var cleanupPaths []string
 	source := "image"
@@ -195,12 +198,18 @@ func describeFileWithOllama(ctx context.Context, q *jobqueue.Queue, jobID, media
 		cleanupPaths = append(cleanupPaths, resizedPath)
 	}
 	logImageParseToJob(q, jobID, mediaPath, source, tempImagePath, resizedPath)
-	description, err := callOllamaVision(ctx, resizedPath, model, customPrompt)
+	logf := func(string) {}
+	if q != nil && jobID != "" {
+		logf = func(s string) { q.PushJobStdout(jobID, s) }
+	}
+	timeoutCtx, cancel := context.WithTimeout(ctx, 30*time.Minute)
+	description, err := generateText(timeoutCtx, logf, textRequest{Image: resizedPath, Prompt: resolveDescribePrompt(customPrompt), Model: model})
+	cancel()
 	if err != nil {
 		for _, p := range cleanupPaths {
 			_ = os.Remove(p)
 		}
-		return "", fmt.Errorf("ollama call failed: %w", err)
+		return "", fmt.Errorf("description failed: %w", err)
 	}
 	for _, p := range cleanupPaths {
 		_ = os.Remove(p)
@@ -262,7 +271,9 @@ func logImageParseToJob(q *jobqueue.Queue, jobID, originalPath, source, framePat
 // The caller is responsible for removing any returned temp file (it differs
 // from the input path exactly when re-encoding happened).
 func resizeImageIfNeeded(path string) (string, error) {
-	const maxLongSide = 1280
+	// the engine scales to its own vision-token budget; this only bounds what is
+	// sent (to a remote worker) and decoded
+	const maxLongSide = 2560
 
 	f, err := os.Open(path)
 	if err != nil {
@@ -303,7 +314,7 @@ func resizeImageIfNeeded(path string) (string, error) {
 		dst = resized
 	}
 
-	out, err := os.CreateTemp("", "ollama_resize_*.png")
+	out, err := os.CreateTemp("", "describe_resize_*.png")
 	if err != nil {
 		return "", err
 	}
@@ -328,17 +339,6 @@ func resolveDescribePrompt(custom string) string {
 		return trimmed
 	}
 	return appconfig.Get().DescribePrompt
-}
-
-// callOllamaVision routes to either RunPod or the local Ollama HTTP API for
-// image description. The 10-minute deadline preserves the upper bound that
-// used to live on the per-request http.Client. If customPrompt is non-empty
-// (after trimming) it replaces the configured DescribePrompt for this call
-// only.
-func callOllamaVision(ctx context.Context, imagePath, _ string, customPrompt string) (string, error) {
-	timeoutCtx, cancel := context.WithTimeout(ctx, 600*time.Second)
-	defer cancel()
-	return callVisionLLM(timeoutCtx, imagePath, resolveDescribePrompt(customPrompt))
 }
 
 // generateTranscriptWithFasterWhisper transcribes one file through the
@@ -416,4 +416,77 @@ func fileExistsInDatabase(db *sql.DB, path string) (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+// colorModelName maps a decoded color.Model to a short label. CMYK is the one
+// worth watching for in JPEGs: Go decodes it fine, but the stb_image-based
+// decoders in several local vision backends mishandle CMYK JPEGs and hand the
+// model a blank/garbage frame — a plausible cause of "the model answered as if
+// it never saw the (jpg) image" that leaves no error behind.
+func colorModelName(m color.Model) string {
+	switch m {
+	case color.YCbCrModel:
+		return "ycbcr"
+	case color.CMYKModel:
+		return "cmyk"
+	case color.RGBAModel:
+		return "rgba"
+	case color.NRGBAModel:
+		return "nrgba"
+	case color.GrayModel:
+		return "gray"
+	case color.Gray16Model:
+		return "gray16"
+	default:
+		return "other"
+	}
+}
+
+// noImageResponseMarkers are first-person phrases a vision model emits when it
+// got the prompt but no image — i.e. the backend never handed the image to the
+// model (a non-vision model, or a preprocessor that dropped it, e.g. on an
+// extreme aspect ratio). They are deliberately phrased from the model's "I
+// wasn't given an image" perspective so they don't match descriptions that
+// merely mention images ("a sign that reads no photography").
+var noImageResponseMarkers = []string{
+	"no image was provided",
+	"no image provided",
+	"since no image",
+	"cannot see an image",
+	"can't see an image",
+	"cannot see any image",
+	"can't see any image",
+	"don't see an image",
+	"do not see an image",
+	"don't see any image",
+	"do not see any image",
+	"unable to view the image",
+	"unable to see the image",
+	"unable to view an image",
+	"haven't provided an image",
+	"have not provided an image",
+	"didn't provide an image",
+	"did not provide an image",
+	"wasn't provided an image",
+	"was not provided an image",
+	"wasn't provided with an image",
+	"was not provided with an image",
+	"didn't receive an image",
+	"did not receive an image",
+	"no image attached",
+	"no image was attached",
+}
+
+// looksLikeNoImageResponse reports whether content matches a known "I didn't
+// get an image" pattern. Heuristic by design: it gates saving an obviously
+// blind description, it does not judge correctness. Callers treat a hit as a
+// failure so the bad text is never persisted to the library.
+func looksLikeNoImageResponse(content string) bool {
+	lc := strings.ToLower(content)
+	for _, m := range noImageResponseMarkers {
+		if strings.Contains(lc, m) {
+			return true
+		}
+	}
+	return false
 }

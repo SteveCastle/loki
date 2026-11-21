@@ -20,15 +20,6 @@ var Manifest = []Optional{
 		DocsURL:     "https://github.com/mikf/gallery-dl#installation",
 	},
 	{
-		ID:          "ollama",
-		Name:        "Ollama",
-		Binary:      "ollama",
-		VersionArgs: []string{"--version"},
-		Feature:     "AI descriptions & vision tagging",
-		Description: "Local large language model runtime. Enables AI captioning and chat features.",
-		DocsURL:     "https://ollama.com/download",
-	},
-	{
 		ID:          "dce",
 		Name:        "DiscordChatExporter",
 		Binary:      "dce",

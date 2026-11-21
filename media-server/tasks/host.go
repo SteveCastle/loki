@@ -21,6 +21,32 @@ var (
 	hostResolvers   = map[string]HostResolverFn{}
 )
 
+// Buckets of the local model workloads.
+const (
+	// HostBucketEmbed is the local visual-embedding bucket. It is intentionally
+	// separate from the LLM inference buckets so embedding doesn't compete with
+	// autotag/description jobs and isn't capped by the LLM provider's setting.
+	// One embed job at a time is enough: each job parallelizes internally via
+	// its own worker pool (see runEmbedPool).
+	HostBucketEmbed = "embed"
+	// HostBucketAutotag is the local ONNX auto-tagging bucket, separate from the
+	// LLM inference bucket for the same reasons as embed. Each autotag job
+	// parallelizes internally via its own worker pool (see runAutotagPool).
+	HostBucketAutotag = "autotag"
+	// HostBucketFaces is the local ONNX face-scanning bucket, separate for the
+	// same reasons. Each faces job parallelizes internally (see runFacesPool).
+	HostBucketFaces = "faces"
+	// HostBucketLocalCompute is the machine-wide cap on resource-intensive
+	// LOCAL work. Unlike the per-task buckets above (which exist so different
+	// kinds of work can be tuned independently), every local model workload —
+	// ONNX embed/autotag/faces, transcription, local-LLM inference — holds a
+	// local-compute slot IN ADDITION to its own bucket, so the per-task
+	// buckets can no longer stack three full-machine worker pools onto one
+	// GPU at the same time. Limit comes from config LocalComputeConcurrency
+	// (default 1). Remote inference (RunPod) does not hold a slot.
+	HostBucketLocalCompute = "local-compute"
+)
+
 // HostBucketGPUDiffusion is the shared host bucket of the standalone CUDA
 // diffusion engines (loki-retouch, loki-reshoot): each needs ~20 GB of VRAM,
 // so at most one of them runs at a time regardless of which task started it.
@@ -173,27 +199,16 @@ func ResolveResources(command string, arguments []string, input string) []string
 // server restart.
 //
 // Buckets without a positive config value are left at the queue's default
-// (1) so a misconfigured/zero value doesn't accidentally stop a provider
+// (1) so a misconfigured/zero value doesn't accidentally stop a bucket
 // from running anything at all.
 func ApplyHostLimits(q *jobqueue.Queue, cfg appconfig.Config) {
 	if q == nil {
 		return
 	}
-	if n := cfg.InferenceConcurrency.Ollama; n > 0 {
-		q.SetHostLimit(HostBucketOllama, n)
-	}
-	if n := cfg.InferenceConcurrency.RunPod; n > 0 {
-		q.SetHostLimit(HostBucketRunPod, n)
-	}
-	if n := cfg.InferenceConcurrency.LMStudio; n > 0 {
-		q.SetHostLimit(HostBucketLMStudio, n)
-	}
-	if n := cfg.InferenceConcurrency.LlamaCpp; n > 0 {
-		q.SetHostLimit(HostBucketLlamaCpp, n)
-	}
-	if n := cfg.InferenceConcurrency.Strata; n > 0 {
-		q.SetHostLimit(HostBucketStrata, n)
-	}
+	// Text-generation jobs share one bucket: every job feeds the same batcher
+	// (scribe.go), which is what keeps the GPU busy, so a second job would
+	// only interleave with the first.
+	q.SetHostLimit(HostBucketScribe, 1)
 	// One embed job at a time; the job parallelizes internally via its worker
 	// pool, so additional concurrent embed jobs would just oversubscribe.
 	q.SetHostLimit(HostBucketEmbed, 1)
@@ -207,7 +222,7 @@ func ApplyHostLimits(q *jobqueue.Queue, cfg appconfig.Config) {
 	q.SetHostLimit(HostBucketGPUDiffusion, 1)
 	ConfigureEngines(q, cfg.Engines)
 	// Machine-wide cap on concurrent heavy LOCAL jobs (see the bucket's doc
-	// in llm_vision.go). Config value <= 0 falls back to the safe default of
+	// above). Config value <= 0 falls back to the safe default of
 	// one heavy local workload at a time.
 	localLimit := cfg.LocalComputeConcurrency
 	if localLimit <= 0 {

@@ -1,13 +1,13 @@
 name: Build AI CLI tool
 description: >
-  Build, test and package one of the standalone CUDA CLIs under tools/ (loki-retouch, loki-reshoot, loki-segment, loki-dream) for the
+  Build, test and package one of the standalone CUDA CLIs under tools/ (loki-retouch, loki-reshoot, loki-segment, loki-dream, loki-scribe) for the
   runner's OS. Only nvcc and the CUDA headers are installed (kernels are compiled to fatbins at build time;
   the driver is loaded at run time), so no GPU is needed: the tests that run here are the GPU-free ones, and
   the GPU tests are run by hand (see tools/README.md).
 
 inputs:
   tool:
-    description: Directory name under tools/ (loki-retouch, loki-reshoot, loki-segment or loki-dream)
+    description: Directory name under tools/ (loki-retouch, loki-reshoot, loki-segment, loki-dream or loki-scribe)
     required: true
   target:
     description: Artifact suffix, e.g. windows-amd64 or linux-amd64
@@ -75,12 +75,12 @@ runs:
 
     # The Linux build is also what the loki-worker image ships (tools/worker/Dockerfile, ENGINES_STAGE=prebuilt), so
     # it carries SASS for Ada and Hopper plus compute_90 PTX for Blackwell; the FP8 engines need sm_89+, loki-segment
-    # also runs on Ampere. Set for the whole job: build.rs reruns on a changed value, so the test step must see the same.
+    # and loki-scribe (no FP8 kernels) also run on Ampere. Set for the whole job: build.rs reruns on a changed value, so the test step must see the same.
     - name: CUDA targets (Linux)
       if: runner.os == 'Linux'
       shell: bash
       run: |
-        if [ "${{ inputs.tool }}" = "loki-segment" ]; then echo "LOKI_CUDA_ARCHS=80,86,89,90" >> "$GITHUB_ENV"; else echo "LOKI_CUDA_ARCHS=89,90" >> "$GITHUB_ENV"; fi
+        if [ "${{ inputs.tool }}" = "loki-segment" ] || [ "${{ inputs.tool }}" = "loki-scribe" ]; then echo "LOKI_CUDA_ARCHS=80,86,89,90" >> "$GITHUB_ENV"; else echo "LOKI_CUDA_ARCHS=89,90" >> "$GITHUB_ENV"; fi
         echo "LOKI_CUDA_PTX=90" >> "$GITHUB_ENV"
 
     - name: Build

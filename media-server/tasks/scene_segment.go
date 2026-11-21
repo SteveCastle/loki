@@ -70,11 +70,13 @@ var segBinary = func() (string, error) {
 var gpuHeavy atomic.Int32
 
 // beginGPUHeavy marks a GPU-heavy run (retouch, reshoot, splat, tracking):
-// selection sessions let go of their VRAM until it ends. Call the returned
-// func when it ends.
+// selection sessions and the resident text engine (after the run it is in
+// the middle of) let go of their VRAM until it ends; text runs wait for it.
+// Call the returned func when it ends.
 func beginGPUHeavy() func() {
 	gpuHeavy.Add(1)
 	closeSegSessions()
+	scribeLocal.close()
 	return func() { gpuHeavy.Add(-1) }
 }
 

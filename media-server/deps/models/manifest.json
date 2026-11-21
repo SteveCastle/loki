@@ -412,6 +412,67 @@
           ]
       },
       {
+          "id": "loki-scribe",
+          "name": "loki-scribe",
+          "category": "tool",
+          "feature": "AI descriptions and text",
+          "description": "Command-line engine for Descriptions and every other image -> text or text -> text job: runs Qwen3.5/3.8 GGUF models (vision included) with batched decoding. Needs an NVIDIA RTX 40-series (or newer) GPU with room for the model (24 GB for 27B Q4_K_M); Windows or Linux.",
+          "version": "latest",
+          "consumers": [
+              "describe",
+              "lora-dataset"
+          ],
+          "size_bytes": 20000000,
+          "files": [
+              {
+                  "url": "https://github.com/SteveCastle/loki/releases/latest/download/loki-scribe-windows-amd64.zip",
+                  "rel_path": "loki-scribe.exe",
+                  "sha256_url": "https://github.com/SteveCastle/loki/releases/latest/download/loki-scribe-windows-amd64.zip.sha256",
+                  "os": "windows",
+                  "size_bytes": 20000000,
+                  "archive": "zip",
+                  "archive_member": "loki-scribe-windows-amd64/loki-scribe.exe",
+                  "exec": true
+              },
+              {
+                  "url": "https://github.com/SteveCastle/loki/releases/latest/download/loki-scribe-linux-amd64.zip",
+                  "rel_path": "loki-scribe",
+                  "sha256_url": "https://github.com/SteveCastle/loki/releases/latest/download/loki-scribe-linux-amd64.zip.sha256",
+                  "os": "linux",
+                  "size_bytes": 20000000,
+                  "archive": "zip",
+                  "archive_member": "loki-scribe-linux-amd64/loki-scribe",
+                  "exec": true
+              }
+          ]
+      },
+      {
+          "id": "qwen3.8-27b",
+          "name": "Qwen3.8 27B (Q4_K_M GGUF)",
+          "feature": "AI descriptions and text",
+          "description": "Qwen3.8 27B with its vision projector, the default model of loki-scribe (lmstudio-community's Q4_K_M GGUF; Apache-2.0).",
+          "version": "1.0.0",
+          "consumers": [
+              "describe",
+              "lora-dataset"
+          ],
+          "size_bytes": 17741860192,
+          "files": [
+              {
+                  "url": "https://huggingface.co/lmstudio-community/Qwen3.8-27B-GGUF/resolve/main/Qwen3.8-27B-Q4_K_M.gguf",
+                  "rel_path": "Qwen3.8-27B-Q4_K_M.gguf",
+                  "sha256": "e00082f779fa385cee8c68a3ec8833a75778cc87272240b942f74e0b8243e520",
+                  "size_bytes": 16810714336
+              },
+              {
+                  "url": "https://huggingface.co/lmstudio-community/Qwen3.8-27B-GGUF/resolve/main/mmproj-Qwen3.8-27B-BF16.gguf",
+                  "rel_path": "mmproj-Qwen3.8-27B-BF16.gguf",
+                  "sha256": "97ba9d70e7407f08c880def231fd360a312c76d0053387733f10dcf6affd75a1",
+                  "size_bytes": 931145856
+              }
+          ]
+      },
+      {
           "id": "loki-dream",
           "name": "loki-dream",
           "category": "tool",

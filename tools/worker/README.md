@@ -1,7 +1,8 @@
 # loki-worker: GPU worker pools for the Lowkey Media Server
 
 `loki-worker` runs the loki-* GPU engines — **loki-retouch** (image edit/upscale/restore), **loki-reshoot** (video with
-sound), **loki-dream** (text → image) and **loki-segment** (selection and roto) — on a GPU machine and serves them to
+sound), **loki-dream** (text → image), **loki-segment** (selection and roto) and **loki-scribe** (descriptions and other
+text generation) — on a GPU machine and serves them to
 the Lowkey Media Server. Each engine runs as a resident process (`--worker`, see [`../CONVENTIONS.md`](../CONVENTIONS.md))
 that keeps its models in VRAM between jobs, so only the first job on a worker pays the minutes of model loading.
 

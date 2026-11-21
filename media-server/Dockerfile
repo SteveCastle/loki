@@ -153,10 +153,6 @@ ENV LOWKEY_DB_PATH=/data/db/media.db \
     XDG_DATA_HOME=/data \
     XDG_CACHE_HOME=/data/cache
 
-# Ollama — defaults to the host's instance (works on Docker Desktop). Override
-# to point at a remote Ollama with -e LOWKEY_OLLAMA_BASE_URL=http://...:11434
-ENV LOWKEY_OLLAMA_BASE_URL=http://host.docker.internal:11434
-
 # -----------------------------------------------------------------------------
 # Storage roots — at least one must be provided at run time. Two formats:
 # -----------------------------------------------------------------------------
@@ -191,7 +187,9 @@ ENV LOWKEY_OLLAMA_BASE_URL=http://host.docker.internal:11434
 #                                    existing account. Without these, the first
 #                                    visit to the web UI runs the setup wizard.
 #   LOWKEY_JWT_SECRET            — auth signing secret (generate a strong one)
-#   LOWKEY_OLLAMA_MODEL          — default vision model, e.g. llama3.2-vision
+#   LOWKEY_TEXT_MODEL            — loki-scribe's GGUF model (descriptions); this
+#                                  image has no GPU engines, so route loki-scribe
+#                                  to a GPU worker pool (Config > GPU Engines)
 #   LOWKEY_DISCORD_TOKEN         — required by the Discord ingest task
 #   LOWKEY_FASTER_WHISPER_PATH   — path to faster-whisper if you want transcription
 

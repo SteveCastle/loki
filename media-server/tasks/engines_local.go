@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/stevecastle/shrike/appconfig"
 	"github.com/stevecastle/shrike/deps/status"
 	"github.com/stevecastle/shrike/features"
 	"github.com/stevecastle/shrike/platform"
@@ -31,7 +32,7 @@ func localEngineSpecs() []aiToolSpec {
 	if features.Dream {
 		specs = append(specs, dreamTool)
 	}
-	return append(specs, segSpec)
+	return append(specs, segSpec, scribeSpec(appconfig.Get().TextModel))
 }
 
 // LocalEngines reports every engine's local install from the dependency

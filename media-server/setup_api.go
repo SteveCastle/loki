@@ -206,6 +206,9 @@ func setupModelGroups() []setupModelGroup {
 			setupModelGroup{ID: "ai-select", Title: "Object selection and roto (NVIDIA GPU)",
 				Desc:   "Select people and objects by clicking or naming them in the Scene editor, and track them through video for clean, frame-by-frame masks (SAM 3.1).",
 				Models: []string{"loki-segment", "sam3.1"}},
+			setupModelGroup{ID: "ai-text", Title: "AI descriptions and text (NVIDIA GPU)",
+				Desc:   "Describe images, read their text and write captions with Qwen3.8 27B, fully on this machine. Needs an RTX 40-series or newer GPU with 24 GB of VRAM; an 18 GB download.",
+				Models: []string{"loki-scribe", "qwen3.8-27b"}},
 		)
 		if features.Dream {
 			groups = append(groups, setupModelGroup{ID: "ai-generate", Title: "AI image generation (NVIDIA GPU)",
@@ -584,6 +587,13 @@ func setupStorageHandler(d *Dependencies) http.HandlerFunc {
 			return
 		}
 
+		// Roots belong to the library database (see library_roots.go);
+		// config.json keeps a copy as the seed for libraries without any.
+		if err := saveLibraryRoots(d.DB, req.Roots); err != nil {
+			httpError(w, fmt.Sprintf("saving roots to the library database failed: %v", err), http.StatusInternalServerError)
+			return
+		}
+		appconfig.SetLibraryRoots(req.Roots)
 		cfg := appconfig.Get()
 		cfg.Roots = req.Roots
 		if _, err := appconfig.Save(cfg); err != nil {

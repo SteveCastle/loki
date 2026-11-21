@@ -40,6 +40,8 @@ jobs:
           - { tool: loki-segment, os: ubuntu-latest, target: linux-amd64 }
           - { tool: loki-dream, os: windows-2022, target: windows-amd64 }
           - { tool: loki-dream, os: ubuntu-latest, target: linux-amd64 }
+          - { tool: loki-scribe, os: windows-2022, target: windows-amd64 }
+          - { tool: loki-scribe, os: ubuntu-latest, target: linux-amd64 }
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout code

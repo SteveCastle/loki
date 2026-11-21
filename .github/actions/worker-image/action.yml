@@ -33,7 +33,7 @@ runs:
       run: |
         set -euo pipefail
         mkdir -p tools/worker/prebuilt
-        for e in loki-retouch loki-reshoot loki-dream loki-segment; do
+        for e in loki-retouch loki-reshoot loki-dream loki-segment loki-scribe; do
           dir="$RUNNER_TEMP/engines/tools-$e-linux-amd64"
           [ -f "$dir/$e-linux-amd64.zip" ] || { echo "::error::no Linux build of $e in this run"; exit 1; }
           (cd "$dir" && sha256sum -c "$e-linux-amd64.zip.sha256")
@@ -67,7 +67,7 @@ runs:
         docker run --rm --entrypoint sh loki-worker:ci -c '
           set -e
           loki-worker --version
-          for e in loki-retouch loki-reshoot loki-dream loki-segment; do $e --version; $e --help | grep -q -- "--worker"; done
+          for e in loki-retouch loki-reshoot loki-dream loki-segment loki-scribe; do $e --version; $e --help | grep -q -- "--worker"; done
           ffmpeg -hide_banner -version | head -1
         '
 

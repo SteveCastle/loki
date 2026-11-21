@@ -17,9 +17,9 @@ import (
 
 // --- Engine placement: where a loki-* run happens ---
 //
-// The GPU engines (loki-retouch, loki-reshoot, loki-dream, loki-segment) run
-// on "targets": this machine's GPU (the local target, which execs the CLI as
-// it always has) and the workers of the configured pools — loki-worker nodes
+// The GPU engines (loki-retouch, loki-reshoot, loki-dream, loki-segment,
+// loki-scribe) run on "targets": this machine's GPU (the local target, which
+// execs the CLI as it always has) and the workers of the configured pools — loki-worker nodes
 // reached over HTTP and RunPod serverless endpoints. Config.Engines picks
 // which targets an engine may use (strategy local / pool / hybrid, with
 // per-engine routes). A task leases a target for its whole run

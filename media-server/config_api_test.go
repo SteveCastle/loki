@@ -11,13 +11,9 @@ import (
 func TestRedactConfig(t *testing.T) {
 	var cfg appconfig.Config
 	cfg.DBPath = "C:/data/media.db"
-	cfg.OllamaModel = "llava"
+	cfg.TextModel = "org/repo/model.gguf"
 	cfg.JWTSecret = "super-secret"
 	cfg.DiscordToken = "tok"
-	cfg.RunPodAPIKey = "rp"
-	cfg.LMStudioAPIKey = "lm"
-	cfg.LlamaCppAPIKey = "lc"
-	cfg.StrataAPIKey = "st"
 	cfg.Roots = []appconfig.StorageRoot{
 		{Type: "s3", Label: "bucket", AccessKey: "AK", SecretKey: "SK"},
 		{Type: "local", Label: "disk", Path: "D:/media"},
@@ -28,10 +24,6 @@ func TestRedactConfig(t *testing.T) {
 	for name, v := range map[string]string{
 		"JWTSecret":          got.JWTSecret,
 		"DiscordToken":       got.DiscordToken,
-		"RunPodAPIKey":       got.RunPodAPIKey,
-		"LMStudioAPIKey":     got.LMStudioAPIKey,
-		"LlamaCppAPIKey":     got.LlamaCppAPIKey,
-		"StrataAPIKey":       got.StrataAPIKey,
 		"Roots[0].AccessKey": got.Roots[0].AccessKey,
 		"Roots[0].SecretKey": got.Roots[0].SecretKey,
 	} {
@@ -43,7 +35,7 @@ func TestRedactConfig(t *testing.T) {
 	if got.Roots[1].SecretKey != "" {
 		t.Errorf("empty SecretKey redacted to %q", got.Roots[1].SecretKey)
 	}
-	if got.DBPath != "C:/data/media.db" || got.OllamaModel != "llava" || got.Roots[1].Path != "D:/media" {
+	if got.DBPath != "C:/data/media.db" || got.TextModel != "org/repo/model.gguf" || got.Roots[1].Path != "D:/media" {
 		t.Errorf("non-secret fields changed: %+v", got)
 	}
 	if cfg.JWTSecret != "super-secret" || cfg.Roots[0].SecretKey != "SK" {

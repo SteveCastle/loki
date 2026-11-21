@@ -11,7 +11,6 @@ import (
 	"sync"
 
 	"github.com/google/uuid"
-	"github.com/stevecastle/shrike/appconfig"
 	"github.com/stevecastle/shrike/deps"
 	"github.com/stevecastle/shrike/jobqueue"
 	"github.com/stevecastle/shrike/mediaext"
@@ -22,7 +21,7 @@ var loraDatasetOptions = []TaskOption{
 	{Name: "target", Label: "Target Directory", Type: "string", Required: true, Description: "Base directory for the LoRA dataset"},
 	{Name: "name", Label: "LoRA Name", Type: "string", Required: true, Description: "Name of the LoRA dataset (used as subfolder name)"},
 	{Name: "prefix", Label: "Concept Prefix", Type: "string", Description: "Prefix prepended to each description caption"},
-	{Name: "model", Label: "Ollama Model", Type: "string", Description: "Ollama model to use for generating descriptions"},
+	{Name: "model", Label: "Text Model", Type: "string", Description: "Text model for generating missing descriptions (default: the configured one)"},
 }
 
 // loraDatasetTask creates a LoRA training dataset from selected media files.
@@ -35,10 +34,7 @@ func loraDatasetTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 	targetDir, _ := opts["target"].(string)
 	loraName, _ := opts["name"].(string)
 	conceptPrefix, _ := opts["prefix"].(string)
-	ollamaModel, _ := opts["model"].(string)
-	if ollamaModel == "" {
-		ollamaModel = appconfig.Get().OllamaModel
-	}
+	textModel, _ := opts["model"].(string)
 
 	// Validate required arguments
 	if targetDir == "" {
@@ -119,7 +115,7 @@ func loraDatasetTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 		}
 
 		// Get or generate description
-		description, err := getOrGenerateDescription(ctx, q.Db, srcPath, ollamaModel)
+		description, err := getOrGenerateDescription(ctx, q.Db, srcPath, textModel)
 		if err != nil {
 			q.PushJobStdout(j.ID, fmt.Sprintf("Warning: failed to get/generate description for %s: %v", filepath.Base(srcPath), err))
 			// Still create the file but with an empty description or placeholder
@@ -172,7 +168,7 @@ func convertToJPG(ctx context.Context, srcPath, dstPath string) error {
 }
 
 // getOrGenerateDescription retrieves the description from the database,
-// or generates one using Ollama if it doesn't exist
+// or generates one with the text model if it doesn't exist
 func getOrGenerateDescription(ctx context.Context, db *sql.DB, filePath string, model string) (string, error) {
 	// First, check if description exists in database
 	var description sql.NullString
@@ -186,8 +182,8 @@ func getOrGenerateDescription(ctx context.Context, db *sql.DB, filePath string, 
 		return description.String, nil
 	}
 
-	// Generate description using Ollama
-	generatedDesc, err := describeFileWithOllama(ctx, nil, "", filePath, model, "")
+	// Generate a description with the text model
+	generatedDesc, err := describeFile(ctx, nil, "", filePath, model, "")
 	if err != nil {
 		return "", fmt.Errorf("failed to generate description: %w", err)
 	}
