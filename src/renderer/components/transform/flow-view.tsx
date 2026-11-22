@@ -57,6 +57,7 @@ import { markUsed, savedTransformKey } from '../../saved-recent';
 import CameraRig from './camera-rig';
 import type { ReshootModelChoice } from './reshoot-models';
 import ModelPicker from '../dream/model-picker';
+import { enhanceBody, enhanceTarget, type EnhanceRequestBody, type EnhanceResult, type EnhanceTarget } from './enhance-prompt';
 import { dreamPromptGuide, dreamRecipeOf, effectiveDreamModel, type DreamCatalog } from '../dream/dream-models';
 import './transform-flow.css';
 
@@ -422,6 +423,7 @@ export function ExpandablePrompt({
   onSubmit,
   submitOnEnter = false,
   extra,
+  readOnly = false,
 }: {
   textRef: React.RefObject<HTMLTextAreaElement>;
   value: string;
@@ -437,6 +439,8 @@ export function ExpandablePrompt({
   submitOnEnter?: boolean;
   /** Shown above the text in the expanded view (e.g. the reference chips). */
   extra?: React.ReactNode;
+  /** Locked while something rewrites the text (Enhance). */
+  readOnly?: boolean;
 }) {
   // the panel the expanded view covers; null = collapsed
   const [panel, setPanel] = useState<HTMLElement | null>(null);
@@ -477,6 +481,7 @@ export function ExpandablePrompt({
       value={value}
       placeholder={placeholder}
       aria-label={ariaLabel ?? label}
+      readOnly={readOnly}
       onChange={(e) => onChange(e.target.value)}
       onKeyDown={onKeyDown}
     />
@@ -659,6 +664,148 @@ export interface FlowViewProps {
   onAgain: () => void;
   /** The engine-expanded prompt, fetched for the review step. */
   preview?: PromptPreviewState;
+  /** Rewrite a prompt for its model with the server's text model (enhance-prompt.ts); absent = no Enhance button. */
+  onEnhancePrompt?: (body: EnhanceRequestBody, signal: AbortSignal) => Promise<EnhanceResult>;
+}
+
+interface EnhanceState {
+  status: 'idle' | 'running' | 'error';
+  error?: string;
+  /** The prompt before the last enhancement, for Undo. */
+  before?: string;
+  /** What the last enhancement wrote; Undo is offered while the prompt still reads this. */
+  after?: string;
+  missing?: string[];
+}
+
+// The text model may need to load first (tens of seconds for a large one), so this is generous.
+const ENHANCE_TIMEOUT_MS = 5 * 60 * 1000;
+
+/** The Enhance button's run / cancel / undo, for one prompt box. */
+function usePromptEnhance(
+  onEnhance: FlowViewProps['onEnhancePrompt'],
+  prompt: string,
+  setPrompt: (v: string) => void,
+  resetKey: string
+) {
+  const [state, setState] = useState<EnhanceState>({ status: 'idle' });
+  const ctlRef = useRef<AbortController | null>(null);
+  const promptRef = useRef(prompt);
+  promptRef.current = prompt;
+  useEffect(() => {
+    setState({ status: 'idle' });
+    return () => ctlRef.current?.abort();
+  }, [resetKey]);
+  const run = async (body: EnhanceRequestBody) => {
+    if (!onEnhance) return;
+    ctlRef.current?.abort();
+    const ctl = new AbortController();
+    ctlRef.current = ctl;
+    let timedOut = false;
+    const giveUp = window.setTimeout(() => {
+      timedOut = true;
+      ctl.abort();
+    }, ENHANCE_TIMEOUT_MS);
+    const before = body.prompt;
+    setState({ status: 'running' });
+    try {
+      const res = await onEnhance(body, ctl.signal);
+      if (ctl.signal.aborted) return;
+      // Typed over while it ran: the user's edit wins.
+      if (promptRef.current !== before) {
+        setState({ status: 'error', error: 'The prompt changed while it was being enhanced, so your edit was kept.' });
+        return;
+      }
+      setPrompt(res.prompt);
+      setState({ status: 'idle', before, after: res.prompt, missing: res.missingTokens });
+    } catch (e) {
+      if (ctl.signal.aborted && !timedOut) return;
+      setState({ status: 'error', error: timedOut ? 'The text model took too long.' : e instanceof Error ? e.message : String(e) });
+    } finally {
+      window.clearTimeout(giveUp);
+      if (ctlRef.current === ctl) ctlRef.current = null;
+    }
+  };
+  const cancel = () => {
+    ctlRef.current?.abort();
+    setState({ status: 'idle' });
+  };
+  const undo = () => {
+    if (state.before !== undefined) setPrompt(state.before);
+    setState({ status: 'idle' });
+  };
+  const canUndo = state.status === 'idle' && state.before !== undefined && state.after === prompt;
+  return { state, run, cancel, undo, canUndo };
+}
+
+/** Sparkle glyph for the Enhance button. */
+function GlyphSparkle() {
+  return (
+    <svg width="11" height="11" viewBox="0 0 16 16" aria-hidden="true">
+      <path d="M8 1l1.6 4.4L14 7l-4.4 1.6L8 13l-1.6-4.4L2 7l4.4-1.6z" fill="currentColor" />
+      <path d="M13 11l.6 1.4L15 13l-1.4.6L13 15l-.6-1.4L11 13l1.4-.6z" fill="currentColor" opacity="0.7" />
+    </svg>
+  );
+}
+
+function EnhanceButton({
+  target,
+  enhance,
+  disabled,
+  onRun,
+}: {
+  target: EnhanceTarget;
+  enhance: ReturnType<typeof usePromptEnhance>;
+  disabled: boolean;
+  onRun: () => void;
+}) {
+  if (enhance.state.status === 'running') {
+    return (
+      <button type="button" className="ts-chip ts-enhance running" onClick={enhance.cancel} title="Stop enhancing and keep the prompt as it is">
+        <GlyphSparkle /> Enhancing… ✕
+      </button>
+    );
+  }
+  if (enhance.canUndo) {
+    return (
+      <span className="ts-enhance-group">
+        <button type="button" className="ts-chip" onClick={enhance.undo} title="Put back the prompt you wrote">
+          Undo enhance
+        </button>
+        <button type="button" className="ts-chip ts-enhance" onClick={onRun} title={`Rewrite it again for ${target.label}`}>
+          <GlyphSparkle /> Again
+        </button>
+      </span>
+    );
+  }
+  return (
+    <button
+      type="button"
+      className="ts-chip ts-enhance"
+      disabled={disabled}
+      onClick={onRun}
+      title={
+        disabled
+          ? 'Write a prompt first, then enhance it'
+          : `Rewrite the prompt the way ${target.label} reads best, with the local text model. Only runs when you click: you can edit or undo the result.`
+      }
+    >
+      <GlyphSparkle /> Enhance
+    </button>
+  );
+}
+
+function EnhanceNote({ enhance }: { enhance: ReturnType<typeof usePromptEnhance> }) {
+  const { state } = enhance;
+  if (state.status === 'error') return <p className="ts-note warn">Couldn’t enhance the prompt: {state.error}</p>;
+  if (enhance.canUndo && state.missing && state.missing.length > 0) {
+    return (
+      <p className="ts-note warn">
+        The enhanced prompt dropped {state.missing.join(', ')}: add {state.missing.length > 1 ? 'them' : 'it'} back or undo.
+      </p>
+    );
+  }
+  return null;
 }
 
 /** POST /api/transform/prompt's answer (media-server/tasks/prompt_preview.go). */
@@ -1039,6 +1186,11 @@ function ShapeView(props: FlowViewProps & { def: ReturnType<typeof intentById> }
   const [customW = '', customH = ''] = (s.customSize || '').split('x');
   const promptField: 'prompt' | null = def.needsText === 'prompt' ? 'prompt' : null;
   const insertPromptToken = useTokenInsert(textRef, s.prompt, (v) => onSettings({ prompt: v }));
+  const target = props.onEnhancePrompt ? enhanceTarget(def.id, s, props.dreamCatalog) : null;
+  const enhance = usePromptEnhance(props.onEnhancePrompt, s.prompt, (v) => onSettings({ prompt: v }), def.id);
+  const runEnhance = () => {
+    if (target && s.prompt.trim()) void enhance.run(enhanceBody(target, s.prompt, refs, paths));
+  };
   const pickToken = (token: string) => {
     if (promptField) insertPromptToken(token);
   };
@@ -1064,7 +1216,12 @@ function ShapeView(props: FlowViewProps & { def: ReturnType<typeof intentById> }
           <Field
             label={promptLabel(def.id, shared, stills)}
             hint="sent as written · Enter ▸ review"
-            action={<SavePrompt intent={def.id} settings={s} />}
+            action={
+              <>
+                {target && <EnhanceButton target={target} enhance={enhance} disabled={!s.prompt.trim()} onRun={runEnhance} />}
+                <SavePrompt intent={def.id} settings={s} />
+              </>
+            }
           >
             <ExpandablePrompt
               textRef={textRef}
@@ -1075,6 +1232,7 @@ function ShapeView(props: FlowViewProps & { def: ReturnType<typeof intentById> }
               onChange={(v) => onSettings({ prompt: v })}
               submitOnEnter
               onSubmit={() => props.onPhase('review')}
+              readOnly={enhance.state.status === 'running'}
               extra={
                 refs.length > 0 ? (
                   <>
@@ -1084,6 +1242,7 @@ function ShapeView(props: FlowViewProps & { def: ReturnType<typeof intentById> }
                 ) : null
               }
             />
+            <EnhanceNote enhance={enhance} />
             <SavedPrompts
               intent={def.id}
               prompt={s.prompt}

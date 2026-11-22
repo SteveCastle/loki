@@ -14318,6 +14318,133 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+  /api/transform/enhance-prompt:
+    get:
+      tags:
+        - Transform and Models
+      operationId: listPromptGuideModels
+      summary: List the models the prompt enhancer has a writing guide for.
+      x-access: admin
+      responses:
+        '200':
+          description: The `model` values `POST` accepts.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  models:
+                    type: array
+                    items:
+                      type: string
+              example:
+                models: [anima, flux2-klein, h3-image, h3-video, krea2, moss-image, qwen-image, qwen-image-edit, sdxl]
+    post:
+      tags:
+        - Transform and Models
+      operationId: enhanceTransformPrompt
+      summary: Rewrite a prompt for its target model with loki-scribe.
+      description: |
+        Runs the configured text model (loki-scribe) once with a system prompt
+        built from the target model's prompt-writing guide (distilled from its
+        official documentation) and returns the rewritten prompt. Nothing is
+        queued, and no job ever calls this: the Transform flow's Enhance button
+        does, and puts the answer in the prompt box for the user to keep, edit
+        or undo.
+
+        The rewrite keeps the given reference tokens verbatim; `missingTokens`
+        lists any the input prompt used that the rewrite dropped. With `image`,
+        the text model also looks at that file (a video contributes a frame).
+      x-access: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                prompt:
+                  type: string
+                  description: The prompt to rewrite.
+                model:
+                  type: string
+                  description: A guide key from `GET /api/transform/enhance-prompt`.
+                task:
+                  type: string
+                  enum: [generate, reimagine, edit, video]
+                  description: What the prompt drives; tunes the instructions.
+                references:
+                  type: array
+                  description: Inputs the prompt can name, by their exact tokens.
+                  items:
+                    type: object
+                    properties:
+                      token:
+                        type: string
+                      kind:
+                        type: string
+                        enum: [image, video, audio]
+                image:
+                  type: string
+                  description: Optional local file the text model looks at to ground the rewrite.
+                imageToken:
+                  type: string
+                  description: The token `image` goes by in the prompt, if any.
+              required:
+                - prompt
+                - model
+            example:
+              prompt: make <image1> look like a rainy night
+              model: qwen-image-edit
+              task: edit
+              references:
+                - token: <image1>
+                  kind: image
+              image: D:/photos/street.jpg
+              imageToken: <image1>
+      responses:
+        '200':
+          description: The rewritten prompt.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  prompt:
+                    type: string
+                  model:
+                    type: string
+                  missingTokens:
+                    type: array
+                    items:
+                      type: string
+              example:
+                prompt: Change <image1> into a rainy night scene, wet asphalt reflecting the street lights, keep the buildings and composition unchanged.
+                model: qwen-image-edit
+        '400':
+          description: Body is not JSON (`bad json`). Plain text.
+          content:
+            text/plain:
+              schema:
+                type: string
+        '405':
+          description: Method other than GET or POST. Plain text.
+          content:
+            text/plain:
+              schema:
+                type: string
+        '422':
+          description: Empty prompt, a model with no guide, or an `image` that does not exist.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: The text model failed or returned an empty answer.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
   /api/reshoot/models:
     get:
       tags:

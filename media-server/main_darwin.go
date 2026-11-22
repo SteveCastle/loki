@@ -2461,6 +2461,7 @@ func main() {
 	mux.HandleFunc("/health", healthHandler(deps))
 	mux.HandleFunc("/create", renderer.ApplyMiddlewares(createJobHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/transform/prompt", renderer.ApplyMiddlewares(transformPromptHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/transform/enhance-prompt", renderer.ApplyMiddlewares(transformEnhanceHandler, renderer.RoleAdmin))
 	mux.HandleFunc("/api/reshoot/models", renderer.ApplyMiddlewares(reshootModelsHandler, renderer.RoleAdmin))
 	mux.HandleFunc("/api/dream/models", renderer.ApplyMiddlewares(dreamModelsHandler, renderer.RoleAdmin))
 	mux.HandleFunc("/media", renderer.ApplyMiddlewares(mediaHandler(deps), renderer.RoleAdmin))

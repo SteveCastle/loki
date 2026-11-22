@@ -1647,3 +1647,42 @@
   line-height: 1.6;
   scrollbar-width: thin;
 }
+
+/* Enhance: rewrite the prompt for its model (enhance-prompt.ts). */
+.ts-enhance {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: 6px;
+}
+
+.ts-enhance.running {
+  color: #fff;
+  border-color: rgba(150, 180, 255, 0.6);
+  animation: ts-enhance-pulse 1.4s ease-in-out infinite;
+}
+
+.ts-enhance:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.ts-enhance-group {
+  display: inline-flex;
+  gap: 4px;
+  margin-right: 6px;
+}
+
+.ts-enhance-group .ts-enhance {
+  margin-right: 0;
+}
+
+@keyframes ts-enhance-pulse {
+  0%,
+  100% {
+    background-color: var(--ts-field);
+  }
+  50% {
+    background-color: rgba(150, 180, 255, 0.18);
+  }
+}

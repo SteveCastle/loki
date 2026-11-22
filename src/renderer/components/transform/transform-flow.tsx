@@ -34,6 +34,7 @@ import { useReshootModels } from './reshoot-models';
 import { applyPromptGuide, dreamPromptGuide, dreamRecipeOf, effectiveDreamModel, useDreamModels } from '../dream/dream-models';
 import { DREAM_ENABLED } from '../../features';
 import { TransformFlowView, validateForRun, validateShape, type PromptPreviewState } from './flow-view';
+import { requestEnhance } from './enhance-prompt';
 import { canStartScene, openSceneEditor } from '../scene/launch';
 import { requestLibraryPick } from '../scene/pick-bridge';
 
@@ -343,6 +344,7 @@ function FlowSession({ req }: { req: NonNullable<ReturnType<typeof useFlowReques
       paths={paths}
       reshootModels={reshootModels}
       dreamCatalog={dreamModels.catalog}
+      onEnhancePrompt={(body, signal) => requestEnhance(body, authToken || undefined, signal)}
       onRefreshDreamModels={dreamModels.refresh}
       intent={intent}
       phase={phase}
