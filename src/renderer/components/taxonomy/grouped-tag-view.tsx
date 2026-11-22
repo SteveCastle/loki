@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import useComponentSize from '@rehooks/component-size';
 import {
   defaultRangeExtractor,
@@ -164,6 +171,11 @@ export default function GroupedTagView({
     rangeExtractor,
     overscan: 6,
   });
+  // estimateSize is only read for rows without a cached offset; a new
+  // portrait card height (panel resized) needs a full re-layout.
+  useLayoutEffect(() => {
+    rowVirtualizer.measure();
+  }, [cardHeight, rowVirtualizer]);
 
   return (
     <div

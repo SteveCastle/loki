@@ -1,4 +1,4 @@
-import { useMemo, useRef } from 'react';
+import { useLayoutEffect, useMemo, useRef } from 'react';
 import useComponentSize from '@rehooks/component-size';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import Tag from './tag';
@@ -49,6 +49,12 @@ export default function VirtualizedTagGrid({
     estimateSize: () => rowHeight + ROW_GAP,
     overscan: 4,
   });
+  // The virtualizer caches row offsets and never re-reads estimateSize, so
+  // portrait rows (whose height follows the panel width) must ask for a
+  // re-layout or they overlap / drift apart while the panel resizes.
+  useLayoutEffect(() => {
+    rowVirtualizer.measure();
+  }, [rowHeight, rowVirtualizer]);
 
   return (
     <div className="tags virtualized" ref={parentRef}>
