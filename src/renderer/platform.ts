@@ -509,6 +509,9 @@ export let appArgs: {
    * process timeline in app-log.jsonl. Absent in web mode. */
   bootId?: string;
   appVersion?: string;
+  /** A window opened on one file (Electron secondary window, web `?file=`):
+   * starts with the detail panel full-window. */
+  openedForFile?: boolean;
 };
 
 export let store: {
@@ -726,6 +729,7 @@ if (isElectron) {
   appArgs = {
     dbPath: urlParams.get('db') ?? 'web', // Always truthy in web mode so state machine skips file selection
     filePath: urlParams.get('file') ?? undefined,
+    openedForFile: !!urlParams.get('file'),
   };
 
   // Channels that are Electron-only and should silently return undefined

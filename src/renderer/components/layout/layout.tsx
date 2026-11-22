@@ -11,7 +11,7 @@ import {
 } from 'react-resizable-panels';
 import { useSelector } from '@xstate/react';
 import { GlobalStateContext } from '../../state';
-import { store } from '../../platform';
+import { appArgs, store } from '../../platform';
 import { Detail } from '../detail/detail';
 import filter from 'renderer/filter';
 import { List } from '../list/list';
@@ -48,7 +48,15 @@ const electronPanelStorage = {
       const stored = store.get(name, '') as string;
       if (stored) {
         const parsed = JSON.parse(stored);
-        value = JSON.stringify(parsed[name] || null);
+        const layout = parsed[name] || null;
+        // A saved layout with neither list nor detail visible shows nothing
+        // but side panels and has no double-click to recover from; fall back
+        // to the defaults instead.
+        const hidesMedia =
+          layout &&
+          'list-panel' in layout &&
+          (layout['list-panel'] || 0) + (layout['detail-panel'] || 0) < 1;
+        value = hidesMedia ? null : JSON.stringify(layout);
       }
     } catch (error) {
       console.error(error);
@@ -175,15 +183,37 @@ const Layout = () => {
 
   const electronStorage = useMemo(() => electronPanelStorage, []);
 
-  const mainGroupLayout = useDefaultLayout({
+  const savedMainGroupLayout = useDefaultLayout({
     id: 'main-group',
     storage: electronStorage,
   });
 
-  const innerGroupLayout = useDefaultLayout({
+  const savedInnerGroupLayout = useDefaultLayout({
     id: 'inner-group',
     storage: electronStorage,
   });
+
+  // A window opened on one file starts with only the detail panel showing,
+  // and leaves the saved layout (the main window's) untouched.
+  const detailOnly = useMemo(() => {
+    if (!appArgs.openedForFile) return null;
+    const main: Record<string, number> = { 'main-panel': 100 };
+    if (libraryLayout === 'bottom') main['taxonomy-panel-bottom'] = 0;
+    const inner: Record<string, number> = {
+      'list-panel': 0,
+      'detail-panel': 100,
+      'metadata-panel': 0,
+    };
+    if (libraryLayout === 'left') inner['taxonomy-panel'] = 0;
+    return { main, inner };
+    // Only the first layout matters: it seeds the groups once.
+  }, []);
+  const mainGroupLayout = detailOnly
+    ? { defaultLayout: detailOnly.main, onLayoutChange: undefined }
+    : savedMainGroupLayout;
+  const innerGroupLayout = detailOnly
+    ? { defaultLayout: detailOnly.inner, onLayoutChange: undefined }
+    : savedInnerGroupLayout;
 
   const detailRef = usePanelRef();
   const listRef = usePanelRef();
@@ -197,9 +227,19 @@ const Layout = () => {
   function showOnly(show: 'list-panel' | 'detail-panel') {
     const hide = show === 'list-panel' ? 'detail-panel' : 'list-panel';
     const layout = innerGroupRef.current?.getLayout();
-    if (!layout) return;
-    const total = (layout[show] ?? 0) + (layout[hide] ?? 0);
-    innerGroupRef.current?.setLayout({ ...layout, [show]: total, [hide]: 0 });
+    if (!layout || !(show in layout)) return;
+    const sides = Object.keys(layout).filter((id) => id !== show && id !== hide);
+    const sidesTotal = sides.reduce((sum, id) => sum + (layout[id] ?? 0), 0);
+    let total = (layout[show] ?? 0) + (layout[hide] ?? 0);
+    // Both collapsed (side panels fill the row): split the row with them
+    // rather than leave nothing to look at.
+    if (total < 1) total = sidesTotal > 0 ? 50 : 100;
+    const rest = 100 - total;
+    const next: Record<string, number> = { [show]: total, [hide]: 0 };
+    for (const id of sides) {
+      next[id] = sidesTotal > 0 ? ((layout[id] ?? 0) / sidesTotal) * rest : 0;
+    }
+    innerGroupRef.current?.setLayout(next);
   }
 
   function handleListClick() {

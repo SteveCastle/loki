@@ -67,6 +67,7 @@ declare global {
       /** Joins the renderer's startup marks to the main process timeline. */
       bootId?: string;
       appVersion?: string;
+      openedForFile?: boolean;
     };
     electron: {
       userHome: string;

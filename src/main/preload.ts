@@ -452,6 +452,9 @@ function loadMainArgs() {
     // Carried through so the renderer's marks join the main process timeline.
     bootId,
     appVersion,
+    // A secondary window opened on a file (job-result link, forwarded
+    // launch, macOS open-file): it starts with the detail panel full-window.
+    openedForFile: typeof launchFile === 'string' && !!launchFile,
   });
   // The earliest timestamp anything in the renderer process can take, and the
   // cost of the one synchronous IPC the preload makes.
