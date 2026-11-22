@@ -176,6 +176,12 @@ const Layout = () => {
     (a, b) => a === b
   );
 
+  // A folder load starts from a one-item library (just the opened file) and
+  // streams the rest in, so "one item" only means something once it ends.
+  const loadingFromFS = useSelector(libraryService, (state) =>
+    state.matches({ library: 'loadingFromFS' })
+  );
+
   const libraryLayout = useSelector(
     libraryService,
     (state) => state.context.settings.libraryLayout
@@ -251,13 +257,17 @@ const Layout = () => {
     }
   }
 
-  // Collapse only the list panel — leave detail and metadata as-is. Used when
-  // navigating to a single file: the list isn't useful with one item, but the
-  // metadata panel (and its path tree, used to navigate) must stay open.
+  // Collapse only the list panel — leave taxonomy and metadata as-is. Used
+  // when the library holds a single file: the list isn't useful with one
+  // item, but the metadata panel (and its path tree, used to navigate) must
+  // stay open. Goes through showOnly so the list's width lands on the detail
+  // panel: a bare resize('0%') hands it to whichever neighbour the library
+  // picks, which is the taxonomy panel when detail is collapsed.
   function collapseList() {
-    setRenderID((id) => id + 1);
     try {
-      listRef.current?.resize('0%');
+      if (listRef.current?.isCollapsed()) return;
+      setRenderID((id) => id + 1);
+      showOnly('detail-panel');
     } catch {
       // Panels not yet registered, ignore
     }
@@ -293,7 +303,7 @@ const Layout = () => {
   }, []);
 
   useEffect(() => {
-    if (library.length === 1) {
+    if (library.length === 1 && !loadingFromFS) {
       // Collapse the list to focus the single file. Only the list collapses;
       // the metadata panel stays open so its path tree remains usable for
       // navigation (and doesn't flash-and-vanish on each click).
@@ -302,7 +312,7 @@ const Layout = () => {
       }, 0);
       return () => clearTimeout(timer);
     }
-  }, [library]);
+  }, [library, loadingFromFS]);
 
   return (
     <>
