@@ -383,6 +383,16 @@ fn run(argv: Vec<String>) -> Result<()> {
     let mut next = 0usize;
     let show_thinking = cli.show_thinking;
     let json_out = cli.json;
+    let json_line = |o: &Output| -> String {
+        let mut v = json!({"index": o.index, "id": o.id, "input": o.input, "text": o.text, "finish": o.finish, "prompt_tokens": o.prompt_tokens, "tokens": o.tokens, "secs": (o.secs * 100.0).round() / 100.0, "model": model_name});
+        if show_thinking {
+            v["thinking"] = json!(o.thinking);
+        }
+        if let Some(e) = &o.error {
+            v["error"] = json!(e);
+        }
+        v.to_string()
+    };
     let mut emit = |o: Output, out_file: &mut Option<std::fs::File>| -> Result<()> {
         use std::io::Write;
         if o.error.is_some() {
@@ -401,14 +411,7 @@ fn run(argv: Vec<String>) -> Result<()> {
             return Ok(());
         }
         let line = if json_out {
-            let mut v = json!({"index": o.index, "id": o.id, "input": o.input, "text": o.text, "finish": o.finish, "prompt_tokens": o.prompt_tokens, "tokens": o.tokens, "secs": (o.secs * 100.0).round() / 100.0, "model": model_name});
-            if show_thinking {
-                v["thinking"] = json!(o.thinking);
-            }
-            if let Some(e) = &o.error {
-                v["error"] = json!(e);
-            }
-            v.to_string()
+            json_line(&o)
         } else {
             if let Some(e) = &o.error {
                 eprintln!("loki-scribe: error: {}: {e}", o.input.as_deref().or(o.id.as_deref()).unwrap_or("request"));
@@ -426,7 +429,13 @@ fn run(argv: Vec<String>) -> Result<()> {
         }
         Ok(())
     };
+    // A worker supervisor gets each --json result as soon as its sequence ends (batched sequences finish at different
+    // times); the ordered lines below still follow at the end of the run.
+    let stream_partials = json_out && out_dir.is_none() && out_file.is_none() && worker::active();
     let res = eng.run(jobs, cli.parallel, &mut |o: Output| {
+        if stream_partials {
+            worker::partial_line(&json_line(&o));
+        }
         if positional {
             buffered.insert(o.index, o);
             while let Some(o) = buffered.remove(&next) {

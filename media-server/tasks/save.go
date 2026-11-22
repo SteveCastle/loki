@@ -153,6 +153,15 @@ func broadcastMediaUpdated(jobID string, paths []string) {
 	broadcastMediaChange("media-updated", jobID, paths)
 }
 
+// broadcastMetadataUpdated tells clients a job stored new metadata (a field
+// of the media row, e.g. an image transcript) for one item, so a panel
+// showing it refreshes as each item finishes rather than when the job ends.
+// The file itself is unchanged: no preview reload, nothing announced.
+func broadcastMetadataUpdated(jobID, path, field string) {
+	payload, _ := json.Marshal(map[string]any{"jobId": jobID, "paths": []string{path}, "fields": []string{field}})
+	stream.Broadcast(stream.Message{Type: "metadata-updated", Msg: string(payload)})
+}
+
 // broadcastMediaCreated tells clients a job wrote these new files (save
 // alongside/folder, a terminal AI step). Clients announce them on the job's
 // completion toast, and only move the user's view when the viewer's "Jump To

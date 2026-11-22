@@ -266,33 +266,63 @@ func runTextBatch(items []*textItem) {
 			f("[text] " + line)
 		}
 	}
-	out, err := runScribe(ctx, args, onLog)
+	// Each request is answered once: as soon as the engine reports its
+	// sequence finished (a resident engine streams these), else from the
+	// run's final lines. Batched images finish at different times, so their
+	// jobs can save each one without waiting for the slowest.
+	var deliverMu sync.Mutex
+	delivered := make([]bool, len(live))
+	deliver := func(i int, res scribeResult, ok bool, runErr error) {
+		deliverMu.Lock()
+		defer deliverMu.Unlock()
+		if i < 0 || i >= len(live) || delivered[i] {
+			return
+		}
+		delivered[i] = true
+		answerTextItem(live[i], res, ok, runErr)
+	}
+	parse := func(l string) (scribeResult, bool) {
+		var res scribeResult
+		ok := json.Unmarshal([]byte(strings.TrimSpace(l)), &res) == nil && (res.Text != "" || res.Finish != "")
+		return res, ok
+	}
+	onResult := func(l string) {
+		if res, ok := parse(l); ok {
+			deliver(res.Index, res, true, nil)
+		}
+	}
+	out, err := runScribe(ctx, args, onLog, onResult)
 	results := map[int]scribeResult{}
 	for _, l := range out {
-		var res scribeResult
-		if json.Unmarshal([]byte(strings.TrimSpace(l)), &res) == nil && (res.Text != "" || res.Finish != "") {
+		if res, ok := parse(l); ok {
 			results[res.Index] = res
 		}
 	}
-	for i, it := range live {
+	for i := range live {
 		res, ok := results[i]
-		switch {
-		case ok && res.Error != "":
-			it.done <- textResult{err: errors.New(res.Error)}
-		case ok:
-			if res.Finish == "length" {
-				// no end token: the text is cut off, or the model fell into a loop
-				it.logf(fmt.Sprintf("[text] %s: stopped at the %d-token limit without finishing (raise the max length if the text is cut short)", filepath.Base(it.req.Image), it.req.MaxTokens))
-			}
-			if it.req.OnFinish != nil {
-				it.req.OnFinish(res.Finish)
-			}
-			it.done <- textResult{text: res.Text}
-		case err != nil:
-			it.done <- textResult{err: err}
-		default:
-			it.done <- textResult{err: errors.New("loki-scribe returned no result for this request")}
+		deliver(i, res, ok, err)
+	}
+}
+
+// answerTextItem hands one request its result: the engine's answer, its
+// error, or the run's error when the engine never answered it.
+func answerTextItem(it *textItem, res scribeResult, ok bool, err error) {
+	switch {
+	case ok && res.Error != "":
+		it.done <- textResult{err: errors.New(res.Error)}
+	case ok:
+		if res.Finish == "length" {
+			// no end token: the text is cut off, or the model fell into a loop
+			it.logf(fmt.Sprintf("[text] %s: stopped at the %d-token limit without finishing (raise the max length if the text is cut short)", filepath.Base(it.req.Image), it.req.MaxTokens))
 		}
+		if it.req.OnFinish != nil {
+			it.req.OnFinish(res.Finish)
+		}
+		it.done <- textResult{text: res.Text}
+	case err != nil:
+		it.done <- textResult{err: err}
+	default:
+		it.done <- textResult{err: errors.New("loki-scribe returned no result for this request")}
 	}
 }
 
@@ -308,10 +338,12 @@ func scribeLogKey(p string) string {
 }
 
 // runScribe runs one engine command line where the dispatcher routes
-// loki-scribe and returns its stdout lines.
-func runScribe(ctx context.Context, args []string, onLog func(string)) ([]string, error) {
+// loki-scribe and returns its stdout lines. onResult (may be nil) gets each
+// result line early when the engine streams them (the local resident engine
+// does; pool workers answer at the end).
+func runScribe(ctx context.Context, args []string, onLog, onResult func(string)) ([]string, error) {
 	if engineRunsLocalOnly(scribeEngine) {
-		return scribeLocal.run(ctx, args, onLog)
+		return scribeLocal.run(ctx, args, onLog, onResult)
 	}
 	lease, err := acquireEngine(ctx, scribeEngine, onLog, nil)
 	if err != nil {
@@ -319,7 +351,7 @@ func runScribe(ctx context.Context, args []string, onLog func(string)) ([]string
 	}
 	defer lease.Release()
 	if lease.local() {
-		return scribeLocal.run(ctx, args, onLog)
+		return scribeLocal.run(ctx, args, onLog, onResult)
 	}
 	onLog("running on GPU worker " + lease.t.key)
 	tool := aiToolRun{Bin: scribeEngine, lease: lease}
@@ -575,8 +607,9 @@ func (p *scribeProc) close() {
 	p.kill()
 }
 
-// run sends one command line and waits for its result lines.
-func (p *scribeProc) run(ctx context.Context, args []string, onLog func(string)) ([]string, error) {
+// run sends one command line and waits for its result lines. onResult (may
+// be nil) gets each `partial` result line the moment the engine sends it.
+func (p *scribeProc) run(ctx context.Context, args []string, onLog, onResult func(string)) ([]string, error) {
 	if err := gpuHeavyWait(ctx, onLog); err != nil {
 		return nil, err
 	}
@@ -620,6 +653,10 @@ func (p *scribeProc) run(ctx context.Context, args []string, onLog func(string))
 				continue
 			}
 			switch ev["event"] {
+			case "partial":
+				if l, ok := ev["line"].(string); ok && onResult != nil {
+					onResult(l)
+				}
 			case "stdout":
 				if l, ok := ev["line"].(string); ok {
 					out = append(out, strings.Split(l, "\n")...)

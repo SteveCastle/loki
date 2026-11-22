@@ -66,6 +66,16 @@ pub fn out_line(s: &str) {
     }
 }
 
+/// A result line sent the moment it is ready, as a `partial` event in worker mode (nothing from the command line, where
+/// `out_line` already prints as it goes). The supervisor may act on it early; the run's `stdout` lines stay authoritative.
+pub fn partial_line(s: &str) {
+    if !active() {
+        return;
+    }
+    let id = CURRENT.lock().map(|c| c.clone()).unwrap_or_default();
+    emit(&json!({"id": id, "event": "partial", "line": s}));
+}
+
 /// Parses a command line. On the command line clap prints help or usage and exits as usual; in worker mode help and
 /// version become result lines and a usage error becomes the request's error. `None`: nothing left to run.
 pub fn parse_args<C: clap::FromArgMatches>(cmd: clap::Command, argv: Vec<String>) -> Result<Option<C>> {

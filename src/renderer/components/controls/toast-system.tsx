@@ -11,6 +11,7 @@ import {
   mergePaths,
   parseMediaChange,
   planMediaChange,
+  samePath,
 } from '../../media-changes';
 import './toast-system.css';
 
@@ -884,6 +885,20 @@ export function ToastSystem() {
             event.data
           );
           if (change) applyMediaChange(change);
+          break;
+        }
+        case 'metadata-updated': {
+          // A job stored new metadata for these items (e.g. a transcript,
+          // one image at a time): refresh whatever panel shows it. The file
+          // is unchanged, so no preview reload or announcement.
+          const paths = parseMediaChange('updated', event.data)?.paths ?? [];
+          if (paths.length > 0) {
+            queryClient.invalidateQueries({
+              queryKey: ['file-metadata'],
+              predicate: (q) =>
+                paths.some((p) => samePath(p, q.queryKey[1] as string)),
+            });
+          }
           break;
         }
         default:

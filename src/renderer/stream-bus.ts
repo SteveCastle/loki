@@ -27,6 +27,7 @@ const EVENT_TYPES = [
   'progress',
   'media-updated',
   'media-created',
+  'metadata-updated',
   'people-updated',
   'duplicates-updated',
   'stats',

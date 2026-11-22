@@ -186,6 +186,8 @@ func prepareTextCaptureOp(run *ItemRun) (*ItemProcessor, error) {
 						return err
 					}
 					notifyProgress(ProgressTranscript, 1)
+					// each image's text shows up while the rest still run
+					broadcastMetadataUpdated(jobID, path, "transcript")
 					return nil
 				},
 				Detail: detail,
