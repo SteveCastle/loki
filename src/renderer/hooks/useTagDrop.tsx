@@ -127,6 +127,16 @@ export default function useTagDrop(item: Item, location: 'DETAIL' | 'LIST') {
           queryClient.invalidateQueries({
             queryKey: ['tags-by-path'],
           });
+          if (applyTagPreview) {
+            // Tag cards show the preview bundled in the category / search
+            // tag lists (thumbnail_path_600), not the per-tag query above.
+            queryClient.invalidateQueries({
+              queryKey: ['taxonomy', 'category-tags', tag.category],
+            });
+            queryClient.invalidateQueries({
+              queryKey: ['taxonomy', 'all-tags'],
+            });
+          }
         }
         if (isDroppedTag(droppedItem) && item.path) {
           // Surface failures — a rejected create-assignment (e.g. the shared

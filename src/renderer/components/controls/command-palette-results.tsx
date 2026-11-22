@@ -153,6 +153,13 @@ export default function CommandPaletteResults({
       queryClient.invalidateQueries({ queryKey: ['metadata'] });
       queryClient.invalidateQueries({ queryKey: ['taxonomy', 'tag', t.label] });
       queryClient.invalidateQueries({ queryKey: ['tags-by-path'] });
+      if (applyTagPreview) {
+        // Tag cards read the preview bundled in these lists.
+        queryClient.invalidateQueries({
+          queryKey: ['taxonomy', 'category-tags', t.category],
+        });
+        queryClient.invalidateQueries({ queryKey: ['taxonomy', 'all-tags'] });
+      }
       libraryService.send({
         type: 'ADD_TOAST',
         data: {
