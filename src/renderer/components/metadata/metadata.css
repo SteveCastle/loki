@@ -1,7 +1,14 @@
+/* Column: the tabs stay put at the top, the tab content below takes the
+   remaining height and scrolls on its own. The 30px top padding clears the
+   window drag strip (padding, not margin, so it counts inside the 100%). */
 .Metadata {
   width: 100%;
   height: 100%;
-  margin-top: 30px;
+  box-sizing: border-box;
+  padding-top: 30px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .Metadata .tabs {
@@ -15,6 +22,7 @@
   margin: 0 10px 10px 10px;
   border-radius: 2px;
   overflow: hidden;
+  flex: none;
 }
 
 .Metadata .tabs .tab {
@@ -44,7 +52,11 @@
   flex-direction: column;
   justify-content: space-between;
   align-items: center;
-  height: 100%;
+  flex: 1 1 0;
+  /* Flex items default to min-height: auto (their content's height), which
+     would let a long tab push the column taller instead of scrolling. */
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .follow {

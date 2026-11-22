@@ -18,6 +18,7 @@ import { ScaleModeOption } from 'settings';
 import useTagDrop from 'renderer/hooks/useTagDrop';
 import './list-item.css';
 import Tags from '../metadata/tags';
+import FilePathInfo from '../metadata/file-path-info';
 
 type Props = {
   item: Item;
@@ -378,11 +379,7 @@ function ListItemComponent({ item, idx, height, onDimensionsLoaded }: Props) {
         </div>
       ) : null}
       {showFileInfo === 'all' || showFileInfo === 'list' ? (
-        <div className="item-info">
-          <span className="file-path" onClick={handleFilePathClick}>
-            {item.path}
-          </span>
-        </div>
+        <FilePathInfo path={item.path} onNavigate={handleFilePathClick} />
       ) : null}
       {sortBy === 'similarity' && Number.isFinite(item.score) ? (
         <div className="score-badge">{Math.round((item.score as number) * 100)}%</div>

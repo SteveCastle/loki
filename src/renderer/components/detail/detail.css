@@ -66,8 +66,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 100%;
-  pointer-events: visible;
+  min-width: 0;
 }
 
 .Detail .scroll-container {

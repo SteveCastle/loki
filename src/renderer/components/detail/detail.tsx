@@ -22,6 +22,7 @@ import { beginPaletteOpen } from '../../palette-trace';
 import { attachTouchGestures } from './touch-gestures';
 import { useTransientControls } from './use-transient-controls';
 import { samePath } from '../../media-changes';
+import FilePathInfo from '../metadata/file-path-info';
 
 function resizeToCover(
   parentWidth: number,
@@ -522,17 +523,12 @@ export function Detail({ offset = 0 }: { offset?: number }) {
         </div>
       ) : null}
       {settings.showFileInfo === 'all' || settings.showFileInfo === 'detail' ? (
-        <div className="item-info">
-          <span
-            className="file-path"
-            onClick={() => {
-              console.log('SET_FILE', { path: item.path });
-              libraryService.send('SET_FILE', { path: item.path });
-            }}
-          >
-            {item.path}
-          </span>
-        </div>
+        <FilePathInfo
+          path={item.path}
+          onNavigate={() =>
+            libraryService.send('SET_FILE', { path: item.path })
+          }
+        />
       ) : null}
     </div>
   );
