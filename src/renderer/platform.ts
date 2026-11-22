@@ -375,6 +375,11 @@ function channelToEndpoint(channel: string): EndpointMapping | null {
       method: 'PUT',
       argsToBody: (args) => ({ label: args[0], mode: args[1] }),
     },
+    'update-category-thumbnail-shape': {
+      url: '/api/categories/thumbnail-shape',
+      method: 'PUT',
+      argsToBody: (args) => ({ label: args[0], shape: args[1] }),
+    },
     // Tag groups: a visual level between a category and its tags.
     'load-tag-groups': {
       url: '/api/taxonomy/groups',

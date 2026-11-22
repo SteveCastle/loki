@@ -203,6 +203,9 @@ func mergeImport(ctx context.Context, deps *Dependencies, workDir string, dest s
 	mergeSimple(src, dst,
 		`SELECT tag_grouping, label FROM category WHERE tag_grouping IS NOT NULL`,
 		`UPDATE category SET tag_grouping = ? WHERE label = ? AND tag_grouping IS NULL`, 2)
+	mergeSimple(src, dst,
+		`SELECT thumbnail_shape, label FROM category WHERE thumbnail_shape IS NOT NULL`,
+		`UPDATE category SET thumbnail_shape = ? WHERE label = ? AND thumbnail_shape IS NULL`, 2)
 
 	// --- media items (the unit of merge) ---
 	newPaths := map[string]bool{}   // relkeys of items newly inserted this run

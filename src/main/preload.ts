@@ -57,6 +57,7 @@ export type Channels =
   | 'update-category-description'
   | 'update-category-tag-view-mode'
   | 'update-category-tag-grouping'
+  | 'update-category-thumbnail-shape'
   | 'load-tag-groups'
   | 'create-tag-group'
   | 'rename-tag-group'

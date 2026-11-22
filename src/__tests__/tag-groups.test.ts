@@ -15,6 +15,7 @@ import {
   updateTagGroupViewMode,
   setTagGroup,
   updateCategoryTagGrouping,
+  updateCategoryThumbnailShape,
   renameCategory,
   deleteCategory,
   moveTag,
@@ -28,6 +29,7 @@ import {
   saveCollapsedGroups,
   renameCollapsedGroup,
   UNGROUPED_KEY,
+  tagCardHeight,
 } from '../renderer/components/taxonomy/tag-groups';
 
 const ev = {} as any;
@@ -267,6 +269,30 @@ describe('tag group IPC handlers', () => {
     }[];
     expect(cats.find((c) => c.label === 'Subject')?.tagGrouping).toBe('off');
     expect(cats.find((c) => c.label === 'Style')?.tagGrouping).toBe('on');
+  });
+
+  it('stores the thumbnail shape (landscape when unset)', async () => {
+    const db = await legacyDb();
+    await updateCategoryThumbnailShape(db)(ev, ['Subject', 'portrait']);
+    const cats = (await loadCategories(db)()) as {
+      label: string;
+      thumbnailShape: string;
+    }[];
+    expect(cats.find((c) => c.label === 'Subject')?.thumbnailShape).toBe(
+      'portrait'
+    );
+    expect(cats.find((c) => c.label === 'Style')?.thumbnailShape).toBe(
+      'landscape'
+    );
+  });
+
+  it('sizes portrait cards 2:3 from the column width', () => {
+    expect(tagCardHeight('landscape', 400, 4, 8)).toBe(60);
+    // 4 columns in 424px with 8px gaps = 100px wide -> 150px tall.
+    expect(tagCardHeight('portrait', 424, 4, 8)).toBe(150);
+    // Never shorter than a landscape card, and unmeasured width falls back.
+    expect(tagCardHeight('portrait', 50, 1, 8)).toBe(75);
+    expect(tagCardHeight('portrait', 0, 1, 8)).toBe(60);
   });
 
   it('keeps groups with their category through rename, move and delete', async () => {

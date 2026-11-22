@@ -24,7 +24,12 @@ import VirtualizedTagGrid from './virtualized-tag-grid';
 import TagListView from './tag-list-view';
 import GroupedTagView from './grouped-tag-view';
 import TagGroupModal from './tag-group-modal';
-import { TagGroup, TagGrouping, hiddenGroupLabels } from './tag-groups';
+import {
+  TagGroup,
+  TagGrouping,
+  ThumbnailShape,
+  hiddenGroupLabels,
+} from './tag-groups';
 import { setCategoryTagGrouping } from './tag-group-actions';
 import NewTagModal from './new-tag-modal';
 import NewCategoryModal from './new-category-modal';
@@ -76,6 +81,8 @@ type Category = {
   // 'off' lists the category's tags flat, ignoring its tag groups. Absent
   // (older server) reads as 'on'.
   tagGrouping?: TagGrouping;
+  // Shape of the tag cards; absent (older server) reads as 'landscape'.
+  thumbnailShape?: ThumbnailShape;
   // Client-side entries that are not category rows (Duplicates): no tags,
   // no rename/delete/drop-to-move, no "+" — a panel behind a category label.
   synthetic?: boolean;
@@ -772,6 +779,12 @@ export default function Taxonomy() {
               ? 'card'
               : (categoriesByLabel[activeCategory]
                   ?.tagViewMode as TagViewMode) || 'card';
+            // Card shape likewise: the category's own, landscape for search.
+            const activeShape: ThumbnailShape =
+              !tagFilter &&
+              categoriesByLabel[activeCategory]?.thumbnailShape === 'portrait'
+                ? 'portrait'
+                : 'landscape';
             // Reordering by drag is meaningless when results are sorted by
             // search relevance — disable DnD while a search is active.
             const disableReorder = !!tagFilter;
@@ -823,6 +836,7 @@ export default function Taxonomy() {
                   groups={activeCategoryGroups ?? []}
                   showHidden={showHiddenTagGroups}
                   viewMode={activeViewMode}
+                  thumbnailShape={activeShape}
                   selectedTags={selectedTags}
                   isDisabled={isDisabled}
                   handleEditAction={setEditingTag}
@@ -900,11 +914,14 @@ export default function Taxonomy() {
                   isDisabled={isDisabled}
                   handleEditAction={setEditingTag}
                   disableReorder={disableReorder}
+                  thumbnailShape={activeShape}
                 />
               );
             }
             return (
-              <div className={`tags`}>
+              <div
+                className={activeShape === 'portrait' ? 'tags portrait' : 'tags'}
+              >
                 {tags.map((tag: Concept) => (
                   <Tag
                     isDisabled={isDisabled}
@@ -1089,6 +1106,11 @@ export default function Taxonomy() {
             categoriesByLabel[editingCategory]?.tagGrouping === 'off'
               ? 'off'
               : 'on'
+          }
+          currentThumbnailShape={
+            categoriesByLabel[editingCategory]?.thumbnailShape === 'portrait'
+              ? 'portrait'
+              : 'landscape'
           }
         />
       ) : null}

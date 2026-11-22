@@ -287,6 +287,12 @@ func buildExportDB(deps *Dependencies, dbPath string, selected []string) (map[st
 		2); err != nil {
 		return nil, fmt.Errorf("category tag_grouping: %w", err)
 	}
+	if err := copyRows(src, tx,
+		`SELECT thumbnail_shape, label FROM category WHERE thumbnail_shape IS NOT NULL`,
+		`UPDATE category SET thumbnail_shape = ? WHERE label = ?`,
+		2); err != nil {
+		return nil, fmt.Errorf("category thumbnail_shape: %w", err)
+	}
 
 	// media (paths relativized, preview/thumbnails nulled)
 	mrows, err := src.Query(`

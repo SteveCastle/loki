@@ -615,6 +615,7 @@ ipcMain.handle('load-db', async (event, args) => {
   ipcMain.removeHandler('update-category-description');
   ipcMain.removeHandler('update-category-tag-view-mode');
   ipcMain.removeHandler('update-category-tag-grouping');
+  ipcMain.removeHandler('update-category-thumbnail-shape');
   ipcMain.removeHandler('load-tag-groups');
   ipcMain.removeHandler('create-tag-group');
   ipcMain.removeHandler('rename-tag-group');
@@ -732,6 +733,10 @@ ipcMain.handle('load-db', async (event, args) => {
   ipcMain.handle(
     'update-category-tag-grouping',
     taxonomyModule.updateCategoryTagGrouping(db)
+  );
+  ipcMain.handle(
+    'update-category-thumbnail-shape',
+    taxonomyModule.updateCategoryThumbnailShape(db)
   );
   ipcMain.handle('load-tag-groups', taxonomyModule.loadTagGroups(db));
   ipcMain.handle('create-tag-group', taxonomyModule.createTagGroup(db));

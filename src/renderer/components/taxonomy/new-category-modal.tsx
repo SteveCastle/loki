@@ -5,7 +5,7 @@ import cancel from '../../../../assets/cancel.svg';
 import useOnClickOutside from '../../hooks/useOnClickOutside';
 import { invoke } from '../../platform';
 import { GlobalStateContext } from '../../state';
-import { TagGrouping } from './tag-groups';
+import { TagGrouping, ThumbnailShape } from './tag-groups';
 import { setCategoryTagGrouping } from './tag-group-actions';
 
 import './new-modal.css';
@@ -17,6 +17,7 @@ type CachedCategory = {
   weight: number;
   description: string;
   tagViewMode?: TagViewMode;
+  thumbnailShape?: ThumbnailShape;
 };
 
 type Props = {
@@ -26,6 +27,7 @@ type Props = {
   currentDescription?: string;
   currentTagViewMode?: TagViewMode;
   currentTagGrouping?: TagGrouping;
+  currentThumbnailShape?: ThumbnailShape;
 };
 
 export default function NewCategoryModal({
@@ -35,6 +37,7 @@ export default function NewCategoryModal({
   currentDescription = '',
   currentTagViewMode = 'card',
   currentTagGrouping = 'on',
+  currentThumbnailShape = 'landscape',
 }: Props) {
   const [newLabel, setNewLabel] = useState<string>(currentValue);
   const [description, setDescription] = useState<string>(currentDescription);
@@ -110,6 +113,37 @@ export default function NewCategoryModal({
         data: {
           type: 'error',
           title: 'Failed to update tag list style',
+          message: String(e),
+        },
+      });
+    }
+  }
+
+  async function handleSetThumbnailShape(shape: ThumbnailShape) {
+    if (!currentValue || shape === currentThumbnailShape) return;
+    const targetLabel = currentValue;
+    const snapshot = queryClient.getQueriesData<CachedCategory[]>({
+      queryKey: ['taxonomy', 'categories'],
+    });
+    queryClient.setQueriesData<CachedCategory[]>(
+      { queryKey: ['taxonomy', 'categories'] },
+      (old) =>
+        old?.map((c) =>
+          c.label === targetLabel ? { ...c, thumbnailShape: shape } : c
+        )
+    );
+    try {
+      await invoke('update-category-thumbnail-shape', [targetLabel, shape]);
+      queryClient.invalidateQueries({ queryKey: ['taxonomy'] });
+    } catch (e) {
+      for (const [key, value] of snapshot) {
+        queryClient.setQueryData(key, value);
+      }
+      libraryService.send({
+        type: 'ADD_TOAST',
+        data: {
+          type: 'error',
+          title: 'Failed to update thumbnail shape',
           message: String(e),
         },
       });
@@ -250,6 +284,32 @@ export default function NewCategoryModal({
                     onClick={() => handleSetTagViewMode('list')}
                   >
                     List
+                  </button>
+                </div>
+              </div>
+              <div className="action-row">
+                <div className="action-row-text">
+                  <div className="action-row-title">Thumbnails</div>
+                  <div className="action-row-description">
+                    Wide card previews, or tall 2:3 ones for comics and posters
+                  </div>
+                </div>
+                <div className="segmented">
+                  <button
+                    className={
+                      currentThumbnailShape === 'landscape' ? 'selected' : ''
+                    }
+                    onClick={() => handleSetThumbnailShape('landscape')}
+                  >
+                    Landscape
+                  </button>
+                  <button
+                    className={
+                      currentThumbnailShape === 'portrait' ? 'selected' : ''
+                    }
+                    onClick={() => handleSetThumbnailShape('portrait')}
+                  >
+                    Portrait
                   </button>
                 </div>
               </div>

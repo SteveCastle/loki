@@ -14,7 +14,8 @@ import { getFileType } from '../file-types';
 const loadCategories = (db: Database) => async () => {
   try {
     const rows = await db.all(
-      `SELECT label, weight, description, tag_view_mode, tag_grouping
+      `SELECT label, weight, description, tag_view_mode, tag_grouping,
+              thumbnail_shape
          FROM category
          ORDER BY weight`
     );
@@ -24,6 +25,8 @@ const loadCategories = (db: Database) => async () => {
       description: row.description || '',
       tagViewMode: row.tag_view_mode || 'card',
       tagGrouping: row.tag_grouping === 'off' ? 'off' : 'on',
+      thumbnailShape:
+        row.thumbnail_shape === 'portrait' ? 'portrait' : 'landscape',
     }));
   } catch (e) {
     console.log(e);
@@ -674,6 +677,17 @@ const updateCategoryTagGrouping =
     ]);
   };
 
+type UpdateCategoryThumbnailShapeInput = [string, 'landscape' | 'portrait'];
+const updateCategoryThumbnailShape =
+  (db: Database) =>
+  async (_: IpcMainInvokeEvent, args: UpdateCategoryThumbnailShapeInput) => {
+    const [label, shape] = args;
+    await db.run(`UPDATE category SET thumbnail_shape = $1 WHERE label = $2`, [
+      shape === 'portrait' ? 'portrait' : 'landscape',
+      label,
+    ]);
+  };
+
 // ---- Tag groups ----
 // A visual level between a category and its tags (see tag_group in
 // database.ts). Mirrored by the /api/tag-groups handlers in
@@ -1010,6 +1024,7 @@ export {
   updateCategoryDescription,
   updateCategoryTagViewMode,
   updateCategoryTagGrouping,
+  updateCategoryThumbnailShape,
   loadTagGroups,
   createTagGroup,
   renameTagGroup,

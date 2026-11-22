@@ -246,6 +246,12 @@
   height: 100%;
 }
 
+/* Portrait categories (comics, posters): 2:3 cards. The virtualized grids
+   size their rows to match in tagCardHeight (tag-groups.ts). */
+.Taxonomy .tags.portrait .tag {
+  aspect-ratio: 2 / 3;
+}
+
 .Taxonomy .tags.virtualized {
   display: block;
   flex: 8 1 0;

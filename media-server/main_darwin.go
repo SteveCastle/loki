@@ -2596,6 +2596,7 @@ func main() {
 	mux.HandleFunc("/api/categories/rename", renderer.ApplyMiddlewares(lokiRenameCategoryHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/categories/tag-view-mode", renderer.ApplyMiddlewares(lokiUpdateCategoryTagViewModeHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/categories/tag-grouping", renderer.ApplyMiddlewares(lokiUpdateCategoryTagGroupingHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/categories/thumbnail-shape", renderer.ApplyMiddlewares(lokiUpdateCategoryThumbnailShapeHandler(deps), renderer.RoleAdmin))
 
 	mux.HandleFunc("/api/tag-groups", renderer.ApplyMiddlewares(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {

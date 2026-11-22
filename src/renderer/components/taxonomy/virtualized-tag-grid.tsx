@@ -2,6 +2,7 @@ import { useMemo, useRef } from 'react';
 import useComponentSize from '@rehooks/component-size';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import Tag from './tag';
+import { ThumbnailShape, tagCardHeight } from './tag-groups';
 
 type Concept = {
   label: string;
@@ -15,10 +16,10 @@ type Props = {
   isDisabled: boolean;
   handleEditAction: (tag: string) => void;
   disableReorder?: boolean;
+  thumbnailShape?: ThumbnailShape;
 };
 
 const MIN_COLUMN_WIDTH = 100;
-const ROW_HEIGHT = 60;
 const ROW_GAP = 8;
 
 export default function VirtualizedTagGrid({
@@ -27,6 +28,7 @@ export default function VirtualizedTagGrid({
   isDisabled,
   handleEditAction,
   disableReorder = false,
+  thumbnailShape = 'landscape',
 }: Props) {
   const parentRef = useRef<HTMLDivElement>(null);
   const { width } = useComponentSize(parentRef);
@@ -35,6 +37,7 @@ export default function VirtualizedTagGrid({
     1,
     Math.floor((width || MIN_COLUMN_WIDTH) / MIN_COLUMN_WIDTH)
   );
+  const rowHeight = tagCardHeight(thumbnailShape, width, columns, ROW_GAP);
   const rowCount = useMemo(
     () => Math.ceil(tags.length / columns),
     [tags.length, columns]
@@ -43,7 +46,7 @@ export default function VirtualizedTagGrid({
   const rowVirtualizer = useVirtualizer({
     count: rowCount,
     getScrollElement: () => parentRef.current,
-    estimateSize: () => ROW_HEIGHT + ROW_GAP,
+    estimateSize: () => rowHeight + ROW_GAP,
     overscan: 4,
   });
 
@@ -65,7 +68,7 @@ export default function VirtualizedTagGrid({
               top: 0,
               left: 0,
               width: '100%',
-              height: `${ROW_HEIGHT}px`,
+              height: `${rowHeight}px`,
               transform: `translateY(${virtualRow.start}px)`,
               display: 'grid',
               gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,

@@ -20,6 +20,25 @@ export type TagGroup = {
   viewMode?: TagViewMode | null;
 };
 
+// Per-category card shape stored on the category row
+// (category.thumbnail_shape). 'portrait' suits comics and posters.
+export type ThumbnailShape = 'landscape' | 'portrait';
+
+const LANDSCAPE_CARD_HEIGHT = 60;
+
+// Height of one row of tag cards. Landscape cards are a fixed strip; portrait
+// cards are 2:3, so their height follows the column width.
+export function tagCardHeight(
+  shape: ThumbnailShape,
+  width: number,
+  columns: number,
+  gap: number
+): number {
+  if (shape !== 'portrait' || !width) return LANDSCAPE_CARD_HEIGHT;
+  const columnWidth = (width - gap * (columns - 1)) / columns;
+  return Math.max(LANDSCAPE_CARD_HEIGHT, Math.round(columnWidth * 1.5));
+}
+
 // Per-category toggle stored on the category row (category.tag_grouping).
 // 'off' lists the tags flat again, ignoring their groups.
 export type TagGrouping = 'on' | 'off';

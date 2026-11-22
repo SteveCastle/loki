@@ -1396,7 +1396,8 @@ func lokiCategoriesHandler(deps *Dependencies) http.HandlerFunc {
 			       COALESCE(weight, 0) AS weight,
 			       COALESCE(description, '') AS description,
 			       COALESCE(tag_view_mode, 'card') AS tag_view_mode,
-			       CASE WHEN tag_grouping = 'off' THEN 'off' ELSE 'on' END AS tag_grouping
+			       CASE WHEN tag_grouping = 'off' THEN 'off' ELSE 'on' END AS tag_grouping,
+			       CASE WHEN thumbnail_shape = 'portrait' THEN 'portrait' ELSE 'landscape' END AS thumbnail_shape
 			FROM category
 			ORDER BY weight`)
 		if err != nil {
@@ -1406,16 +1407,17 @@ func lokiCategoriesHandler(deps *Dependencies) http.HandlerFunc {
 		defer rows.Close()
 
 		type categoryInfo struct {
-			Label       string  `json:"label"`
-			Weight      float64 `json:"weight"`
-			Description string  `json:"description"`
-			TagViewMode string  `json:"tagViewMode"`
-			TagGrouping string  `json:"tagGrouping"`
+			Label          string  `json:"label"`
+			Weight         float64 `json:"weight"`
+			Description    string  `json:"description"`
+			TagViewMode    string  `json:"tagViewMode"`
+			TagGrouping    string  `json:"tagGrouping"`
+			ThumbnailShape string  `json:"thumbnailShape"`
 		}
 		result := []categoryInfo{}
 		for rows.Next() {
 			var c categoryInfo
-			if err := rows.Scan(&c.Label, &c.Weight, &c.Description, &c.TagViewMode, &c.TagGrouping); err != nil {
+			if err := rows.Scan(&c.Label, &c.Weight, &c.Description, &c.TagViewMode, &c.TagGrouping, &c.ThumbnailShape); err != nil {
 				httpError(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
@@ -1979,6 +1981,35 @@ func lokiUpdateCategoryTagGroupingHandler(deps *Dependencies) http.HandlerFunc {
 		if _, err := deps.DB.Exec(
 			"UPDATE category SET tag_grouping = ? WHERE label = ?",
 			mode, req.Label,
+		); err != nil {
+			httpError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, map[string]string{})
+	}
+}
+
+func lokiUpdateCategoryThumbnailShapeHandler(deps *Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Label string `json:"label"`
+			Shape string `json:"shape"`
+		}
+		if err := readJSON(r, &req); err != nil {
+			httpError(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		if req.Label == "" {
+			httpError(w, "missing label", http.StatusBadRequest)
+			return
+		}
+		shape := "landscape"
+		if req.Shape == "portrait" {
+			shape = "portrait"
+		}
+		if _, err := deps.DB.Exec(
+			"UPDATE category SET thumbnail_shape = ? WHERE label = ?",
+			shape, req.Label,
 		); err != nil {
 			httpError(w, err.Error(), http.StatusInternalServerError)
 			return

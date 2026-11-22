@@ -1936,6 +1936,7 @@ components:
         - description
         - tagViewMode
         - tagGrouping
+        - thumbnailShape
       properties:
         label:
           type: string
@@ -1954,6 +1955,12 @@ components:
             - 'on'
             - 'off'
           description: Whether the category's tags are listed under their groups.
+        thumbnailShape:
+          type: string
+          enum:
+            - landscape
+            - portrait
+          description: Shape of the category's tag cards; `landscape` when unset.
     TaxonomyTag:
       type: object
       required:
@@ -9043,11 +9050,13 @@ paths:
                   description: ''
                   tagViewMode: card
                   tagGrouping: 'on'
+                  thumbnailShape: landscape
                 - label: Suggested
                   weight: 5
                   description: Autotagger output
                   tagViewMode: list
                   tagGrouping: 'off'
+                  thumbnailShape: landscape
         '500':
           description: Database error.
           content:
@@ -9910,6 +9919,53 @@ paths:
             example:
               label: People
               mode: list
+      responses:
+        '200':
+          description: Updated (also when no category matched).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmptyObject'
+        '400':
+          description: Body is not valid JSON or `label` is empty.
+          content:
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Database error.
+          content:
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/categories/thumbnail-shape:
+    put:
+      tags:
+        - Taxonomy
+      operationId: setCategoryThumbnailShape
+      summary: Set the shape of a category's tag cards.
+      description: >-
+        `portrait` shows the category's tag cards as tall tiles (comics, posters); any other value
+        stores `landscape`. The method is not checked.
+      x-access: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - label
+              properties:
+                label:
+                  type: string
+                  description: Category label.
+                shape:
+                  type: string
+                  description: '`portrait`, or anything else for landscape.'
+            example:
+              label: Comics
+              shape: portrait
       responses:
         '200':
           description: Updated (also when no category matched).

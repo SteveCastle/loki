@@ -2120,6 +2120,9 @@ func InitializeSchema(db *sql.DB) error {
 	_, _ = db.Exec(`ALTER TABLE category ADD COLUMN tag_view_mode TEXT`)
 	// 'off' lists the category's tags flat, ignoring tag groups.
 	_, _ = db.Exec(`ALTER TABLE category ADD COLUMN tag_grouping TEXT`)
+	// 'portrait' shows the category's tag cards as tall tiles (comics,
+	// posters); NULL/'landscape' keeps the default wide tiles.
+	_, _ = db.Exec(`ALTER TABLE category ADD COLUMN thumbnail_shape TEXT`)
 
 	// Create tag table
 	_, err = db.Exec(`

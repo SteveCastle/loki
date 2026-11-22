@@ -418,6 +418,9 @@ export async function initDB(db: Database) {
       // 'off' lists the category's tags flat, ignoring groups; NULL/'on'
       // honours them.
       { name: 'tag_grouping', type: 'TEXT' },
+      // 'portrait' shows the category's tag cards as tall tiles (comics,
+      // posters); NULL/'landscape' keeps the default wide tiles.
+      { name: 'thumbnail_shape', type: 'TEXT' },
     ];
     for (const column of columnsToMigrate) {
       const columnExists = tableInfo.some(

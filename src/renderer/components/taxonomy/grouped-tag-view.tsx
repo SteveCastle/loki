@@ -13,6 +13,8 @@ import TagGroupHeader, { TAG_GROUP_DND_TYPE } from './tag-group-header';
 import {
   TagGroup,
   TagViewMode,
+  ThumbnailShape,
+  tagCardHeight,
   groupTags,
   sectionViewMode,
   flattenGroupedRows,
@@ -38,6 +40,7 @@ type Props = {
   showHidden: boolean;
   // The category's mode; a group's own viewMode overrides it.
   viewMode: TagViewMode;
+  thumbnailShape?: ThumbnailShape;
   selectedTags: string[];
   isDisabled: boolean;
   handleEditAction: (tag: string) => void;
@@ -48,7 +51,6 @@ type Props = {
 // Same metrics as VirtualizedTagGrid / TagListView so a grouped category
 // looks like the flat one with headers slotted in.
 const MIN_COLUMN_WIDTH = 100;
-const CARD_HEIGHT = 60;
 const CARD_GAP = 8;
 const LIST_ROW_HEIGHT = 30;
 const HEADER_HEIGHT = 30;
@@ -62,6 +64,7 @@ export default function GroupedTagView({
   groups,
   showHidden,
   viewMode,
+  thumbnailShape = 'landscape',
   selectedTags,
   isDisabled,
   handleEditAction,
@@ -78,6 +81,7 @@ export default function GroupedTagView({
     1,
     Math.floor((width || MIN_COLUMN_WIDTH) / MIN_COLUMN_WIDTH)
   );
+  const cardHeight = tagCardHeight(thumbnailShape, width, columns, CARD_GAP);
 
   const [collapsed, setCollapsed] = useState<Set<string>>(() =>
     loadCollapsedGroups(category)
@@ -109,8 +113,8 @@ export default function GroupedTagView({
   // Both callbacks must be stable between renders: the virtualizer recomputes
   // its measurements whenever either identity changes, and an inline
   // getItemKey re-renders forever. They change exactly when the rows do (a
-  // group collapses, the column count changes), which is when the header
-  // positions move.
+  // group collapses, the column count changes) or portrait cards resize with
+  // the panel width, which is when the header positions move.
   const getItemKey = useCallback(
     (index: number) => rows[index]?.key ?? index,
     [rows]
@@ -119,9 +123,9 @@ export default function GroupedTagView({
     (index: number) => {
       const row = rows[index];
       if (!row || row.type === 'header') return HEADER_HEIGHT;
-      return row.mode === 'list' ? LIST_ROW_HEIGHT : CARD_HEIGHT + CARD_GAP;
+      return row.mode === 'list' ? LIST_ROW_HEIGHT : cardHeight + CARD_GAP;
     },
-    [rows]
+    [rows, cardHeight]
   );
 
   // The tag being dragged, if it is one of ours. Item and type are fixed for a
@@ -234,7 +238,7 @@ export default function GroupedTagView({
               className={`virtualized-row${rowHidden}`}
               style={{
                 ...style,
-                height: `${CARD_HEIGHT}px`,
+                height: `${cardHeight}px`,
                 display: 'grid',
                 gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
                 gap: `${CARD_GAP}px`,
