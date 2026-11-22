@@ -14353,8 +14353,10 @@ paths:
         or undo.
 
         The rewrite keeps the given reference tokens verbatim; `missingTokens`
-        lists any the input prompt used that the rewrite dropped. With `image`,
-        the text model also looks at that file (a video contributes a frame).
+        lists any the input prompt used that the rewrite dropped. The text model
+        looks at `image` and every image or video reference with a `path` (a
+        video contributes a frame), all in one request, so the rewrite can say
+        what to take from which input.
       x-access: admin
       requestBody:
         required: true
@@ -14384,9 +14386,12 @@ paths:
                       kind:
                         type: string
                         enum: [image, video, audio]
+                      path:
+                        type: string
+                        description: The input's local file. Images and (a frame of) videos are shown to the text model, up to six in all.
                 image:
                   type: string
-                  description: Optional local file the text model looks at to ground the rewrite.
+                  description: Optional local file the text model also looks at, besides the references' files (the picture being redrawn, which has no token).
                 imageToken:
                   type: string
                   description: The token `image` goes by in the prompt, if any.

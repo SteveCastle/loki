@@ -70,6 +70,13 @@ type textRequest struct {
 	System string
 	// Image is a local image file (optional).
 	Image string
+	// Images (optional, instead of Image) are local image files read together
+	// in one request (the engine's --together), in this order. Such a request
+	// is never batched with others.
+	Images []string
+	// MaxImageTokens (optional) lowers Config.TextMaxImageTokens for this
+	// request, so several images fit the context.
+	MaxImageTokens int
 	// Model overrides Config.TextModel (a GGUF path, HF publisher/repo or name).
 	Model     string
 	MaxTokens int
@@ -131,10 +138,10 @@ func generateText(ctx context.Context, logf func(string), req textRequest) (stri
 		req.MaxTokens = textMaxOutputTokens
 	}
 	it := &textItem{req: req, ctx: ctx, logf: logf, done: make(chan textResult, 1)}
-	key := strings.Join([]string{req.Model, req.System, req.Prompt, strconv.Itoa(req.MaxTokens), strconv.FormatBool(req.Image != ""), strconv.FormatFloat(req.Temperature, 'f', -1, 64), strconv.FormatBool(req.NoRepeat)}, "\x00")
+	key := strings.Join([]string{req.Model, req.System, req.Prompt, strconv.Itoa(req.MaxTokens), strconv.FormatBool(req.Image != ""), strconv.FormatFloat(req.Temperature, 'f', -1, 64), strconv.FormatBool(req.NoRepeat), strings.Join(req.Images, "\x01"), strconv.Itoa(req.MaxImageTokens)}, "\x00")
 	batch := max(1, cfg.TextBatch)
-	if req.Image == "" {
-		batch = 1 // a text-only request is one engine run
+	if req.Image == "" || len(req.Images) > 0 {
+		batch = 1 // a text-only or multi-image request is one engine run
 	}
 	textBatches.Lock()
 	g := textBatches.groups[key]
@@ -212,6 +219,9 @@ func runTextBatch(items []*textItem) {
 	cfg := appconfig.Get()
 	r := live[0].req
 	maxImage := max(64, cfg.TextMaxImageTokens)
+	if r.MaxImageTokens > 0 {
+		maxImage = max(64, min(maxImage, r.MaxImageTokens))
+	}
 	args := []string{"--json", "--max-tokens", strconv.Itoa(r.MaxTokens), "--parallel", strconv.Itoa(max(1, cfg.TextParallel)), "--max-image-tokens", strconv.Itoa(maxImage)}
 	if r.MinImageTokens > 0 {
 		args = append(args, "--min-image-tokens", strconv.Itoa(min(r.MinImageTokens, maxImage)))
@@ -235,6 +245,11 @@ func runTextBatch(items []*textItem) {
 	// log lines name their input as the engine saw it (a worker's own path),
 	// so they are matched by file name
 	byInput := map[string]*textItem{}
+	if len(r.Images) > 0 {
+		// one request reading every image (batch is 1 for these)
+		args = append(args, "--together")
+		args = append(args, r.Images...)
+	}
 	for _, it := range live {
 		if it.req.Image != "" {
 			args = append(args, it.req.Image)

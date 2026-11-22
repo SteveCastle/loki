@@ -6,9 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/stevecastle/shrike/mediaext"
 )
 
 // --- prompt enhancement (POST /api/transform/enhance-prompt) ---
@@ -28,7 +31,13 @@ var promptGuideFS embed.FS
 type EnhanceReference struct {
 	Token string `json:"token"`
 	Kind  string `json:"kind"` // image | video | audio
+	// Path (optional) is the input's local file: images and videos (a frame)
+	// are shown to the text model so the rewrite can use what they contain.
+	Path string `json:"path,omitempty"`
 }
+
+// enhanceMaxImages bounds how many pictures the text model reads at once.
+const enhanceMaxImages = 6
 
 // EnhanceRequest is POST /api/transform/enhance-prompt's body.
 type EnhanceRequest struct {
@@ -40,7 +49,8 @@ type EnhanceRequest struct {
 	Task       string             `json:"task"`
 	References []EnhanceReference `json:"references"`
 	// Image (optional) is a local file the model looks at to ground the
-	// rewrite: the picture being edited or redrawn, or the first reference.
+	// rewrite, besides the references' own files: the picture being redrawn
+	// (which has no token), or an edit's image when it has no reference entry.
 	Image string `json:"image"`
 	// ImageToken is the token Image goes by in the prompt, if it has one.
 	ImageToken string `json:"imageToken"`
@@ -94,6 +104,46 @@ var enhanceTaskLines = map[string]string{
 	"video":     "The prompt directs a video generated from the references, with its own sound.",
 }
 
+// enhanceImage is one picture shown to the text model, in attachment order.
+type enhanceImage struct {
+	path  string // as given (a video for a frame)
+	token string // "" = the untokened source picture
+	kind  string // image | video
+}
+
+// enhanceImages lists the pictures the text model reads: the request's
+// Image first, then every image or video reference with a file, each once.
+func enhanceImages(req EnhanceRequest) []enhanceImage {
+	var out []enhanceImage
+	seen := map[string]bool{}
+	add := func(p, token, kind string) {
+		if p == "" || len(out) >= enhanceMaxImages {
+			return
+		}
+		k := strings.ToLower(p)
+		if seen[k] {
+			// the same file as a reference: give the earlier entry its token
+			for i := range out {
+				if strings.ToLower(out[i].path) == k && out[i].token == "" {
+					out[i].token = token
+				}
+			}
+			return
+		}
+		seen[k] = true
+		out = append(out, enhanceImage{path: p, token: token, kind: kind})
+	}
+	if req.Image != "" {
+		add(req.Image, req.ImageToken, "image")
+	}
+	for _, r := range req.References {
+		if r.Kind == "image" || r.Kind == "video" {
+			add(r.Path, r.Token, r.Kind)
+		}
+	}
+	return out
+}
+
 func enhanceSystemPrompt(req EnhanceRequest, guide string) string {
 	var b strings.Builder
 	b.WriteString("You are an expert prompt writer for generative image and video models. ")
@@ -113,12 +163,27 @@ func enhanceSystemPrompt(req EnhanceRequest, guide string) string {
 		}
 		b.WriteString("Use these tokens verbatim (same spelling, brackets and spacing) wherever the prompt refers to an input, keep every token the user used, and never invent other tokens. If the guide shows a different reference syntax, use these tokens instead.\n")
 	}
-	if req.Image != "" {
-		if req.ImageToken != "" {
-			fmt.Fprintf(&b, "\nThe attached image is %s. Look at it to get details right (who or what is there, the setting, the light), but write only what the prompt needs: do not describe what should stay unchanged at length.\n", req.ImageToken)
+	if imgs := enhanceImages(req); len(imgs) > 0 {
+		if len(imgs) == 1 {
+			b.WriteString("\nOne image is attached: ")
 		} else {
-			b.WriteString("\nThe attached image is the picture the prompt works on. Look at it to get details right, but write only what the prompt needs.\n")
+			b.WriteString("\nThese images are attached, in this order:\n")
 		}
+		for i, im := range imgs {
+			what := "the picture the prompt works on"
+			switch {
+			case im.token != "" && im.kind == "video":
+				what = "a frame from " + im.token
+			case im.token != "":
+				what = im.token
+			}
+			if len(imgs) == 1 {
+				b.WriteString(what + ".\n")
+			} else {
+				fmt.Fprintf(&b, "%d. %s\n", i+1, what)
+			}
+		}
+		b.WriteString("Look at them to build the prompt from what they really show: who or what is in each reference (appearance, clothing, objects, style), the setting and the light, so the prompt can say precisely what to take from which input. Write only what the prompt needs: do not describe what should stay unchanged at length, and do not describe a reference in place of naming it by its token.\n")
 	}
 	b.WriteString("\n--- Model guide ---\n\n")
 	b.WriteString(guide)
@@ -174,16 +239,30 @@ func EnhancePrompt(ctx context.Context, req EnhanceRequest) (EnhanceResult, erro
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
-	var answer string
-	var err error
 	if req.Image != "" {
 		if _, statErr := os.Stat(req.Image); statErr != nil {
 			return out, fmt.Errorf("%w: image not found: %s", ErrEnhanceInput, req.Image)
 		}
-		answer, err = imageText(ctx, nil, "", req.Image, text)
-	} else {
-		answer, err = generateText(ctx, nil, text)
 	}
+	var cleanup []string
+	defer func() {
+		for _, p := range cleanup {
+			_ = os.Remove(p)
+		}
+	}()
+	for _, im := range enhanceImages(req) {
+		p, tmp, err := visionImage(ctx, im.path)
+		if err != nil {
+			return out, fmt.Errorf("reading %s: %w", filepath.Base(im.path), err)
+		}
+		cleanup = append(cleanup, tmp...)
+		text.Images = append(text.Images, p)
+	}
+	if n := len(text.Images); n > 1 {
+		// several pictures share the context: fewer vision tokens each
+		text.MaxImageTokens = max(384, min(1024, 4096/n))
+	}
+	answer, err := generateText(ctx, nil, text)
 	if err != nil {
 		return out, err
 	}
@@ -197,4 +276,28 @@ func EnhancePrompt(ctx context.Context, req EnhanceRequest) (EnhanceResult, erro
 		}
 	}
 	return out, nil
+}
+
+// visionImage readies one file for the text model the way imageText does:
+// images it can read as they are (resized if large), anything else (a video,
+// heic, tiff) through an ffmpeg frame. tmp lists files to remove afterwards.
+func visionImage(ctx context.Context, path string) (string, []string, error) {
+	var tmp []string
+	src := path
+	if !mediaext.IsDirectVisionImage(path) {
+		frame, err := extractVideoFrame(ctx, path, "")
+		if err != nil {
+			return "", nil, fmt.Errorf("extracting a frame: %w", err)
+		}
+		tmp = append(tmp, frame)
+		src = frame
+	}
+	resized, err := resizeImageIfNeeded(src)
+	if err != nil {
+		return "", tmp, fmt.Errorf("resizing: %w", err)
+	}
+	if resized != src {
+		tmp = append(tmp, resized)
+	}
+	return resized, tmp, nil
 }

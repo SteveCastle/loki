@@ -138,9 +138,14 @@
 }
 
 .ts-close {
-  width: 24px;
-  height: 24px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
   padding: 0;
+  -webkit-app-region: no-drag;
   background: none;
   border: 1px solid transparent;
   border-radius: 5px;

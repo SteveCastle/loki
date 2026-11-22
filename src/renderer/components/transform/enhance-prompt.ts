@@ -20,7 +20,7 @@ export interface EnhanceRequestBody {
   prompt: string;
   model: string;
   task: EnhanceTask;
-  references: Array<{ token: string; kind: string }>;
+  references: Array<{ token: string; kind: string; path?: string }>;
   image?: string;
   imageToken?: string;
 }
@@ -71,15 +71,20 @@ export function enhanceBody(
     prompt,
     model: target.model,
     task: target.task,
-    references: refs.map((r) => ({ token: r.token, kind: mediaKind(r.path) })),
+    // The server shows the text model every image and (a frame of) every video here.
+    references: refs.map((r) => ({ token: r.token, kind: mediaKind(r.path), path: r.path })),
   };
-  const firstImage = refs.find((r) => mediaKind(r.path) === 'image');
   if (target.task === 'reimagine') {
+    // the picture being redrawn has no token
     const src = paths.find((p) => mediaKind(p) === 'image');
     if (src) body.image = src;
-  } else if (firstImage && target.task !== 'generate') {
-    body.image = firstImage.path;
-    body.imageToken = firstImage.token;
+  } else if (target.task === 'edit' && refs.length === 0) {
+    // a single-image edit lists no tokens, but the image is still <image1>
+    const src = paths.find((p) => mediaKind(p) === 'image');
+    if (src) {
+      body.image = src;
+      body.imageToken = '<image1>';
+    }
   }
   return body;
 }
