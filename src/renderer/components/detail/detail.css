@@ -89,3 +89,52 @@
   height: 0px;
   background: transparent; /* Optional: just make scrollbar invisible */
 }
+
+/* Shown while the detail view peeks at a file outside the library cursor
+   (metadata Duplicates tab). Sits below the 30px window drag strip. */
+.DetailContainer .detail-peek-banner {
+  position: absolute;
+  top: 36px;
+  left: 8px;
+  z-index: 999;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: calc(100% - 16px);
+  box-sizing: border-box;
+  padding: 3px 4px 3px 10px;
+  border-radius: 12px;
+  background: rgba(20, 40, 80, 0.8);
+  border: 1px solid rgba(110, 170, 255, 0.6);
+  color: #fff;
+  font-size: 12px;
+  -webkit-app-region: no-drag;
+  cursor: default;
+}
+
+.DetailContainer .detail-peek-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.DetailContainer .detail-peek-close {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.8);
+  cursor: pointer;
+}
+
+.DetailContainer .detail-peek-close:hover {
+  background: rgba(255, 255, 255, 0.22);
+  color: #fff;
+}

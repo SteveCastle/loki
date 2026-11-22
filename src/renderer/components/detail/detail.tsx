@@ -1,4 +1,11 @@
-import { useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import {
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import useScrollOnDrag from 'react-scroll-ondrag';
 import { useSelector } from '@xstate/react';
 import { GlobalStateContext, Item } from '../../state';
@@ -23,6 +30,7 @@ import { attachTouchGestures } from './touch-gestures';
 import { useTransientControls } from './use-transient-controls';
 import { samePath } from '../../media-changes';
 import FilePathInfo from '../metadata/file-path-info';
+import { setDetailPeek, useDetailPeek } from '../../detail-peek';
 
 function resizeToCover(
   parentWidth: number,
@@ -159,7 +167,7 @@ export function Detail({ offset = 0 }: { offset?: number }) {
   // `loki-media-updated` custom event dispatched by the SSE handler.
   const [mediaVersion, setMediaVersion] = useState(0);
 
-  const item = useSelector(
+  const libraryItem = useSelector(
     libraryService,
     (state) => {
       const library = filter(
@@ -175,6 +183,14 @@ export function Detail({ offset = 0 }: { offset?: number }) {
     },
     (a, b) => a?.path === b?.path && a?.timeStamp === b?.timeStamp
   ) as Item;
+  // A peek (detail-peek.ts) shows another file in place of the cursor's,
+  // leaving the library alone. Only the primary pane follows it.
+  const peekPath = useDetailPeek();
+  const peekItem = useMemo<Item | null>(
+    () => (peekPath && offset === 0 ? { path: peekPath, mtimeMs: 0 } : null),
+    [peekPath, offset]
+  );
+  const item = peekItem ?? libraryItem;
 
   // Listen for media-updated SSE events to reload the current file in real time.
   useEffect(() => {
@@ -520,6 +536,35 @@ export function Detail({ offset = 0 }: { offset?: number }) {
       {settings.showTags === 'all' || settings.showTags === 'detail' ? (
         <div className="controls">
           <Tags item={item} enableTagGeneration={false} />
+        </div>
+      ) : null}
+      {peekItem ? (
+        <div
+          className="detail-peek-banner"
+          onClick={(e) => e.stopPropagation()}
+          onDoubleClick={(e) => e.stopPropagation()}
+          onPointerDown={(e) => e.stopPropagation()}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <span className="detail-peek-label" title={peekItem.path}>
+            Previewing {peekItem.path.split(/[\\/]/).pop()}
+          </span>
+          <button
+            type="button"
+            className="detail-peek-close"
+            title="Close the preview and return to the current item"
+            aria-label="Close preview"
+            onClick={() => setDetailPeek(null)}
+          >
+            <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
+              <path
+                d="M1 1l8 8M9 1L1 9"
+                stroke="currentColor"
+                strokeWidth="1.6"
+                strokeLinecap="round"
+              />
+            </svg>
+          </button>
         </div>
       ) : null}
       {settings.showFileInfo === 'all' || settings.showFileInfo === 'detail' ? (

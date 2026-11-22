@@ -339,3 +339,9 @@
 .dupes-sort {
   margin-right: auto;
 }
+
+/* The member the detail view is peeking at (metadata Duplicates tab). */
+.dupes-member.peeking {
+  outline: 2px solid rgba(110, 170, 255, 0.95);
+  outline-offset: -2px;
+}

@@ -18,6 +18,8 @@ import { useSelector } from '@xstate/react';
 import { GlobalStateContext } from '../../state';
 import { isElectron, mediaServerConfigured } from '../../platform';
 import { subscribeStream } from '../../stream-bus';
+import { setDetailPeek, useDetailPeek } from '../../detail-peek';
+import { samePath } from '../../media-changes';
 import {
   apiGet,
   apiSend,
@@ -86,6 +88,21 @@ export default function Duplicates({ basePath }: Props) {
   const [threshold, setThreshold] = useState<number>(readThreshold);
   const [busy, setBusy] = useState(false);
   const [embedQueued, setEmbedQueued] = useState<string | null>(null);
+
+  // Clicking a member shows it in the detail view without touching the
+  // library. The peek belongs to this tab: it ends when the in-context item
+  // changes or the tab goes away (another tab, the panel closing).
+  const peekPath = useDetailPeek();
+  useEffect(() => {
+    setDetailPeek(null);
+    return () => setDetailPeek(null);
+  }, [basePath]);
+  const handleMemberClick = useCallback(
+    (_g: DuplicateGroup, p: string) => {
+      setDetailPeek(samePath(p, basePath) ? null : p);
+    },
+    [basePath]
+  );
 
   const path = useDebounced(basePath, CHECK_DEBOUNCE_MS);
   const settled = path === basePath;
@@ -365,6 +382,8 @@ export default function Duplicates({ basePath }: Props) {
         cursorPath={basePath}
         currentPath={basePath}
         onView={handleView}
+        onMemberClick={handleMemberClick}
+        peekPath={peekPath}
         onMerge={handleMerge}
         onStatus={handleStatus}
         onExclude={handleExclude}

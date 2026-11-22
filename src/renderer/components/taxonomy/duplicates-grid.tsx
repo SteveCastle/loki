@@ -285,6 +285,11 @@ interface GroupCardProps {
   // pinPath (member clicks) lands the library cursor on that item once the
   // cluster filter has loaded, so the detail panel shows it.
   onView: (g: DuplicateGroup, pinPath?: string) => void;
+  // When given, a member click calls this instead of onView (the metadata
+  // tab peeks at the member in the detail view rather than filtering).
+  onMemberClick?: (g: DuplicateGroup, path: string) => void;
+  // The member the detail view is peeking at, if any.
+  peekPath?: string | null;
   onMerge: (g: DuplicateGroup, keep: string) => Promise<void>;
   onStatus: (g: DuplicateGroup, status: ListStatus) => Promise<void>;
   onExclude: (
@@ -308,6 +313,8 @@ export function GroupCard({
   cursorPath,
   currentPath,
   onView,
+  onMemberClick,
+  peekPath,
   onMerge,
   onStatus,
   onExclude,
@@ -451,10 +458,14 @@ export function GroupCard({
               key={m.path}
               className={`dupes-member${m.excluded ? ' excluded' : ''}${
                 isKeep ? ' keep' : ''
-              }`}
+              }${peekPath && samePath(m.path, peekPath) ? ' peeking' : ''}`}
               title={`${m.path}\n${pct(m.score)} similar to the anchor${
                 m.width && m.height ? `\n${m.width}×${m.height}` : ''
-              }\nClick: show this cluster in the library with this item selected${
+              }\nClick: ${
+                onMemberClick
+                  ? 'show this item in the detail view'
+                  : 'show this cluster in the library with this item selected'
+              }${
                 canWrite && !dismissed && !m.excluded
                   ? ' (and keep it in a merge)'
                   : ''
@@ -463,7 +474,8 @@ export function GroupCard({
                 // Same cluster filter as the group header, plus the cursor
                 // lands on this item so the detail panel shows it.
                 if (canWrite && !dismissed && !m.excluded) setKeep(m.path);
-                onView(group, m.path);
+                if (onMemberClick) onMemberClick(group, m.path);
+                else onView(group, m.path);
               }}
             >
               <div className="dupes-member-thumb">
