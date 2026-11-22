@@ -198,7 +198,7 @@ export { suggestTemplateName };
 
 /**
  * "☆ Save prompt": always shown where a custom prompt is written or reviewed (greyed out while empty, "★ Saved"
- * once it is), opening an inline name field. Esc there cancels only the naming (see data-ts-local-esc). The prompt
+ * once it is), opening an inline name field. The prompt
  * is saved with the rest of its configuration (output size, quality…), so bringing it back restores both.
  */
 export function SavePrompt({ intent, settings }: { intent: IntentId; settings: TransformSettings }) {
@@ -211,7 +211,7 @@ export function SavePrompt({ intent, settings }: { intent: IntentId; settings: T
   };
   if (naming !== null) {
     return (
-      <span className="ts-template-name" data-ts-local-esc>
+      <span className="ts-template-name">
         <input
           autoFocus
           value={naming}
@@ -224,9 +224,6 @@ export function SavePrompt({ intent, settings }: { intent: IntentId; settings: T
               e.preventDefault();
               e.stopPropagation();
               commit();
-            } else if (e.key === 'Escape') {
-              e.preventDefault();
-              setNaming(null);
             }
           }}
         />
@@ -407,7 +404,7 @@ function wordCount(text: string): number {
 
 /**
  * A prompt textarea with a toggle that expands it over the whole Transform panel for long, focused writing (the
- * reference chips in `extra` stay usable there). Esc or the toggle collapses it. Only one textarea is mounted at a
+ * reference chips in `extra` stay usable there). The toggle collapses it. Only one textarea is mounted at a
  * time, on `textRef`, so token insertion keeps working; focus and caret carry over. Expanded, Enter is a newline and
  * only Ctrl/Cmd+Enter submits.
  */
@@ -462,12 +459,6 @@ export function ExpandablePrompt({
   }, [panel, textRef]);
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (panel && e.key === 'Escape') {
-      e.preventDefault();
-      e.stopPropagation();
-      toggle(false);
-      return;
-    }
     if (e.key === 'Enter' && onSubmit && (e.ctrlKey || e.metaKey || (!panel && submitOnEnter && !e.shiftKey))) {
       e.preventDefault();
       onSubmit();
@@ -502,12 +493,12 @@ export function ExpandablePrompt({
       </div>
       {panel &&
         createPortal(
-          <div className="ts-xprompt" data-ts-local-esc role="group" aria-label={`${label} (expanded)`}>
+          <div className="ts-xprompt" role="group" aria-label={`${label} (expanded)`}>
             <div className="ts-xprompt-head">
               <span className="ts-field-label">{label}</span>
               <span className="ts-field-hint">
                 {words} {words === 1 ? 'word' : 'words'}
-                {onSubmit ? ' · Ctrl+Enter to continue' : ''} · Esc to collapse
+                {onSubmit ? ' · Ctrl+Enter to continue' : ''}
               </span>
               <button type="button" className="ts-chip ts-xprompt-collapse" aria-label="Collapse the prompt editor" onClick={() => toggle(false)}>
                 <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -850,7 +841,8 @@ export function TransformFlowView(props: FlowViewProps) {
   const canGoReview = !!intent && validateShape(intent, props.settings, paths) === null;
 
   return (
-    // Clicking outside does not close the flow (too easy to lose a prompt): the corner button or Esc does.
+    // Clicking outside does not close the flow (too easy to lose a prompt), and Esc minimizes the app: only the
+    // corner button closes it.
     <div className="ts-backdrop">
       <div
         className="ts-panel"
@@ -886,7 +878,7 @@ export function TransformFlowView(props: FlowViewProps) {
               );
             })}
           </ol>
-          <button type="button" className="ts-close" onClick={props.onClose} aria-label="Close" title="Close (Esc)">
+          <button type="button" className="ts-close" onClick={props.onClose} aria-label="Close" title="Close">
             <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
               <path d="M2 2l8 8M10 2l-8 8" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
             </svg>

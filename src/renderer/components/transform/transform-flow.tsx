@@ -2,7 +2,7 @@ import React, { useCallback, useContext, useEffect, useMemo, useRef, useState } 
 import { createPortal } from 'react-dom';
 import { useSelector } from '@xstate/react';
 import { GlobalStateContext } from '../../state';
-import { mediaServerBase, mediaUrl } from '../../platform';
+import { mediaServerBase, mediaUrl, send } from '../../platform';
 import {
   buildJobs,
   classify,
@@ -321,14 +321,15 @@ function FlowSession({ req }: { req: NonNullable<ReturnType<typeof useFlowReques
     }
   }, [intent, settings, paths, authToken, req.videoTime, libraryService]);
 
-  // Esc closes; Ctrl+Enter runs from the review phase.
+  // Esc minimizes the app, as it does everywhere else, and leaves the flow open with everything in it (closing
+  // is the corner button only, so no keypress loses a prompt). Caught here first, so nothing inside the flow
+  // (a saved prompt's name, the expanded prompt) takes it for its own. Ctrl+Enter runs from the review phase.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        // A field that uses Esc itself (naming a saved prompt) cancels that, not the whole flow.
-        if (e.target instanceof Element && e.target.closest('[data-ts-local-esc]')) return;
+        e.preventDefault();
         e.stopPropagation();
-        closeTransformFlow();
+        send('minimize', []);
       } else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && phase === 'review' && status !== 'submitting' && status !== 'done') {
         e.preventDefault();
         e.stopPropagation();
