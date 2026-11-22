@@ -1,4 +1,6 @@
 .CommandPalette {
+  /* Clickable over the window's drag strip (see .drag-handle). */
+  -webkit-app-region: no-drag;
   color: white;
   background-color: var(--controls-background-color);
   border-radius: 2px;

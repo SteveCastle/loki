@@ -22,8 +22,16 @@
   opacity: 0.97;
   min-width: 248px;
   max-width: 320px;
+  /* Never taller than the window (getMenuPosition keeps an 8px margin):
+     with Generate's sections open the palette outgrew it, pushing Run off
+     the bottom. Scrolls instead. */
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
   font-size: 13px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  /* The window's drag strip (.drag-handle, top 30px) swallows clicks on
+     anything over it, whatever the z-index, unless it opts out. */
+  -webkit-app-region: no-drag;
 }
 
 /* â”€â”€ Header â”€â”€ */
