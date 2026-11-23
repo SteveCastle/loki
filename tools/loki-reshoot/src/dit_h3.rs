@@ -1764,6 +1764,21 @@ impl Dit {
                 let v = run.x.to_f32_vec(dev)?;
                 run.snapshots.push((li, v));
             }
+            if std::env::var_os("LOKI_DEBUG_LAYERS").is_some() && !DEBUG_LAYERS_DONE.load(std::sync::atomic::Ordering::Relaxed) {
+                // diagnostics: mean |x| of the text rows and of each target video frame's rows, first forward only
+                dev.sync()?;
+                let v = run.x.to_f32_vec(dev)?;
+                let mag = |r0: usize, r1: usize| v[r0 * HIDDEN..r1 * HIDDEN].iter().map(|x| x.abs() as f64).sum::<f64>() / ((r1 - r0) * HIDDEN).max(1) as f64;
+                let per = (seq - run.v0) / run.lt.max(1);
+                let mut s = format!("layer {li}: text {:.2} | video", mag(0, run.text_len));
+                for f in 0..run.lt {
+                    s += &format!(" {:.2}", mag(run.v0 + f * per, run.v0 + (f + 1) * per));
+                }
+                crate::info!("{s}");
+                if li + 1 == self.blocks.len() {
+                    DEBUG_LAYERS_DONE.store(true, std::sync::atomic::Ordering::Relaxed);
+                }
+            }
         }
 
         // ---- final layer (video rows, then audio rows), chunked through `big` as f32 scratch
@@ -1779,7 +1794,11 @@ impl Dit {
                 let cls_i = if video { 0 } else { 1 };
                 let shift = run.fmod.ptr + ((cls_i * 2) * HIDDEN * 4) as u64;
                 let scale = run.fmod.ptr + ((cls_i * 2 + 1) * HIDDEN * 4) as u64;
-                let fc = 2 * c; // f32 rows that fit in `big`
+                // f32 rows that fit in `big` ([chunk, 2 * INNER] bf16: 4/3 of `chunk` rows). This was 2 * chunk, which
+                // wrote half a buffer past `big`'s end: harmless while the next allocations were spent scratch, but
+                // depending on the pool's layout (free VRAM -> chunk size, prompt length) it hit live run tensors and
+                // whole runs of latent frames came back undenoised (colored noise).
+                let fc = (run.big.bytes() / (HIDDEN * 4)).max(1);
                 let mut r = 0;
                 while r < rows {
                     let n = fc.min(rows - r);
@@ -1882,3 +1901,6 @@ mod tests {
         assert_eq!((hw, hb), (vec![1.0 + 2.5 + 75.0, 2.0 + 5.0 + 150.0], vec![0.5 + 0.25 + 1.5]));
     }
 }
+
+/// LOKI_DEBUG_LAYERS: the per-layer magnitudes are printed for the first forward only.
+static DEBUG_LAYERS_DONE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);

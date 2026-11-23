@@ -163,6 +163,13 @@ impl Device {
         let slice = unsafe { self.stream.alloc::<u8>(bytes) }
             .with_context(|| format!("allocating {} MB on device (free {} MB)", bytes >> 20, self.free_mem().unwrap_or(0) >> 20))?;
         let ptr = slice.leak();
+        if poison_alloc() {
+            // debugging: new memory holds 0xFF bytes (NaN as bf16/f16/f32), so a read before the first write shows
+            unsafe {
+                let r = sys::cuMemsetD8Async(ptr, 0xFF, bytes, self.stream.cu_stream());
+                if r != sys::CUresult::CUDA_SUCCESS { return Err(anyhow!("cuMemsetD8 failed: {:?}", r)); }
+            }
+        }
         Ok(DevBuf { ptr, len: bytes, stream: self.stream.clone() })
     }
     pub fn alloc_zeros(&self, bytes: usize) -> Result<DevBuf> {
@@ -283,4 +290,10 @@ impl Profiler {
             crate::info!("  {:<24} {:>8.3}s  {:>5.1}%  x{}", n, t, 100.0 * t / total, c);
         }
     }
+}
+
+/// LOKI_POISON_ALLOC=1: fill every new device allocation with 0xFF bytes (debugging reads of unwritten memory).
+fn poison_alloc() -> bool {
+    static P: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *P.get_or_init(|| std::env::var("LOKI_POISON_ALLOC").is_ok_and(|v| v == "1"))
 }

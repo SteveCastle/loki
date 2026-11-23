@@ -93,10 +93,16 @@ pub fn euler(dev: &Device, sigmas: &[f64], xv: &Tensor, xa: &Tensor, model: &mut
     for i in 0..steps {
         let (s, sn) = (sigmas[i], sigmas[i + 1]);
         model(xv, xa, s as f32, &vv, &va)?;
+        if std::env::var_os("LOKI_DEBUG_LATENT").is_some() {
+            debug_frames(dev, &format!("step {} v", i + 1), &vv)?;
+        }
         // x + (sn - s) * v  ==  x*(sn/s) + denoised*(1 - sn/s)
         axpby3(dev, xv, xv, &vv, None, 1.0, (sn - s) as f32, 0.0)?;
         axpby3(dev, xa, xa, &va, None, 1.0, (sn - s) as f32, 0.0)?;
         dev.sync()?;
+        if std::env::var_os("LOKI_DEBUG_LATENT").is_some() {
+            debug_frames(dev, &format!("step {} x", i + 1), xv)?;
+        }
         progress(i + 1, steps);
     }
     Ok(())
@@ -265,4 +271,32 @@ mod tests {
         assert!((s[1] - want).abs() < 1e-6, "{} vs {}", s[1], want);
         assert!(s.windows(2).all(|w| w[0] > w[1]));
     }
+}
+
+/// LOKI_DEBUG_LATENT: per latent frame std / max |x| / non-finite count of a [C, T, H, W] f32 tensor (diagnostics).
+fn debug_frames(dev: &Device, what: &str, t: &Tensor) -> Result<()> {
+    dev.sync()?;
+    let v = t.to_f32_vec(dev)?;
+    let (c, tt) = (t.shape[0], t.shape[1]);
+    let hw: usize = t.shape[2..].iter().product();
+    let mut s = String::new();
+    for f in 0..tt {
+        let (mut sum, mut sq, mut mx, mut bad) = (0f64, 0f64, 0f32, 0usize);
+        for ch in 0..c {
+            for &x in &v[(ch * tt + f) * hw..(ch * tt + f + 1) * hw] {
+                if !x.is_finite() {
+                    bad += 1;
+                    continue;
+                }
+                sum += x as f64;
+                sq += (x as f64) * (x as f64);
+                mx = mx.max(x.abs());
+            }
+        }
+        let n = (c * hw - bad).max(1) as f64;
+        let std = (sq / n - (sum / n).powi(2)).max(0.0).sqrt();
+        s += &format!(" {f}:{std:.2}/{mx:.0}{}", if bad > 0 { format!("!{bad}") } else { String::new() });
+    }
+    crate::info!("{what}:{s}");
+    Ok(())
 }
