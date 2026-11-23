@@ -183,3 +183,21 @@
 .Tags li .confirm-actions button.cancel:hover {
   background-color: #6a6a6a;
 }
+
+/* The metadata panel's corner actions (Copy, Generate) share one top-right
+   row; each keeps its own pill look from file-metadata.css. */
+.FileMetadata .section .tags-actions {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 3;
+  display: flex;
+  gap: 1px;
+  border-radius: 0 2px 0 4px;
+  overflow: hidden;
+}
+
+.FileMetadata .section .tags-actions .section-action {
+  position: static;
+  border-radius: 0;
+}

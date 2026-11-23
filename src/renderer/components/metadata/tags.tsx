@@ -13,6 +13,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import './tags.css';
 import TimestampTooltip from './timestamp-tooltip';
 import GenerateTags from './generate-tags';
+import { CheckIcon, CopyIcon } from './section-action-icons';
 import {
   usePeople,
   PersonEditModal,
@@ -100,6 +101,36 @@ const removeTimestamp = async ({
 interface Props {
   item: Item;
   enableTagGeneration?: boolean;
+}
+
+// Copies the item's tags as one comma-separated line (each tag once, as shown).
+function CopyTags({ labels }: { labels: string[] }) {
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return undefined;
+    const t = setTimeout(() => setCopied(false), 1500);
+    return () => clearTimeout(t);
+  }, [copied]);
+  return (
+    <div className="section-action">
+      <button
+        type="button"
+        className="section-action-pill"
+        title="Copy all tags, comma-separated"
+        onClick={async () => {
+          try {
+            await navigator.clipboard.writeText(Array.from(new Set(labels)).join(', '));
+            setCopied(true);
+          } catch (err) {
+            console.error('Failed to copy tags: ', err);
+          }
+        }}
+      >
+        {copied ? <CheckIcon /> : <CopyIcon />}
+        <span>{copied ? 'Copied' : 'Copy'}</span>
+      </button>
+    </div>
+  );
 }
 
 
@@ -406,7 +437,12 @@ function Tags({ item, enableTagGeneration = false }: Props) {
           })}
         {item.elo && <li>{item.elo.toFixed(0)}</li>}
       </ul>
-      {enableTagGeneration && canWrite && <GenerateTags path={item.path} />}
+      {enableTagGeneration && (
+        <div className="tags-actions">
+          {visibleTags.length > 0 && <CopyTags labels={visibleTags.map((t) => displayTagLabel(t.tag_label))} />}
+          {canWrite && <GenerateTags path={item.path} />}
+        </div>
+      )}
       {editingPerson && (
         <PersonEditModal
           person={editingPerson}
