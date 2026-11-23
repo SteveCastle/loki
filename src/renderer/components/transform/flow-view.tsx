@@ -831,8 +831,38 @@ function summarizeInputs(paths: string[]): string {
   return parts.join(' · ') || 'nothing selected';
 }
 
+// Scrollbars in the flow stay hidden until hovered (CSS) or scrolled: whatever scrolls gets .ts-scrolling until it
+// has been still for a moment. Scroll events don't bubble, so one capture listener on the root sees them all.
+function useScrollReveal(root: React.RefObject<HTMLElement>) {
+  useEffect(() => {
+    const el = root.current;
+    if (!el) return undefined;
+    const timers = new Map<Element, number>();
+    const onScroll = (e: Event) => {
+      const t = e.target;
+      if (!(t instanceof Element)) return;
+      t.classList.add('ts-scrolling');
+      window.clearTimeout(timers.get(t));
+      timers.set(t, window.setTimeout(() => {
+        t.classList.remove('ts-scrolling');
+        timers.delete(t);
+      }, 800));
+    };
+    el.addEventListener('scroll', onScroll, { capture: true, passive: true });
+    return () => {
+      el.removeEventListener('scroll', onScroll, { capture: true });
+      timers.forEach((id, t) => {
+        window.clearTimeout(id);
+        t.classList.remove('ts-scrolling');
+      });
+    };
+  }, [root]);
+}
+
 export function TransformFlowView(props: FlowViewProps) {
   const { paths, intent, phase, status } = props;
+  const rootRef = useRef<HTMLDivElement>(null);
+  useScrollReveal(rootRef);
   const inputs = useMemo(() => classify(paths), [paths]);
   const def = intent ? intentById(intent) : null;
 
@@ -843,7 +873,7 @@ export function TransformFlowView(props: FlowViewProps) {
   return (
     // Clicking outside does not close the flow (too easy to lose a prompt), and Esc minimizes the app: only the
     // corner button closes it.
-    <div className="ts-backdrop">
+    <div className="ts-backdrop" ref={rootRef}>
       <div
         className="ts-panel"
         role="dialog"

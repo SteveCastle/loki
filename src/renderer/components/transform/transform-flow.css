@@ -164,7 +164,6 @@
 .ts-body {
   overflow-y: auto;
   min-height: 0;
-  scrollbar-width: thin;
 }
 
 /* ---- phase 1: choose ---- */
@@ -1368,7 +1367,6 @@
   background: var(--ts-field);
   border-left: 2px solid var(--ts-accent);
   border-radius: 0 5px 5px 0;
-  scrollbar-width: thin;
 }
 
 .ts-prompt-text.raw {
@@ -1639,7 +1637,6 @@
   flex-shrink: 0;
   max-height: 32%;
   overflow-y: auto;
-  scrollbar-width: thin;
 }
 
 .ts-text.ts-xprompt-text {
@@ -1650,7 +1647,6 @@
   overflow-y: auto;
   font-size: 14px;
   line-height: 1.6;
-  scrollbar-width: thin;
 }
 
 /* Enhance: rewrite the prompt for its model (enhance-prompt.ts). */
@@ -1689,5 +1685,49 @@
   }
   50% {
     background-color: rgba(150, 180, 255, 0.18);
+  }
+}
+
+/* Scrollbars: a slim thumb, no track or arrow buttons, hidden until the scroll area is hovered or scrolled
+   (.ts-scrolling, flow-view.tsx useScrollReveal). Same look as the metadata tags and taxonomy lists. Chromium
+   ignores the ::-webkit-scrollbar rules wherever scrollbar-width/-color are set, so those are for Firefox only. */
+.ts-backdrop *::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.ts-backdrop *::-webkit-scrollbar-track,
+.ts-backdrop *::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.ts-backdrop *::-webkit-scrollbar-button {
+  display: none;
+}
+
+.ts-backdrop *::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 3px;
+}
+
+.ts-backdrop *:hover::-webkit-scrollbar-thumb,
+.ts-backdrop .ts-scrolling::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+.ts-backdrop *::-webkit-scrollbar-thumb:hover,
+.ts-backdrop *::-webkit-scrollbar-thumb:active {
+  background: rgba(255, 255, 255, 0.45);
+}
+
+@supports not selector(::-webkit-scrollbar) {
+  .ts-backdrop * {
+    scrollbar-width: thin;
+    scrollbar-color: transparent transparent;
+  }
+
+  .ts-backdrop *:hover,
+  .ts-backdrop .ts-scrolling {
+    scrollbar-color: rgba(255, 255, 255, 0.25) transparent;
   }
 }
