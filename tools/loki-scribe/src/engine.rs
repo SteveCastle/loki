@@ -18,6 +18,8 @@ use std::time::Instant;
 
 /// Prompts up to this many rows prefill through the GEMV path (8 rows at a time).
 const SMALL_PROMPT: usize = 40;
+/// A "[input] N tokens so far" line every this many generated tokens (callers turn it into progress).
+const PROGRESS_EVERY: usize = 32;
 
 #[derive(Clone, Debug)]
 pub struct Sampling {
@@ -392,6 +394,10 @@ impl Engine {
             a.next_pos += 1;
             let t = sample(&logits[r * v..(r + 1) * v], &a.job.params.sampling, &a.seen, &a.generated, &mut a.rng);
             a.push(t);
+            // generation progress for callers that show it (the final count is logged when the sequence finishes)
+            if a.generated.len() % PROGRESS_EVERY == 0 && !self.is_done(a) {
+                crate::info!("[{}] {} tokens so far", a.job.input.as_deref().or(a.job.id.as_deref()).unwrap_or("request"), a.generated.len());
+            }
         }
         let mut st = self.stats.borrow_mut();
         st.decode += t_step.elapsed().as_secs_f64();
