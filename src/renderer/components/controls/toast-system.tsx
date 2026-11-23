@@ -115,6 +115,7 @@ const JOB_TITLES: Record<string, string> = {
   'scene-heal-merge': 'Healing Scene Seam',
   'scene-track': 'Tracking Scene Mask',
   'scene-recolour': 'Recolouring Scene',
+  'enhance-prompt': 'Enhancing Prompt',
   save: 'Saving File',
 };
 

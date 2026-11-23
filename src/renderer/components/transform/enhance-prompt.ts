@@ -1,8 +1,10 @@
 // Prompt enhancement: the Enhance button next to a Transform prompt asks the server's text model (loki-scribe) to
 // rewrite the prompt the way the target model reads best (POST /api/transform/enhance-prompt, guides in
 // media-server/tasks/prompt_guides/). Only ever on request: a run never waits for it, and the result lands in the
-// prompt box where it can be edited or undone.
+// prompt box where it can be edited or undone. The rewrite is an enhance-prompt job in the server's queue, followed
+// on the /stream job events.
 import { mediaServerBase } from '../../platform';
+import { subscribeStream } from '../../stream-bus';
 import { effectiveDreamModel, type DreamCatalog } from '../dream/dream-models';
 import { mediaKind, type IntentId, type TransformSettings } from './intents';
 
@@ -89,11 +91,117 @@ export function enhanceBody(
   return body;
 }
 
-export async function requestEnhance(body: EnhanceRequestBody, authToken: string | undefined, signal: AbortSignal): Promise<EnhanceResult> {
+/** Where a queued rewrite is: waiting its turn in the job queue, or running. */
+export type EnhancePhase = 'queued' | 'running';
+
+interface EnhanceJobState {
+  state: 'pending' | 'in_progress' | 'completed' | 'error' | 'cancelled' | 'paused';
+  result?: EnhanceResult;
+  error?: string;
+}
+
+// The stream is the signal; this re-check only covers a dropped connection.
+const ENHANCE_RECHECK_MS = 15000;
+
+/**
+ * Queue the rewrite as an enhance-prompt job (so the text model takes its turn with the other model work) and follow
+ * it on the /stream job events until it finishes. `onPhase` hears queued / running and, while it runs, how far along it is
+ * (0-1, the job's progress: model load, then the writing); aborting `signal` cancels the job.
+ */
+export async function requestEnhance(
+  body: EnhanceRequestBody,
+  authToken: string | undefined,
+  signal: AbortSignal,
+  onPhase?: (phase: EnhancePhase, progress?: number) => void
+): Promise<EnhanceResult> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (authToken) headers.Authorization = `Bearer ${authToken}`;
-  const res = await fetch(`${mediaServerBase}/api/transform/enhance-prompt`, { method: 'POST', headers, body: JSON.stringify(body), signal });
+  const url = `${mediaServerBase}/api/transform/enhance-prompt`;
+  const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body), signal: anySignal(signal, AbortSignal.timeout(15000)) });
   const data = await res.json().catch(() => null);
   if (!res.ok) throw new Error((data && data.error) || `HTTP ${res.status}`);
-  return data as EnhanceResult;
+  const jobId: string = data.jobId;
+  onPhase?.('queued');
+
+  return new Promise<EnhanceResult>((resolve, reject) => {
+    let settled = false;
+    let checking = false;
+    const finish = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      unsubscribe();
+      window.clearInterval(recheck);
+      signal.removeEventListener('abort', onAbort);
+      fn();
+    };
+    let progress: number | undefined;
+    const phaseOf = (state: string) => {
+      if (state === 'in_progress') onPhase?.('running', progress);
+      else if (state === 'pending' || state === 'paused') onPhase?.('queued');
+    };
+    const progressOf = (done?: number, total?: number) => {
+      if (!total || done === undefined) return;
+      progress = Math.max(0, Math.min(1, done / total));
+      onPhase?.('running', progress);
+    };
+    // the job's own status: its phase while it waits or runs, else the rewrite or why there is none
+    const check = async () => {
+      if (settled || checking) return;
+      checking = true;
+      try {
+        const r = await fetch(`${url}?job=${encodeURIComponent(jobId)}`, { headers, signal: AbortSignal.timeout(10000) });
+        const st = (await r.json().catch(() => null)) as (EnhanceJobState & { error?: string }) | null;
+        if (!r.ok || !st) {
+          finish(() => reject(new Error((st && st.error) || `HTTP ${r.status}`)));
+          return;
+        }
+        if (st.state === 'completed' && st.result) finish(() => resolve(st.result as EnhanceResult));
+        else if (st.state === 'error') finish(() => reject(new Error(st.error || 'the enhance job failed')));
+        else if (st.state === 'cancelled') finish(() => reject(new Error('the enhance job was cancelled')));
+        else phaseOf(st.state);
+      } catch {
+        // a missed check: the next event or re-check tries again
+      } finally {
+        checking = false;
+      }
+    };
+    const unsubscribe = subscribeStream((type, event) => {
+      if (type !== 'create' && type !== 'update' && type !== 'delete' && type !== 'progress') return;
+      try {
+        if (type === 'progress') {
+          const p = JSON.parse(event.data) as { id?: string; done?: number; total?: number };
+          if (p.id === jobId) progressOf(p.done, p.total);
+          return;
+        }
+        const { job } = JSON.parse(event.data) as { job?: { id: string; state: string; progress_done?: number; progress_total?: number } };
+        if (!job || job.id !== jobId) return;
+        if (type === 'delete' || ['completed', 'error', 'cancelled'].includes(job.state)) check();
+        else {
+          if (job.state === 'in_progress') progressOf(job.progress_done, job.progress_total);
+          phaseOf(job.state);
+        }
+      } catch {
+        // not a job event
+      }
+    });
+    const onAbort = () => {
+      finish(() => reject(new DOMException('Aborted', 'AbortError')));
+      fetch(`${mediaServerBase}/job/${jobId}/cancel`, { method: 'POST', headers, signal: AbortSignal.timeout(10000) }).catch(() => undefined);
+    };
+    signal.addEventListener('abort', onAbort);
+    const recheck = window.setInterval(check, ENHANCE_RECHECK_MS);
+    if (signal.aborted) onAbort();
+    // it may have moved on before the subscription started
+    else check();
+  });
+}
+
+// Aborts when either signal does.
+function anySignal(a: AbortSignal, b: AbortSignal): AbortSignal {
+  const ctl = new AbortController();
+  const stop = () => ctl.abort();
+  if (a.aborted || b.aborted) stop();
+  a.addEventListener('abort', stop);
+  b.addEventListener('abort', stop);
+  return ctl.signal;
 }

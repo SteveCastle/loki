@@ -345,7 +345,7 @@ function FlowSession({ req }: { req: NonNullable<ReturnType<typeof useFlowReques
       paths={paths}
       reshootModels={reshootModels}
       dreamCatalog={dreamModels.catalog}
-      onEnhancePrompt={(body, signal) => requestEnhance(body, authToken || undefined, signal)}
+      onEnhancePrompt={(body, signal, onPhase) => requestEnhance(body, authToken || undefined, signal, onPhase)}
       onRefreshDreamModels={dreamModels.refresh}
       intent={intent}
       phase={phase}

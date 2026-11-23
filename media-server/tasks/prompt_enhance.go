@@ -18,8 +18,10 @@ import (
 //
 // Rewrites a rough Transform prompt into one written the way the target model
 // was trained to read, with loki-scribe. The user asks for it (a button in the
-// Transform flow): it never runs as part of a job, so generation stays as fast
-// as before and the prompt that runs is always one the user has seen.
+// Transform flow): it is never a step of a generation, so generation stays as
+// fast as before and the prompt that runs is always one the user has seen. The
+// rewrite itself runs as an enhance-prompt job (prompt_enhance_task.go), so the
+// text model takes its turn with the other model work.
 //
 // Each target model has a guide in prompt_guides/<model>.md, distilled from
 // its official prompting docs; the guide is the heart of the system prompt.
@@ -220,15 +222,29 @@ func trimQuotes(s string) string {
 	return s
 }
 
-// EnhancePrompt rewrites req.Prompt for req.Model.
-func EnhancePrompt(ctx context.Context, req EnhanceRequest) (EnhanceResult, error) {
-	out := EnhanceResult{Model: req.Model}
+// validateEnhance checks what can be checked before any model work.
+func validateEnhance(req EnhanceRequest) (string, error) {
 	if strings.TrimSpace(req.Prompt) == "" {
-		return out, fmt.Errorf("%w: write a prompt first", ErrEnhanceInput)
+		return "", fmt.Errorf("%w: write a prompt first", ErrEnhanceInput)
 	}
 	guide, ok := promptGuide(req.Model)
 	if !ok {
-		return out, fmt.Errorf("%w: no prompt guide for model %q", ErrEnhanceInput, req.Model)
+		return "", fmt.Errorf("%w: no prompt guide for model %q", ErrEnhanceInput, req.Model)
+	}
+	return guide, nil
+}
+
+// EnhancePrompt rewrites req.Prompt for req.Model, here and now: callers go
+// through the job queue (RunEnhanceJob); this is the job's body.
+func EnhancePrompt(ctx context.Context, req EnhanceRequest) (EnhanceResult, error) {
+	return enhancePrompt(ctx, req, nil)
+}
+
+func enhancePrompt(ctx context.Context, req EnhanceRequest, logf func(string)) (EnhanceResult, error) {
+	out := EnhanceResult{Model: req.Model}
+	guide, err := validateEnhance(req)
+	if err != nil {
+		return out, err
 	}
 	text := textRequest{
 		System:      enhanceSystemPrompt(req, guide),
@@ -262,7 +278,7 @@ func EnhancePrompt(ctx context.Context, req EnhanceRequest) (EnhanceResult, erro
 		// several pictures share the context: fewer vision tokens each
 		text.MaxImageTokens = max(384, min(1024, 4096/n))
 	}
-	answer, err := generateText(ctx, nil, text)
+	answer, err := generateText(ctx, logf, text)
 	if err != nil {
 		return out, err
 	}

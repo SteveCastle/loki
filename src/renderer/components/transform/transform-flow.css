@@ -1657,10 +1657,53 @@
   margin-right: 6px;
 }
 
+/* Running: the job's progress fills in behind the label (--ts-enhance-p, flow-view.tsx), with a light sheen sweeping
+   across so it reads as alive between progress events. Queued: no fill yet, a slower, dimmer sheen. */
 .ts-enhance.running {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
   color: #fff;
   border-color: rgba(150, 180, 255, 0.6);
-  animation: ts-enhance-pulse 1.4s ease-in-out infinite;
+}
+
+.ts-enhance.running::before,
+.ts-enhance.running::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+}
+
+.ts-enhance.running::before {
+  right: auto;
+  width: var(--ts-enhance-p, 0%);
+  background: linear-gradient(90deg, rgba(120, 150, 255, 0.22), rgba(150, 180, 255, 0.42));
+  box-shadow: 1px 0 0 rgba(190, 210, 255, 0.55);
+  transition: width 0.6s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.ts-enhance.running::after {
+  background: linear-gradient(100deg, transparent 30%, rgba(255, 255, 255, 0.16) 50%, transparent 70%);
+  background-size: 250% 100%;
+  animation: ts-enhance-sheen 1.6s linear infinite;
+}
+
+.ts-enhance.running.queued {
+  border-color: rgba(150, 180, 255, 0.35);
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.ts-enhance.running.queued::after {
+  opacity: 0.6;
+  animation-duration: 2.6s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ts-enhance.running::after {
+    animation: none;
+  }
 }
 
 .ts-enhance:disabled {
@@ -1678,13 +1721,12 @@
   margin-right: 0;
 }
 
-@keyframes ts-enhance-pulse {
-  0%,
-  100% {
-    background-color: var(--ts-field);
+@keyframes ts-enhance-sheen {
+  from {
+    background-position: 125% 0;
   }
-  50% {
-    background-color: rgba(150, 180, 255, 0.18);
+  to {
+    background-position: -125% 0;
   }
 }
 

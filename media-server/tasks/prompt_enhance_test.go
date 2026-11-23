@@ -73,3 +73,27 @@ func TestEnhanceImagesFromReferences(t *testing.T) {
 		t.Errorf("source + reference = %+v", imgs)
 	}
 }
+
+func TestEnhanceProgressFromEngineLines(t *testing.T) {
+	p := enhanceProgress{task: "video"}
+	steps := []struct {
+		line string
+		want int
+		ok   bool
+	}{
+		{"[text] loading qwen.gguf (17.0 GB) ...", 0, false},
+		{"[text]   layers 16/64", 7, true},
+		{"[text]   layers 64/64", 30, true},
+		{"[text] [request] prompt 2400 tokens (2 image(s)) -> generating", 35, true},
+		{"[text] [request] 32 tokens so far", 39, true},
+		{"[text] [request] 450 tokens so far", 72, true},
+		{"[text] [request] 4000 tokens so far", 94, true},
+		{"[text]   layers 64/64", 0, false}, // never backwards
+	}
+	for _, s := range steps {
+		got, ok := p.update(s.line)
+		if ok != s.ok || (ok && got != s.want) {
+			t.Errorf("%q -> %d %v; want %d %v", s.line, got, ok, s.want, s.ok)
+		}
+	}
+}

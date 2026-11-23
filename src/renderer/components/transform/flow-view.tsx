@@ -57,7 +57,7 @@ import { markUsed, savedTransformKey } from '../../saved-recent';
 import CameraRig from './camera-rig';
 import type { ReshootModelChoice } from './reshoot-models';
 import ModelPicker from '../dream/model-picker';
-import { enhanceBody, enhanceTarget, type EnhanceRequestBody, type EnhanceResult, type EnhanceTarget } from './enhance-prompt';
+import { enhanceBody, enhanceTarget, type EnhancePhase, type EnhanceRequestBody, type EnhanceResult, type EnhanceTarget } from './enhance-prompt';
 import { dreamPromptGuide, dreamRecipeOf, effectiveDreamModel, type DreamCatalog } from '../dream/dream-models';
 import './transform-flow.css';
 
@@ -656,11 +656,16 @@ export interface FlowViewProps {
   /** The engine-expanded prompt, fetched for the review step. */
   preview?: PromptPreviewState;
   /** Rewrite a prompt for its model with the server's text model (enhance-prompt.ts); absent = no Enhance button. */
-  onEnhancePrompt?: (body: EnhanceRequestBody, signal: AbortSignal) => Promise<EnhanceResult>;
+  /** Queues the rewrite as a job; `onPhase` hears when it is waiting in the queue and when it runs. */
+  onEnhancePrompt?: (body: EnhanceRequestBody, signal: AbortSignal, onPhase: (phase: EnhancePhase, progress?: number) => void) => Promise<EnhanceResult>;
 }
 
 interface EnhanceState {
   status: 'idle' | 'running' | 'error';
+  /** While running: waiting its turn in the job queue, or rewriting. */
+  phase?: EnhancePhase;
+  /** While rewriting: how far along (0-1), once the job reports it. */
+  progress?: number;
   error?: string;
   /** The prompt before the last enhancement, for Undo. */
   before?: string;
@@ -668,9 +673,6 @@ interface EnhanceState {
   after?: string;
   missing?: string[];
 }
-
-// The text model may need to load first (tens of seconds for a large one), so this is generous.
-const ENHANCE_TIMEOUT_MS = 5 * 60 * 1000;
 
 /** The Enhance button's run / cancel / undo, for one prompt box. */
 function usePromptEnhance(
@@ -692,15 +694,14 @@ function usePromptEnhance(
     ctlRef.current?.abort();
     const ctl = new AbortController();
     ctlRef.current = ctl;
-    let timedOut = false;
-    const giveUp = window.setTimeout(() => {
-      timedOut = true;
-      ctl.abort();
-    }, ENHANCE_TIMEOUT_MS);
+    // No time limit here: the job may wait its turn behind long GPU work (the button cancels it), and the server
+    // bounds the text model's own run.
     const before = body.prompt;
-    setState({ status: 'running' });
+    setState({ status: 'running', phase: 'queued' });
     try {
-      const res = await onEnhance(body, ctl.signal);
+      const res = await onEnhance(body, ctl.signal, (phase, progress) => {
+        if (!ctl.signal.aborted) setState((st) => (st.status === 'running' ? { ...st, phase, progress: progress ?? st.progress } : st));
+      });
       if (ctl.signal.aborted) return;
       // Typed over while it ran: the user's edit wins.
       if (promptRef.current !== before) {
@@ -710,10 +711,9 @@ function usePromptEnhance(
       setPrompt(res.prompt);
       setState({ status: 'idle', before, after: res.prompt, missing: res.missingTokens });
     } catch (e) {
-      if (ctl.signal.aborted && !timedOut) return;
-      setState({ status: 'error', error: timedOut ? 'The text model took too long.' : e instanceof Error ? e.message : String(e) });
+      if (ctl.signal.aborted) return;
+      setState({ status: 'error', error: e instanceof Error ? e.message : String(e) });
     } finally {
-      window.clearTimeout(giveUp);
       if (ctlRef.current === ctl) ctlRef.current = null;
     }
   };
@@ -752,8 +752,19 @@ function EnhanceButton({
 }) {
   if (enhance.state.status === 'running') {
     return (
-      <button type="button" className="ts-chip ts-enhance running" onClick={enhance.cancel} title="Stop enhancing and keep the prompt as it is">
-        <GlyphSparkle /> Enhancing… ✕
+      <button
+        type="button"
+        className={`ts-chip ts-enhance running ${enhance.state.phase === 'queued' ? 'queued' : ''}`}
+        onClick={enhance.cancel}
+        // the fill behind the label: the job's progress (model load, then the writing)
+        style={{ '--ts-enhance-p': `${Math.round((enhance.state.progress ?? 0) * 100)}%` } as React.CSSProperties}
+        title={
+          enhance.state.phase === 'queued'
+            ? 'Waiting its turn in the job queue behind other model work. Click to cancel and keep the prompt as it is'
+            : 'Stop enhancing and keep the prompt as it is'
+        }
+      >
+        <GlyphSparkle /> {enhance.state.phase === 'queued' ? 'Waiting…' : 'Enhancing…'} ✕
       </button>
     );
   }

@@ -98,6 +98,8 @@ func init() {
 	// under the metadata task's inference bucket, so it keeps that behavior.
 	RegisterHostResolver("describe", visionHost)
 	RegisterHostResolver(textCaptureOp, visionHost)
+	// The Transform flow's Enhance rewrite: one text-model run, queued like a describe.
+	RegisterHostResolver(enhancePromptCommand, visionHost)
 	RegisterHostResolver("transcribe", visionHost)
 	// A combined job may include LLM ops, so it conservatively takes the
 	// inference bucket (a hash-only combined run parking there is harmless).
@@ -170,6 +172,7 @@ func init() {
 	RegisterTask("ffmpeg-caption","FFmpeg Caption", ffmpegCaptionOptions, ffmpegCaptionTask)
 	RegisterTask("ffmpeg-thumbsheet", "FFmpeg Thumbnail Sheet", ffmpegThumbSheetOptions, ffmpegThumbSheetTask)
 
+	RegisterTask(enhancePromptCommand, "Enhance Prompt", nil, enhancePromptTask)
 	RegisterTask("save", "Save File", saveOptions, saveTask)
 }
 

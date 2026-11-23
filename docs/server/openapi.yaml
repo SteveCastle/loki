@@ -14323,34 +14323,91 @@ paths:
       tags:
         - Transform and Models
       operationId: listPromptGuideModels
-      summary: List the models the prompt enhancer has a writing guide for.
+      summary: List the prompt guides, or report an enhance job.
+      description: |
+        Without `job`: the models the prompt enhancer has a writing guide for
+        (the `model` values `POST` accepts). With `job`: the state of an
+        enhance job `POST` queued, and its rewrite once it has finished. Clients
+        follow the job on `/stream` (its `create` / `update` events) and read
+        the rewrite here when it reaches a final state. A finished rewrite stays
+        readable for ten minutes.
       x-access: admin
+      parameters:
+        - name: job
+          in: query
+          required: false
+          description: An enhance job id from `POST`.
+          schema:
+            type: string
       responses:
         '200':
-          description: The `model` values `POST` accepts.
+          description: The guide list, or (with `job`) the job's state.
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  models:
-                    type: array
-                    items:
-                      type: string
-              example:
-                models: [anima, flux2-klein, h3-image, h3-video, krea2, moss-image, qwen-image, qwen-image-edit, sdxl]
+                oneOf:
+                  - type: object
+                    properties:
+                      models:
+                        type: array
+                        items:
+                          type: string
+                  - type: object
+                    properties:
+                      state:
+                        type: string
+                        enum: [pending, in_progress, paused, completed, error, cancelled]
+                      result:
+                        type: object
+                        description: The rewrite, once `state` is `completed`.
+                        properties:
+                          prompt:
+                            type: string
+                          model:
+                            type: string
+                          missingTokens:
+                            type: array
+                            description: Reference tokens the input prompt used that the rewrite dropped.
+                            items:
+                              type: string
+                      error:
+                        type: string
+                        description: Why there is no rewrite, when `state` is `error`.
+                      inputError:
+                        type: boolean
+                        description: The request could not be used (for example an `image` that does not exist).
+              examples:
+                models:
+                  value:
+                    models: [anima, flux2-klein, h3-image, h3-video, krea2, moss-image, qwen-image, qwen-image-edit, sdxl]
+                job:
+                  value:
+                    state: completed
+                    result:
+                      prompt: Change <image1> into a rainy night scene, wet asphalt reflecting the street lights, keep the buildings and composition unchanged.
+                      model: qwen-image-edit
+        '404':
+          description: No enhance job with that id (it never existed, or the server restarted).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
     post:
       tags:
         - Transform and Models
       operationId: enhanceTransformPrompt
-      summary: Rewrite a prompt for its target model with loki-scribe.
+      summary: Queue a rewrite of a prompt for its target model (loki-scribe).
       description: |
-        Runs the configured text model (loki-scribe) once with a system prompt
-        built from the target model's prompt-writing guide (distilled from its
-        official documentation) and returns the rewritten prompt. Nothing is
-        queued, and no job ever calls this: the Transform flow's Enhance button
-        does, and puts the answer in the prompt box for the user to keep, edit
-        or undo.
+        Queues an `enhance-prompt` job and answers with its id at once. The
+        job runs the configured text model (loki-scribe) once with a system
+        prompt built from the target model's prompt-writing guide (distilled
+        from its official documentation). It takes the text-model and
+        local-compute buckets like a `describe` job, so it waits its turn
+        behind other model work instead of loading beside it. Follow it on
+        `/stream` and read the rewrite with `GET ?job=ID`; cancel it with
+        `POST /job/{id}/cancel`. No generation ever calls this: the Transform
+        flow's Enhance button does, and puts the answer in the prompt box for
+        the user to keep, edit or undo.
 
         The rewrite keeps the given reference tokens verbatim; `missingTokens`
         lists any the input prompt used that the rewrite dropped. The text model
@@ -14408,24 +14465,17 @@ paths:
               image: D:/photos/street.jpg
               imageToken: <image1>
       responses:
-        '200':
-          description: The rewritten prompt.
+        '202':
+          description: The rewrite is queued.
           content:
             application/json:
               schema:
                 type: object
                 properties:
-                  prompt:
+                  jobId:
                     type: string
-                  model:
-                    type: string
-                  missingTokens:
-                    type: array
-                    items:
-                      type: string
               example:
-                prompt: Change <image1> into a rainy night scene, wet asphalt reflecting the street lights, keep the buildings and composition unchanged.
-                model: qwen-image-edit
+                jobId: 0b6f6f0e-3f8a-4d55-9d5e-2d1c9a0f7e11
         '400':
           description: Body is not JSON (`bad json`). Plain text.
           content:
@@ -14439,13 +14489,13 @@ paths:
               schema:
                 type: string
         '422':
-          description: Empty prompt, a model with no guide, or an `image` that does not exist.
+          description: Empty prompt, or a model with no guide (nothing is queued).
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
         '500':
-          description: The text model failed or returned an empty answer.
+          description: The job could not be queued.
           content:
             application/json:
               schema:

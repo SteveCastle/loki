@@ -146,6 +146,9 @@ func ResolveResources(command string, arguments []string, input string) []string
 	switch command {
 	case "describe", "transcribe", "embed", "autotag", "faces", textCaptureOp:
 		ops = []string{command}
+	case enhancePromptCommand:
+		// a text-model run like a describe: same buckets
+		ops = []string{"describe"}
 	case "retouch", "reshoot", "4kify":
 		// Heavy local GPU diffusion run (~20 GB VRAM). Sent to worker pools
 		// it uses none of this machine (a hybrid run that lands on the local
