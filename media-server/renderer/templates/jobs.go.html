@@ -325,11 +325,10 @@
         box-shadow: 0 0 0 3px var(--accent-primary-dim);
       }
 
+      /* fixed, placed under its button when it opens (placeTypes): .jobs-table's overflow would clip it */
       .jobs-types-pop {
-        position: absolute;
-        top: calc(100% + 4px);
-        left: 0;
-        z-index: 20;
+        position: fixed;
+        z-index: 1000;
         min-width: 220px;
         max-height: 360px;
         overflow-y: auto;
@@ -1091,10 +1090,28 @@
           saveFilterToURL();
           filterJobs();
         };
+        const placeTypes = () => {
+          const r = typesBtn.getBoundingClientRect();
+          const below = window.innerHeight - r.bottom - 12;
+          typesPop.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - typesPop.offsetWidth - 8))}px`;
+          if (below < 200 && r.top > below) {
+            // too little room below: open upwards
+            typesPop.style.top = '';
+            typesPop.style.bottom = `${window.innerHeight - r.top + 4}px`;
+            typesPop.style.maxHeight = `${Math.min(360, r.top - 12)}px`;
+          } else {
+            typesPop.style.bottom = '';
+            typesPop.style.top = `${r.bottom + 4}px`;
+            typesPop.style.maxHeight = `${Math.min(360, below)}px`;
+          }
+        };
         const openTypes = (open) => {
           typesPop.hidden = !open;
           typesBtn.setAttribute('aria-expanded', String(open));
+          if (open) placeTypes();
         };
+        window.addEventListener('resize', () => typesPop.hidden || placeTypes());
+        window.addEventListener('scroll', () => typesPop.hidden || placeTypes(), true);
         typesBtn.addEventListener('click', () => openTypes(typesPop.hidden));
         typesPop.addEventListener('change', (e) => {
           const box = e.target;
