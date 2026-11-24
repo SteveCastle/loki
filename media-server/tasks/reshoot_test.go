@@ -70,9 +70,14 @@ func TestReshootParamsFromOptions(t *testing.T) {
 		"--refsize", "max", "--seed", "77", "--noaudio", "--novideoaudio=true", "--animate",
 	}}
 	p = reshootParamsFromOptions(ParseOptions(j, reshootOptions))
-	if p.Duration != 15.08 || p.Steps != 60 || p.Native || p.Shake != "subtle" || p.RefSize != "max" ||
+	// past 15 s it is a long video: kept, and one pass
+	if p.Duration != 30 || p.Passes != 1 || p.Steps != 60 || p.Native || p.Shake != "subtle" || p.RefSize != "max" ||
 		p.Seed != 77 || !p.NoAudio || !p.NoVideoAudio || !p.Animate {
 		t.Errorf("parsed = %+v", p)
+	}
+	p = reshootParamsFromOptions(map[string]any{"duration": 900.0})
+	if p.Duration != 300 {
+		t.Errorf("high clamp: duration %v", p.Duration)
 	}
 	p = reshootParamsFromOptions(map[string]any{"duration": 0.1, "steps": 1.0})
 	if p.Duration != 0.25 || p.Steps != 4 {
@@ -323,5 +328,30 @@ func TestReshootRealE2E(t *testing.T) {
 	got := q.GetJob(j.ID)
 	if got.ProgressDone != got.ProgressTotal {
 		t.Errorf("progress = %d/%d", got.ProgressDone, got.ProgressTotal)
+	}
+}
+
+func TestReshootLongVideo(t *testing.T) {
+	got := splitChunkPrompts("walks to the railing\r\n---\n\n  turns to the river\nand smiles\n-----\n\n---\n")
+	if len(got) != 2 || got[0] != "walks to the railing" || got[1] != "turns to the river\nand smiles" {
+		t.Errorf("splitChunkPrompts = %q", got)
+	}
+	// a plain run keeps two passes and gets no chunk flags, even with chunk prompts set
+	p := reshootParamsFromOptions(map[string]any{"duration": 10.0, "chunkprompts": "next"})
+	if isLongReshoot(p) || p.Passes != 2 || strings.Contains(strings.Join(buildReshootArgs(p, nil, nil, nil, "o.mp4", ""), " "), "chunk") {
+		t.Errorf("plain run = %+v", p)
+	}
+	// --chunk-seconds makes a video longer than one chunk a long one
+	p = reshootParamsFromOptions(map[string]any{"duration": 10.0, "chunkseconds": 5.5, "chunkprompts": "a\n---\nb"})
+	if !isLongReshoot(p) || p.Passes != 1 {
+		t.Fatalf("chunked run = %+v", p)
+	}
+	args := strings.Join(buildReshootArgs(p, nil, nil, nil, "o.mp4", ""), " ")
+	if !strings.Contains(args, "--passes 1 --chunk-seconds 5.5 --chunk-prompt=a --chunk-prompt=b") {
+		t.Errorf("args = %s", args)
+	}
+	p = reshootParamsFromOptions(map[string]any{"duration": 40.0})
+	if args := strings.Join(buildReshootArgs(p, nil, nil, nil, "o.mp4", ""), " "); !strings.Contains(args, "-d 40") || strings.Contains(args, "--chunk-seconds") {
+		t.Errorf("40 s args = %s", args)
 	}
 }

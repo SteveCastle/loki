@@ -103,7 +103,9 @@ var reshootOptions = []TaskOption{
 	{Name: "shake", Label: "Camera Shake", Type: "enum", Choices: []string{"none", "subtle", "handheld"}, Default: "subtle", Description: "With Living Photo: camera behaviour"},
 	{Name: "loop", Label: "Seamless Loop", Type: "bool", Default: false, Description: "With Living Photo: a frame-perfect loop: the clip ends on the photo again, every motion is a cycle and the camera drifts back, so the last frame flows into the first"},
 	{Name: "prompt", Label: "Prompt", Type: "string", Default: "", Description: "Full prompt (use <Picture 1>, <Video 1>, <Audio 1> tags); with Living Photo it adds direction"},
-	{Name: "duration", Label: "Duration (s)", Type: "number", Default: 5.0, Description: "Seconds (0.25-15.08; snapped up to the model's frame grid)"},
+	{Name: "duration", Label: "Duration (s)", Type: "number", Default: 5.0, Description: "Seconds (0.25-300; snapped up to the model's frame grid). Past 15 s the engine makes a long video of chained chunks (one pass)"},
+	{Name: "chunkseconds", Label: "Chunk Length (s)", Type: "number", Default: 0.0, Description: "Long videos: the longest chunk, 5.2-15 s; 0 = the engine's default (10). Set, it also makes any video longer than one chunk a long one"},
+	{Name: "chunkprompts", Label: "Chunk Prompts", Type: "string", Default: "", Description: "Long videos: the prompts of chunks 2, 3, ..., separated by lines of ---; the last one repeats (empty = the main prompt throughout)"},
 	{Name: "size", Label: "Size", Type: "string", Default: "", Description: "Output size WxH (multiples of 32); empty = native / megapixels"},
 	{Name: "native", Label: "Native Canvas", Type: "bool", Default: true, Description: "Snap to the model's native canvas for the first reference's aspect (ignored when Size is set)"},
 	{Name: "megapixels", Label: "Megapixels", Type: "number", Default: 0.4, Description: "Pixel budget when Native is off and no Size is given"},
@@ -138,7 +140,12 @@ type reshootParams struct {
 	Steps      int
 	// Passes is 2 (two-pass: low-res pass, latent upscale, refine) or 1; 0 =
 	// the engine predates --passes, so the flag is left out (one pass).
-	Passes       int
+	Passes int
+	// ChunkSeconds and ChunkPrompts shape a long video (past 15 s or past
+	// ChunkSeconds when set): the longest chunk (0 = the engine's default) and
+	// the prompts of chunks 2, 3, ...
+	ChunkSeconds float64
+	ChunkPrompts []string
 	Seed         int64
 	RefSize      string
 	NoAudio      bool
@@ -192,7 +199,11 @@ func reshootParamsFromOptions(opts map[string]any) reshootParams {
 	if d == 0 {
 		d = 5
 	}
-	p.Duration = clampFloat(d, 0.25, 15.08)
+	p.Duration = clampFloat(d, 0.25, reshootMaxDuration)
+	if cs := optFloat(opts, "chunkseconds"); cs > 0 {
+		p.ChunkSeconds = clampFloat(cs, 5.2, 15.08)
+	}
+	p.ChunkPrompts = splitChunkPrompts(optString(opts, "chunkprompts"))
 	if p.Megapixels <= 0 {
 		p.Megapixels = 0.4
 	}
@@ -202,7 +213,8 @@ func reshootParamsFromOptions(opts map[string]any) reshootParams {
 	}
 	p.Steps = clampInt(steps, 4, 60)
 	p.Passes = 2
-	if int(optFloat(opts, "passes")) == 1 {
+	if int(optFloat(opts, "passes")) == 1 || isLongReshoot(p) {
+		// long videos run one pass for now
 		p.Passes = 1
 	}
 	p.Seed = -1
@@ -210,6 +222,40 @@ func reshootParamsFromOptions(opts map[string]any) reshootParams {
 		p.Seed = int64(optFloat(opts, "seed"))
 	}
 	return p
+}
+
+// reshootMaxDuration is the longest video the engine makes (5 minutes); past
+// reshootMaxRunDuration it chains chunks.
+const (
+	reshootMaxDuration    = 300.0
+	reshootMaxRunDuration = 15.08
+)
+
+// splitChunkPrompts splits the chunkprompts option at lines of three or more
+// dashes, dropping empty prompts.
+func splitChunkPrompts(s string) []string {
+	var out []string
+	var cur []string
+	flush := func() {
+		if t := strings.TrimSpace(strings.Join(cur, "\n")); t != "" {
+			out = append(out, t)
+		}
+		cur = nil
+	}
+	for _, line := range strings.Split(strings.ReplaceAll(s, "\r\n", "\n"), "\n") {
+		if t := strings.TrimSpace(line); len(t) >= 3 && strings.Trim(t, "-") == "" {
+			flush()
+			continue
+		}
+		cur = append(cur, line)
+	}
+	flush()
+	return out
+}
+
+// isLongReshoot reports whether the engine makes p in chained chunks.
+func isLongReshoot(p reshootParams) bool {
+	return p.Duration > reshootMaxRunDuration || (p.ChunkSeconds > 0 && p.Duration > p.ChunkSeconds)
 }
 
 // classifyReshootInputs splits reference paths by kind (extension):
@@ -297,6 +343,14 @@ func buildReshootArgs(p reshootParams, images, videos, audios []string, output, 
 	args = append(args, "--steps", strconv.Itoa(p.Steps))
 	if p.Passes > 0 {
 		args = append(args, "--passes", strconv.Itoa(p.Passes))
+	}
+	if isLongReshoot(p) {
+		if p.ChunkSeconds > 0 {
+			args = append(args, "--chunk-seconds", formatFloatArg(p.ChunkSeconds))
+		}
+		for _, cp := range p.ChunkPrompts {
+			args = append(args, "--chunk-prompt="+cp)
+		}
 	}
 	if p.Seed >= 0 {
 		args = append(args, "--seed", strconv.FormatInt(p.Seed, 10))
@@ -389,6 +443,12 @@ func reshootTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 			return fail("this loki-reshoot is too old for seamless loops; update it (Dependencies page, or your own build on PATH) or turn Loop off", nil)
 		}
 		q.PushJobStdout(j.ID, tag+": seamless loop")
+	}
+	if isLongReshoot(p) {
+		if !aiToolHelpHas(ctx, bin, "--chunk-seconds") {
+			return fail("this loki-reshoot is too old for videos longer than 15 s; update it (Dependencies page, or your own build on PATH) or shorten the video", nil)
+		}
+		q.PushJobStdout(j.ID, fmt.Sprintf("%s: long video (%.1f s) in chained chunks, one pass", tag, p.Duration))
 	}
 	if p.Passes == 2 {
 		if aiToolHelpHas(ctx, bin, "--passes") {

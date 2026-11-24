@@ -9,6 +9,7 @@ pub mod worker;
 
 // H3 engine components (one workstream each)
 pub mod dit_h3;
+pub mod extend;
 pub mod fit;
 pub mod h3image;
 pub mod genmeta;

@@ -80,11 +80,28 @@ pub struct RefBlock {
     pub audio: Option<Tensor>,
 }
 
+/// A guide (ComfyUI fl2va keyframe / `MiniMaxH3AddGuide`): clean latents anchored at a pixel frame of the target, packed
+/// right after the text on the target's own grid and timeline (never denoised). The previous chunk's tail of a long
+/// video is one.
+pub struct Guide {
+    /// pixel frame of the target the guide starts at
+    pub frame: usize,
+    /// f32 [24, t, latent_h, latent_w] normalized VAE latent on the target canvas (t = 1 or 5k+2)
+    pub video: Option<Tensor>,
+    /// f32 [32, 2, rt] audio latent starting at the same frame
+    pub audio: Option<Tensor>,
+    /// where the audio starts relative to `frame`, in audio latent frames (0 in ComfyUI; a long video's carried
+    /// soundtrack sits up to a tick off its video frames)
+    pub audio_offset: f64,
+}
+
 pub struct DitInputs<'a> {
     /// raw Qwen states [L, 5120] (bf16 or f32)
     pub text: &'a Tensor,
     /// per text token: 0 = vision block, 1 = text
     pub text_tags: &'a [u8],
+    /// guides (packed before the references, in this order); empty for a plain run
+    pub guides: &'a [Guide],
     pub refs: &'a [RefBlock],
     pub latent_t: usize,
     pub latent_h: usize,
@@ -1210,8 +1227,29 @@ impl Dit {
         enum Emb {
             Video { r: usize, row: usize },
             Audio { r: usize, row: usize },
+            GuideVideo { g: usize, row: usize },
+            GuideAudio { g: usize, row: usize },
         }
         let mut embeds = Vec::new();
+        ensure!(inp.guides.is_empty() || !self.is_image(), "the image model takes no guides");
+        // guides: right after the text, on the target grid; anchors count from the target timeline origin
+        for (gi, g) in inp.guides.iter().enumerate() {
+            let cond_t = target_cursor + FRAME_RESCALE * g.frame as f64;
+            if let Some(v) = &g.video {
+                ensure!(v.shape.len() == 4 && v.shape[0] == 24 && v.shape[2] == lh && v.shape[3] == lw, "guide latent {:?} is not on the target grid [24, t, {lh}, {lw}]", v.shape);
+                embeds.push(Emb::GuideVideo { g: gi, row: pos.len() });
+                let n0 = pos.len();
+                video_grid(&mut pos, v.shape[1], &frame, cond_t);
+                modrow.extend(std::iter::repeat(CLS_REF_V * 3 + TAG_VIDEO).take(pos.len() - n0));
+            }
+            if let Some(a) = &g.audio {
+                ensure!(a.shape.len() == 3 && a.shape[0] == 32 && a.shape[1] == 2, "guide audio latent {:?} is not [32, 2, t]", a.shape);
+                let rt = a.shape[2];
+                embeds.push(Emb::GuideAudio { g: gi, row: pos.len() });
+                audio_grid(&mut pos, cond_t + g.audio_offset, rt, target_w.0, target_w.1);
+                modrow.extend(std::iter::repeat(CLS_REF_A * 3 + TAG_AUDIO).take(2 * rt));
+            }
+        }
         let mut c = l as f64;
         for (ri, r) in inp.refs.iter().enumerate() {
             match r.kind {
@@ -1266,7 +1304,7 @@ impl Dit {
             Some(_) if pos.len() >= vsa::MIN_TOKENS => {
                 let mut cuts: Vec<usize> = std::iter::once(0)
                     .chain(embeds.iter().map(|e| match *e {
-                        Emb::Video { row, .. } | Emb::Audio { row, .. } => row,
+                        Emb::Video { row, .. } | Emb::Audio { row, .. } | Emb::GuideVideo { row, .. } | Emb::GuideAudio { row, .. } => row,
                     }))
                     .chain([prefix, v0])
                     .collect();
@@ -1315,6 +1353,21 @@ impl Dit {
             crate::info!("  dit prepare: free after refiner {} MB", dev.free_mem()? >> 20);
         }
         let aug = inp.cond_noise_aug.unwrap_or(VISUAL_COND_TIMESTEP as f32);
+        // visual condition noise augmentation; every condition restarts the same RNG stream (as ComfyUI does)
+        let augmented = |lat: &Tensor| -> Result<Tensor> {
+            if aug >= 1.0 {
+                return Ok(lat.clone());
+            }
+            use rand::SeedableRng;
+            use rand_distr::Distribution;
+            let mut rng = rand::rngs::StdRng::seed_from_u64(inp.seed);
+            let mut v = lat.to_f32_vec(dev)?;
+            for x in v.iter_mut() {
+                let nz: f32 = rand_distr::StandardNormal.sample(&mut rng);
+                *x = aug * *x + (1.0 - aug) * nz;
+            }
+            Tensor::from_f32(dev, &v, &lat.shape)
+        };
         for e in &embeds {
             match *e {
                 Emb::Video { r, row } => {
@@ -1322,21 +1375,17 @@ impl Dit {
                     let lat = rb.video.as_ref().context("reference block without video latent")?;
                     let (vt, h, w) = (if rb.kind == RefKind::Image { 1 } else { rb.latent_t }, rb.latent_h, rb.latent_w);
                     ensure!(lat.numel() == 24 * vt * h * w, "ref video latent shape {:?} != [24,{vt},{h},{w}]", lat.shape);
-                    let src = if aug < 1.0 {
-                        // every condition restarts the same RNG stream (as ComfyUI does)
-                        use rand::SeedableRng;
-                        use rand_distr::Distribution;
-                        let mut rng = rand::rngs::StdRng::seed_from_u64(inp.seed);
-                        let mut v = lat.to_f32_vec(dev)?;
-                        for x in v.iter_mut() {
-                            let nz: f32 = rand_distr::StandardNormal.sample(&mut rng);
-                            *x = aug * *x + (1.0 - aug) * nz;
-                        }
-                        Tensor::from_f32(dev, &v, &lat.shape)?
-                    } else {
-                        lat.clone()
-                    };
-                    self.embed(&src, true, vt, h, w, vt * (h / 2) * (w / 2), 1.0, prefix_x.ptr + (row * HIDDEN * 2) as u64)?;
+                    self.embed(&augmented(lat)?, true, vt, h, w, vt * (h / 2) * (w / 2), 1.0, prefix_x.ptr + (row * HIDDEN * 2) as u64)?;
+                }
+                Emb::GuideVideo { g, row } => {
+                    let lat = inp.guides[g].video.as_ref().unwrap();
+                    let vt = lat.shape[1];
+                    self.embed(&augmented(lat)?, true, vt, lh, lw, vt * (lh / 2) * (lw / 2), 1.0, prefix_x.ptr + (row * HIDDEN * 2) as u64)?;
+                }
+                Emb::GuideAudio { g, row } => {
+                    let lat = inp.guides[g].audio.as_ref().unwrap();
+                    let rt = lat.shape[2];
+                    self.embed(lat, false, rt, 0, 0, 2 * rt, 1.0, prefix_x.ptr + (row * HIDDEN * 2) as u64)?;
                 }
                 Emb::Audio { r, row } => {
                     let rb = &inp.refs[r];

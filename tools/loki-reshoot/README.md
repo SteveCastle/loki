@@ -55,6 +55,7 @@ loki-reshoot --prompt TEXT [OPTIONS]
   -o, --out PATH|-                      output mp4, or - for the mp4 on stdout (default reshoot_<seed>.mp4)
   -d, --duration SECONDS                default 5 (snapped up to the model's 17k+5 frame grid @ 24 fps)
       --frames N                        exact frame count instead of --duration
+      --chunk-seconds S  --context-frames 5|22|39  --chunk-prompt TEXT...   long videos (past 15 s), see "Long videos"
       --size WxH | --aspect W:H --megapixels F    output size (default: first reference's aspect at 0.4 MP)
       --model h3|fast                   h3 = MiniMax H3 (default, best quality); fast = FastH3 Omni (8 steps + sparse attention)
       --dense-attention                 fast: full attention instead of VSA
@@ -93,13 +94,34 @@ camera drifts back to its start and the ambience stays even, so the last frame f
 
 | | |
 |---|---|
-| **length** | trained range ≈ 5.2–15 s = 124–362 frames @ 24 fps; shorter clips run (a note is printed), longer than 362 frames (15.08 s) is refused. Frame counts snap **up** to `17k+5` (5, 22, 39, …, 124, …, 362); audio is 40 latent frames/s. |
+| **length** | trained range ≈ 5.2–15 s = 124–362 frames @ 24 fps per run; shorter clips run (a note is printed); longer videos (up to 5 min) are chained runs, see "Long videos". Frame counts snap **up** to `17k+5` (5, 22, 39, …, 124, …, 362); audio is 40 latent frames/s. |
 | **size** | multiples of 32, up to ≈2K: ComfyUI's template table tops out at 1920×1088 (2.0 MP); the hard cap is 2048×1152. Default is 0.4 MP (e.g. 864×480); the node's own default is 1344×768 (0.98 MP). |
 | **references** | up to 9 images (scaled down only, aspect kept, to the generation's pixel area with `match`, or up to a 2048 px short edge with `max`), 3 videos (≥5 frames, resampled to 24 fps, canvas ≤ 768×1344 pixels, at most the output length), 3 audio clips (≤30 s here). Reference tokens ride along in every sampling step, so each one costs time. |
 | **output** | H.264 + AAC mp4, 24 fps, 32 kHz stereo audio generated jointly with the video. |
 
 Cost grows with tokens `latent_t × (H/32) × (W/32)`: doubling both sides is 4× tokens (16× attention); doubling the length is 2×.
 Length is much cheaper than resolution for the same added value.
+
+## Long videos
+
+Past one run's 15 s (or past `--chunk-seconds` when given) the video is made of chained chunks, the technique of the ComfyUI
+H3 Continuum / H3 Extender nodes on the core guide path (`MiniMaxH3AddGuide`):
+
+- the chunks are as few as `--chunk-seconds` (default 10, at most 15) allows, all about the same length;
+- chunk 1 is the plain run of its length with the seed (so it matches one);
+- every later chunk takes the clean latent of the last `--context-frames` (22 = ~0.9 s; 5 or 39) of video **and sound** made
+  so far as a guide on its first frames (never denoised, on the target's own timeline), re-generates those frames around it
+  and continues. The tail is cut straight from the latent (a whole number of VAE latent cycles, no decode/re-encode);
+- the kept latents form one valid latent of the whole video, decoded once: there is no seam in the pixels (the soundtrack is
+  decoded in overlapping, cross-faded windows);
+- `--chunk-prompt TEXT` (repeatable) is the prompt of chunk 2, 3, …; the last one repeats. Write each as a full prompt that keeps
+  the subject description and says what happens next. References apply to every chunk, which keeps identities from drifting.
+
+Long videos run one pass for now (`--passes 2` falls back with a note). Cost is about one run per chunk plus the context frames.
+
+```
+loki-reshoot -i her.jpg -d 30 -p "<Picture 1> ... walks to the railing" --chunk-prompt "<Picture 1> ... turns to the river"
+```
 
 ## Models
 

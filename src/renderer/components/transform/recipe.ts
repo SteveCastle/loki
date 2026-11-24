@@ -183,8 +183,11 @@ function fromReshoot(rec: Json, args: string[]): RebuiltTask | null {
   // An extra model (the record names the file it ran): not H3's or FastH3's own.
   if (typeof rec.dit === 'string' && rec.dit && !/minimax_h3_ref2va|fasth3_omniref/i.test(rec.dit)) s.reshootFile = rec.dit;
   if (rec.ref_image_size === 'max') s.refSize = 'max';
-  // Records from before two-pass generation carry no `passes`: they ran one pass.
-  s.reshootPasses = rec.passes === 2 ? 2 : 1;
+  // Records from before two-pass generation carry no `passes`: they ran one pass. A long video (`chunks`) always runs
+  // one, so its record says nothing about the choice: keep the default.
+  const long = Array.isArray(rec.chunks);
+  s.reshootPasses = rec.passes === 2 || long ? 2 : 1;
+  if (long && Array.isArray(rec.chunk_prompts)) s.chunkPrompts = rec.chunk_prompts.filter((p: unknown) => typeof p === 'string').join('\n---\n');
   s.noAudio = rec.audio === false;
   s.keepSoundtrack = !hasArg(args, '--no-video-audio');
   if (typeof rec.seed === 'number') s.seed = rec.seed;

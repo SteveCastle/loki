@@ -15,6 +15,7 @@ import {
   planFor,
   referenceTokens,
   remapTokens,
+  reshootChunks,
   reshootFrames,
   retouchPreset,
   settingsFor,
@@ -179,7 +180,34 @@ describe('buildJobs: reshoot', () => {
 
   it('clamps the duration', () => {
     const s = { ...settingsFor('alive'), describe: 'x', duration: 99 };
-    expect(buildJobs('alive', s, [IMG], fixed).jobs[0].fields.duration).toBe('15');
+    expect(buildJobs('alive', s, [IMG], fixed).jobs[0].fields.duration).toBe('60');
+  });
+
+  it('sends chunk prompts only for a long video', () => {
+    const s = { ...settingsFor('direct'), prompt: 'a tram', chunkPrompts: ' it turns the corner \n---\nit stops ' };
+    expect(buildJobs('direct', { ...s, duration: 15 }, [IMG], fixed).jobs[0].fields.chunkprompts).toBeUndefined();
+    expect(buildJobs('direct', { ...s, duration: 30 }, [IMG], fixed).jobs[0].fields.chunkprompts).toBe('it turns the corner \n---\nit stops');
+  });
+});
+
+describe('long videos', () => {
+  it('plans the chunks as loki-reshoot does', () => {
+    // a plain run is one chunk up to the model's ~15 s
+    expect(reshootChunks(reshootFrames(15))).toEqual([362]);
+    // values from the engine's extend::plan tests
+    expect(reshootChunks(736)).toEqual([209, 209, 192, 192]);
+    for (const seconds of [16, 20, 30, 45, 60]) {
+      const chunks = reshootChunks(reshootFrames(seconds));
+      expect(chunks[0] + chunks.slice(1).reduce((a, c) => a + c - 22, 0)).toBe(reshootFrames(seconds));
+      expect(Math.max(...chunks)).toBeLessThanOrEqual(243);
+    }
+  });
+
+  it('estimates a long video by its chunks', () => {
+    const s = { ...settingsFor('direct'), prompt: 'x' };
+    const at = (duration: number) => estimateSeconds(planFor('direct', { ...s, duration }, [IMG]));
+    expect(at(30)).toBeGreaterThan(at(15));
+    expect(at(60)).toBeGreaterThan(at(30) * 1.7);
   });
 });
 

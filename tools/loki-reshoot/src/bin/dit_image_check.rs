@@ -53,7 +53,7 @@ fn check(dir: &Path) -> Result<()> {
         let z = Tensor::from_f32(&dev, &read_f32(&dir.join(format!("ref{i}.bin")))?, &[24, 1, h, w])?;
         refs.push(RefBlock { kind: RefKind::Image, latent_t: 1, latent_h: h, latent_w: w, ref_audio_t: 0, video: Some(z), audio: None });
     }
-    let inp = DitInputs { text: &text, text_tags: &tags, refs: &refs, latent_t: 1, latent_h: lh, latent_w: lw, audio_t: 0, seed: 0, cond_noise_aug: Some(1.0) };
+    let inp = DitInputs { text: &text, text_tags: &tags, guides: &[], refs: &refs, latent_t: 1, latent_h: lh, latent_w: lw, audio_t: 0, seed: 0, cond_noise_aug: Some(1.0) };
     let mut run = dit.prepare(&inp)?;
     dev.sync()?;
     eprintln!("seq {} (ref {})", run.seq, meta["seq_len"]);
@@ -100,7 +100,7 @@ fn bench(w: usize, h: usize, nrefs: usize, n: usize) -> Result<()> {
     for _ in 0..nrefs {
         refs.push(RefBlock { kind: RefKind::Image, latent_t: 1, latent_h: lh, latent_w: lw, ref_audio_t: 0, video: Some(Tensor::from_f32(&dev, &randn(24 * lh * lw), &[24, 1, lh, lw])?), audio: None });
     }
-    let inp = DitInputs { text: &text, text_tags: &tags, refs: &refs, latent_t: 1, latent_h: lh, latent_w: lw, audio_t: 0, seed: 0, cond_noise_aug: None };
+    let inp = DitInputs { text: &text, text_tags: &tags, guides: &[], refs: &refs, latent_t: 1, latent_h: lh, latent_w: lw, audio_t: 0, seed: 0, cond_noise_aug: None };
     let t1 = std::time::Instant::now();
     let mut run = dit.prepare(&inp)?;
     run.sigmas = vec![1.0, 0.9677, 0.8877, 0.75, 0.5336, 0.2326, 0.0];

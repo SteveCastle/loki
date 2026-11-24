@@ -2,6 +2,7 @@
 
 Usage (cwd = ComfyUI root, embedded python):
     python <loki-reshoot>/ref/ref_dit.py <out_dir> [sigmas=0.7,0.2] [W=448] [H=256] [frames=22]
+    REF_GUIDES=1 adds fl2va keyframes / AddGuide guides (guide<i>_video.bin / guide<i>_audio.bin, meta "guides")
 
 Writes into out_dir:
     text.bin        f32 [L, 5120]   (bf16-representable values; fed to the model as bf16)
@@ -84,6 +85,14 @@ def main():
     ref_aud = torch.randn(1, 32, 2, 40, generator=g)
     refs.append({"kind": "audio", "ref_audio_t": 40, "audio_latent": ref_aud})
 
+    # REF_GUIDES=1: fl2va keyframes / AddGuide guides on the target grid (packed before the refs): a 5-frame clip with
+    # its soundtrack at frame 0 (a long video's chunk context) and a still at the last frame
+    keyframes = []
+    if os.environ.get("REF_GUIDES") == "1":
+        keyframes.append({"resolved_frame_index": 0, "latent": torch.randn(1, 24, 2, lh, lw, generator=g),
+                          "audio_latent": torch.randn(1, 32, 2, 8, generator=g)})
+        keyframes.append({"resolved_frame_index": frame_count - 1, "latent": torch.randn(1, 24, 1, lh, lw, generator=g)})
+
     model = comfy.sd.load_diffusion_model(MODEL)
     comfy.model_management.load_models_gpu([model])
     dev = model.load_device
@@ -94,12 +103,14 @@ def main():
     payload = {
         "text_token_tags": tags,
         "refs": refs,
-        "cond_video_latents": [r["latent"] for r in refs if "latent" in r],
-        "cond_audio_latents": [r["audio_latent"] for r in refs if r.get("audio_latent") is not None],
+        "cond_video_latents": [k["latent"] for k in keyframes if k.get("latent") is not None] + [r["latent"] for r in refs if "latent" in r],
+        "cond_audio_latents": [k["audio_latent"] for k in keyframes if k.get("audio_latent") is not None] + [r["audio_latent"] for r in refs if r.get("audio_latent") is not None],
         "visual_cond_noise_aug": 1.0,
         "seed": 0,
         "audio_scale": 12.0 / 3.0,
     }
+    if keyframes:
+        payload["keyframes"] = keyframes
     to = {"minimax_h3_sigma_shift_video": 12.0, "minimax_h3_sigma_shift_audio": 3.0}
     ctx = text[None].to(dev, dtype)
 
@@ -135,6 +146,17 @@ def main():
             m["latent_t"] = 1
         meta_refs.append(m)
 
+    meta_guides = []
+    for i, k in enumerate(keyframes):
+        m = {"frame": k["resolved_frame_index"]}
+        if k.get("latent") is not None:
+            dump(os.path.join(out_dir, f"guide{i}_video.bin"), k["latent"][0])
+            m["video_shape"] = list(k["latent"][0].shape)
+        if k.get("audio_latent") is not None:
+            dump(os.path.join(out_dir, f"guide{i}_audio.bin"), k["audio_latent"][0])
+            m["audio_shape"] = list(k["audio_latent"][0].shape)
+        meta_guides.append(m)
+
     seq_len = None
     for s in sigmas:
         snaps.clear()
@@ -167,7 +189,7 @@ def main():
     for h in hooks:
         h.remove()
     json.dump({"text_len": L, "latent_t": latent_t, "latent_h": lh, "latent_w": lw, "audio_t": audio_t,
-               "sigmas": sigmas, "refs": meta_refs, "seq_len": seq_len, "hidden": 5376,
+               "sigmas": sigmas, "refs": meta_refs, "guides": meta_guides, "seq_len": seq_len, "hidden": 5376,
                "snap_blocks": [0, 1, len(dm.blocks) // 2, len(dm.blocks) - 1]},
               open(os.path.join(out_dir, "meta.json"), "w"), indent=1)
     print("done", out_dir, "seq_len", seq_len)

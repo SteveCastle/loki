@@ -4,7 +4,7 @@
 //!   dit_check --bench <W> <H> <frames> [n]      synthetic run at W x H px, `frames` frames, n forwards
 use anyhow::{Context, Result};
 use loki_reshoot::cuda::Device;
-use loki_reshoot::dit_h3::{Dit, DitInputs, RefBlock, RefKind, HIDDEN, LAYERS};
+use loki_reshoot::dit_h3::{Dit, DitInputs, Guide, RefBlock, RefKind, HIDDEN, LAYERS};
 use loki_reshoot::tensor::{DType, Tensor};
 use std::path::{Path, PathBuf};
 
@@ -75,7 +75,20 @@ fn check(dir: &Path) -> Result<()> {
         };
         refs.push(RefBlock { kind, latent_t: u("latent_t"), latent_h: u("latent_h"), latent_w: u("latent_w"), ref_audio_t: u("ref_audio_t"), video, audio });
     }
-    let inp = DitInputs { text: &text, text_tags: &tags, refs: &refs, latent_t: lt, latent_h: lh, latent_w: lw, audio_t: ta, seed: 0, cond_noise_aug: Some(1.0) };
+    let mut guides = Vec::new();
+    for (i, g) in meta["guides"].as_array().map(|a| a.as_slice()).unwrap_or(&[]).iter().enumerate() {
+        let load = |key: &str, file: String| -> Result<Option<Tensor>> {
+            match g.get(key) {
+                Some(s) => {
+                    let shape: Vec<usize> = s.as_array().unwrap().iter().map(|v| v.as_u64().unwrap() as usize).collect();
+                    Ok(Some(Tensor::from_f32(&dev, &read_f32(&dir.join(file))?, &shape)?))
+                }
+                None => Ok(None),
+            }
+        };
+        guides.push(Guide { frame: g["frame"].as_u64().unwrap() as usize, video: load("video_shape", format!("guide{i}_video.bin"))?, audio: load("audio_shape", format!("guide{i}_audio.bin"))?, audio_offset: 0.0 });
+    }
+    let inp = DitInputs { text: &text, text_tags: &tags, guides: &guides, refs: &refs, latent_t: lt, latent_h: lh, latent_w: lw, audio_t: ta, seed: 0, cond_noise_aug: Some(1.0) };
     let t1 = std::time::Instant::now();
     let mut run = dit.prepare(&inp)?;
     dev.sync()?;
@@ -146,7 +159,7 @@ fn bench(w: usize, h: usize, frames: usize, n: usize) -> Result<()> {
     let text = Tensor::from_f32(&dev, &randn(l * 5120), &[l, 5120])?;
     let tags: Vec<u8> = (0..l).map(|i| if (20..120).contains(&i) { 0 } else { 1 }).collect();
     let refs = vec![RefBlock { kind: RefKind::Image, latent_t: 1, latent_h: lh, latent_w: lw, ref_audio_t: 0, video: Some(Tensor::from_f32(&dev, &randn(24 * lh * lw), &[24, 1, lh, lw])?), audio: None }];
-    let inp = DitInputs { text: &text, text_tags: &tags, refs: &refs, latent_t: lt, latent_h: lh, latent_w: lw, audio_t: ta, seed: 0, cond_noise_aug: None };
+    let inp = DitInputs { text: &text, text_tags: &tags, guides: &[], refs: &refs, latent_t: lt, latent_h: lh, latent_w: lw, audio_t: ta, seed: 0, cond_noise_aug: None };
     let t1 = std::time::Instant::now();
     let mut run = dit.prepare(&inp)?;
     dev.sync()?;

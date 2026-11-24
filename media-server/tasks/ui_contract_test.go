@@ -217,8 +217,19 @@ func TestUIContractReshoot(t *testing.T) {
 	})
 
 	t.Run("the UI's maximum duration is accepted unchanged", func(t *testing.T) {
-		if p := parse(map[string]string{"duration": "15", "animate": "1"}); p.Duration != 15 {
-			t.Errorf("duration = %v; want 15", p.Duration)
+		if p := parse(map[string]string{"duration": "60", "animate": "1"}); p.Duration != 60 {
+			t.Errorf("duration = %v; want 60", p.Duration)
+		}
+	})
+
+	t.Run("a long video: one pass, chunk prompts split at --- lines", func(t *testing.T) {
+		p := parse(map[string]string{"prompt": "a tram", "duration": "30", "passes": "2", "chunkprompts": "it turns the corner \n---\nit stops"})
+		args := buildReshootArgs(p, nil, nil, nil, "o.mp4", "")
+		if v, _ := argValue(args, "--passes"); v != "1" {
+			t.Errorf("--passes %q, want 1", v)
+		}
+		if !hasArg(args, "--chunk-prompt=it turns the corner") || !hasArg(args, "--chunk-prompt=it stops") {
+			t.Errorf("args = %q", args)
 		}
 	})
 }

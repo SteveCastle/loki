@@ -9,7 +9,8 @@
 //!
 //! Phases keep GPU memory bounded on a 24 GB card: text encoder (evicted) -> VAE encode (evicted) -> DiT (evicted) -> VAE decode.
 use crate::cuda::Device;
-use crate::dit_h3::{Dit, DitInputs, RefBlock, RefKind};
+use crate::dit_h3::{Dit, DitInputs, Guide, RefBlock, RefKind};
+use crate::extend::{self, Extend};
 use crate::fit::{fit_to_canvas, Fit};
 use crate::image::Rgb8;
 use crate::media::{self, Ffmpeg, VideoWriter, AUDIO_SR, FPS};
@@ -97,6 +98,8 @@ pub struct Request {
     pub sampler: Option<SamplerKind>,
     pub scheduler: sampler::Scheduler,
     pub two_pass: Option<TwoPass>,
+    /// a long video of chained chunks (see `extend`); None = one run (up to ~15 s)
+    pub extend: Option<Extend>,
     pub crf: u32,
     pub out: PathBuf,
 }
@@ -162,6 +165,18 @@ pub fn ref_image_dims(w: usize, h: usize, gen_w: usize, gen_h: usize, mode: RefI
         RefImageSize::Max => (REF_IMAGE_SHORT_EDGE / w.min(h) as f64).min(1.0),
     };
     (round32(w as f64 * scale), round32(h as f64 * scale))
+}
+
+/// Frame counts of the request's chunks: [all frames] for a plain run, else the long video's chunks (`extend::plan`).
+pub fn chunk_plan(req: &Request) -> Result<Vec<usize>> {
+    let (fc, _, _) = temporal_shape(req.frames);
+    match &req.extend {
+        None => Ok(vec![fc]),
+        Some(e) => {
+            ensure!(req.two_pass.is_none(), "long videos run one pass for now (--passes 1)");
+            extend::plan(fc, e.chunk_frames, e.context_frames)
+        }
+    }
 }
 
 /// Validate the requested output geometry/length against the model's capabilities.
@@ -236,7 +251,10 @@ pub fn run(dev: Arc<Device>, req: &Request, paths: &Paths, ff: &Ffmpeg, record: 
     ensure!(req.ref_videos.len() <= MAX_REF_VIDEOS, "at most {MAX_REF_VIDEOS} reference videos");
     ensure!(req.ref_audios.len() <= MAX_REF_AUDIOS, "at most {MAX_REF_AUDIOS} reference audio clips");
     let (frame_count, latent_t, audio_t) = temporal_shape(req.frames);
-    check_limits(req.width, req.height, frame_count)?;
+    let chunks = chunk_plan(req)?;
+    // the longest single run (= the whole video unless it is a long one)
+    let run_frames = *chunks.iter().max().unwrap();
+    check_limits(req.width, req.height, run_frames)?;
     let (lh, lw) = (req.height / 16, req.width / 16);
     // the canvas the references are sized for and pass 1 samples on (the workflow's MiniMaxH3ReferenceToVideo runs at
     // the first-pass size)
@@ -253,6 +271,10 @@ pub fn run(dev: Arc<Device>, req: &Request, paths: &Paths, ff: &Ffmpeg, record: 
             "output: {}x{} @ {} fps, {} frames ({:.2} s), latent {}x{}x{} (+{} audio frames), {} steps, seed {}",
             req.width, req.height, FPS, frame_count, frame_count as f64 / FPS as f64, latent_t, lh, lw, audio_t, req.steps, req.seed
         );
+    }
+    if let Some(e) = &req.extend {
+        let secs: Vec<String> = chunks.iter().map(|&c| format!("{:.1}", c as f64 / FPS as f64)).collect();
+        crate::info!("long video: {} chunks of {} s, each continuing the last {} frames of the one before", chunks.len(), secs.join(" / "), e.context_frames);
     }
 
     // ---- 1. load / resize references (CPU) -----------------------------------------------------------------
@@ -277,7 +299,7 @@ pub fn run(dev: Arc<Device>, req: &Request, paths: &Paths, ff: &Ffmpeg, record: 
             cw = round32(info.width as f64);
             ch = round32(info.height as f64);
         }
-        let (mut rgb, mut n) = ff.decode_video(&v.path, v.start, v.dur, cw, ch, frame_count)?;
+        let (mut rgb, mut n) = ff.decode_video(&v.path, v.start, v.dur, cw, ch, run_frames)?;
         ensure!(n >= 5, "reference video {} has only {n} frames (need at least 5, ~0.2 s)", v.path.display());
         while n % 17 != 5 {
             n -= 1;
@@ -325,12 +347,18 @@ pub fn run(dev: Arc<Device>, req: &Request, paths: &Paths, ff: &Ffmpeg, record: 
         items.push(RefItem::Audio);
     }
     let t0 = std::time::Instant::now();
-    let cond = {
+    // a long video's chunk prompts are encoded here too, while the text encoder is loaded
+    let prompts: Vec<&str> = std::iter::once(req.prompt.as_str()).chain(req.extend.iter().flat_map(|e| e.prompts.iter().map(|p| p.as_str()))).collect();
+    let conds = {
         let te = load_text_encoder(&dev, &paths.text_encoder)?;
-        let c = te.encode(&req.prompt, &items).context("text encoding")?;
-        dev.sync()?;
-        crate::info!("text encoder: {} tokens in {:.1}s", c.tags.len(), t0.elapsed().as_secs_f64());
-        c
+        let mut cs = Vec::new();
+        for p in &prompts {
+            let c = te.encode(p, &items).context("text encoding")?;
+            dev.sync()?;
+            cs.push(c);
+        }
+        crate::info!("text encoder: {} tokens in {:.1}s", cs.iter().map(|c| c.tags.len().to_string()).collect::<Vec<_>>().join(" + "), t0.elapsed().as_secs_f64());
+        cs
     }; // text encoder dropped here
     dev.sync()?;
 
@@ -369,7 +397,7 @@ pub fn run(dev: Arc<Device>, req: &Request, paths: &Paths, ff: &Ffmpeg, record: 
     crate::info!("reference latents: {} block(s) in {:.1}s", refs.len(), t0.elapsed().as_secs_f64());
 
     // ---- 4. DiT sampling ----------------------------------------------------------------------------------------
-    let (xv, xa) = {
+    let (xv, xa, latent_t, audio_t) = {
         let t0 = std::time::Instant::now();
         // VSA from the first step by default (as FastH3 is trained); LOKI_VSA_SIGMA=s keeps steps above sigma s dense
         let dit = load_dit(&dev, &paths.dit, req.sparse)?;
@@ -378,21 +406,32 @@ pub fn run(dev: Arc<Device>, req: &Request, paths: &Paths, ff: &Ffmpeg, record: 
         let distilled = req.distilled || dit.pdd_heads() > 1;
         let first_sampler = req.sampler.unwrap_or(if distilled { SamplerKind::Euler } else { SamplerKind::ResMultistep });
         let refine_steps = req.two_pass.as_ref().map_or(0, |tp| tp.refine_steps);
-        let total_steps = req.steps + refine_steps;
+        let total_steps = req.steps * chunks.len() + refine_steps;
         let show_bar = std::io::IsTerminal::is_terminal(&std::io::stderr()) && !crate::log::quiet();
         let bar = if show_bar { indicatif::ProgressBar::new(total_steps as u64) } else { indicatif::ProgressBar::hidden() };
         bar.set_style(indicatif::ProgressStyle::with_template("  sampling {bar:40} {pos}/{len} steps  {elapsed_precise} eta {eta_precise}").unwrap());
-        // one sampling pass over `sigmas` at latent size (h, w); progress counts on from `done`
-        let sample_pass = |h: usize, w: usize, xv: &Tensor, xa: &Tensor, sigmas: &[f64], kind: SamplerKind, done: usize| -> Result<()> {
+        // one sampling pass over `sigmas` of the target `t` x `h` x `w` (+ `at` audio frames) in xv / xa, conditioned on
+        // `cond` and `guides`; progress counts on from `done`
+        struct Target<'a> {
+            cond: &'a crate::te_h3::Conditioning,
+            guides: &'a [Guide],
+            t: usize,
+            h: usize,
+            w: usize,
+            at: usize,
+            seed: u64,
+        }
+        let sample_pass = |tg: &Target, xv: &Tensor, xa: &Tensor, sigmas: &[f64], kind: SamplerKind, done: usize| -> Result<()> {
             let inp = DitInputs {
-                text: &cond.context,
-                text_tags: &cond.tags,
+                text: &tg.cond.context,
+                text_tags: &tg.cond.tags,
+                guides: tg.guides,
                 refs: &refs,
-                latent_t,
-                latent_h: h,
-                latent_w: w,
-                audio_t,
-                seed: req.seed,
+                latent_t: tg.t,
+                latent_h: tg.h,
+                latent_w: tg.w,
+                audio_t: tg.at,
+                seed: tg.seed,
                 cond_noise_aug: None,
             };
             let mut run = dit.prepare(&inp).context("preparing DiT run")?;
@@ -411,16 +450,25 @@ pub fn run(dev: Arc<Device>, req: &Request, paths: &Paths, ff: &Ffmpeg, record: 
             match kind {
                 SamplerKind::Euler => sampler::euler(&dev, sigmas, xv, xa, &mut model, &progress),
                 SamplerKind::ResMultistep => sampler::res_multistep(&dev, sigmas, xv, xa, &mut model, &progress),
-                SamplerKind::ErSde => sampler::er_sde(&dev, sigmas, xv, xa, req.seed ^ (done as u64), &mut model, &progress),
+                SamplerKind::ErSde => sampler::er_sde(&dev, sigmas, xv, xa, tg.seed ^ (done as u64), &mut model, &progress),
             }
         };
         let (lh1, lw1) = (gen_h / 16, gen_w / 16);
-        let xv = sampler::randn(&dev, &[24, latent_t, lh1, lw1], req.seed)?;
-        let xa = sampler::randn(&dev, &[32, 2, audio_t], req.seed ^ 0x9E37_79B9_7F4A_7C15)?;
         let sigmas = sampler::schedule(req.scheduler, req.steps, 1.0, sampler::SHIFT_VIDEO);
-        sample_pass(lh1, lw1, &xv, &xa, &sigmas, first_sampler, 0)?;
-        let out = match &req.two_pass {
-            None => (xv, xa),
+        let out = if let Some(ext) = &req.extend {
+            let (xv, xa) = sample_chunks(&dev, ext, &chunks, (lh1, lw1), req.seed, &mut |tg_guides, t, at, k, xv, xa| {
+                let tg = Target { cond: &conds[ext.prompt_index(k)], guides: tg_guides, t, h: lh1, w: lw1, at, seed: chunk_seed(req.seed, k) };
+                sample_pass(&tg, xv, xa, &sigmas, first_sampler, k * req.steps)
+            })?;
+            let (t, at) = (xv.shape[1], xa.shape[2]);
+            (xv, xa, t, at)
+        } else {
+            let xv = sampler::randn(&dev, &[24, latent_t, lh1, lw1], req.seed)?;
+            let xa = sampler::randn(&dev, &[32, 2, audio_t], req.seed ^ 0x9E37_79B9_7F4A_7C15)?;
+            let tg = Target { cond: &conds[0], guides: &[], t: latent_t, h: lh1, w: lw1, at: audio_t, seed: req.seed };
+            sample_pass(&tg, &xv, &xa, &sigmas, first_sampler, 0)?;
+            match &req.two_pass {
+            None => (xv, xa, latent_t, audio_t),
             Some(tp) => {
                 crate::info!("pass 1: {} steps at {gen_w}x{gen_h} in {:.1}s", req.steps, t0.elapsed().as_secs_f64());
                 let t1 = std::time::Instant::now();
@@ -449,10 +497,12 @@ pub fn run(dev: Arc<Device>, req: &Request, paths: &Paths, ff: &Ffmpeg, record: 
                     dev.sync()?;
                     drop((nv, na));
                     let t2 = std::time::Instant::now();
-                    sample_pass(lh, lw, &xv_up, &xa2, &sig2, tp.refine_sampler, req.steps)?;
+                    let tg = Target { cond: &conds[0], guides: &[], t: latent_t, h: lh, w: lw, at: audio_t, seed: req.seed };
+                    sample_pass(&tg, &xv_up, &xa2, &sig2, tp.refine_sampler, req.steps)?;
                     crate::info!("pass 2: {} refine steps at {}x{} (from sigma {:.3}) in {:.1}s", tp.refine_steps, req.width, req.height, sig2[0], t2.elapsed().as_secs_f64());
                 }
-                (xv_up, xa)
+                (xv_up, xa, latent_t, audio_t)
+            }
             }
         };
         bar.finish_and_clear();
@@ -462,7 +512,7 @@ pub fn run(dev: Arc<Device>, req: &Request, paths: &Paths, ff: &Ffmpeg, record: 
     }; // DiT dropped
     dev.sync()?;
     drop(refs);
-    drop(cond);
+    drop(conds);
 
     // ---- 5. decode + mux ---------------------------------------------------------------------------------------------
     let t0 = std::time::Instant::now();
@@ -490,7 +540,7 @@ pub fn run(dev: Arc<Device>, req: &Request, paths: &Paths, ff: &Ffmpeg, record: 
             ],
         )?;
         let avae = load_audio_vae(&dev, &paths.audio_vae)?;
-        let wav = avae.decode(&za, audio_t).context("decoding audio")?;
+        let wav = decode_audio(&dev, &avae, &za, audio_t).context("decoding audio")?;
         let p = if req.out == std::path::Path::new("-") {
             std::env::temp_dir().join(format!("loki-reshoot-{}.wav", std::process::id()))
         } else {
@@ -515,6 +565,131 @@ pub fn run(dev: Arc<Device>, req: &Request, paths: &Paths, ff: &Ffmpeg, record: 
     crate::info!("decoded + encoded in {:.1}s", t0.elapsed().as_secs_f64());
     crate::info!("wrote {} (total {:.1}s)", req.out.display(), t_all.elapsed().as_secs_f64());
     Ok(())
+}
+
+/// Audio latent frames decoded in one call: every plain run (<= ~603); a long video's soundtrack goes in overlapping
+/// windows (the decoder's memory grows with the length), cross-faded in the middle of each overlap.
+const AUDIO_DECODE_WINDOW: usize = 640;
+const AUDIO_DECODE_OVERLAP: usize = 48;
+const AUDIO_DECODE_FADE: usize = 16;
+
+/// Planar stereo waveform [2, t * 800] of the audio latent `za` [32, 2, t].
+fn decode_audio(dev: &Arc<Device>, avae: &AudioVae, za: &Tensor, t: usize) -> Result<Vec<f32>> {
+    if t <= AUDIO_DECODE_WINDOW {
+        return avae.decode(za, t);
+    }
+    const SPF: usize = 800; // samples per audio latent frame
+    let z = za.to_f32_vec(dev)?;
+    let n = t * SPF;
+    let mut out = vec![0f32; 2 * n];
+    let mut start = 0;
+    loop {
+        let end = (start + AUDIO_DECODE_WINDOW).min(t);
+        let w = end - start;
+        let mut sub = Vec::with_capacity(64 * w);
+        for s in 0..64 {
+            sub.extend_from_slice(&z[s * t + start..s * t + end]);
+        }
+        dev.sync()?;
+        let wav = avae.decode(&Tensor::from_f32(dev, &sub, &[32, 2, w])?, w)?;
+        // the previous window's samples up to the fade, then a linear cross-fade, then this window's
+        let c0 = if start == 0 { 0 } else { (start + (AUDIO_DECODE_OVERLAP - AUDIO_DECODE_FADE) / 2) * SPF };
+        let c1 = if start == 0 { 0 } else { c0 + AUDIO_DECODE_FADE * SPF };
+        for ch in 0..2 {
+            for g in c0..end * SPF {
+                let v = wav[ch * w * SPF + g - start * SPF];
+                let o = &mut out[ch * n + g];
+                *o = if g < c1 {
+                    let a = (g - c0) as f32 / (c1 - c0) as f32;
+                    *o * (1.0 - a) + v * a
+                } else {
+                    v
+                };
+            }
+        }
+        if end == t {
+            return Ok(out);
+        }
+        start = end - AUDIO_DECODE_OVERLAP;
+    }
+}
+
+/// Noise seed of chunk `k` of a long video (chunk 1 keeps the run's seed: it is the plain run of its length).
+fn chunk_seed(seed: u64, k: usize) -> u64 {
+    seed.wrapping_add(k as u64)
+}
+
+/// Samples a long video chunk by chunk (see `extend`). `sample(guides, latent_t, audio_t, k, xv, xa)` denoises chunk k
+/// from the noise in xv / xa in place. The kept latents are collected on the host (the DiT keeps the VRAM). Returns the
+/// whole video latent [24, T, h, w] and its carried audio [32, 2, Ta].
+#[allow(clippy::type_complexity)]
+fn sample_chunks(
+    dev: &Arc<Device>,
+    ext: &Extend,
+    chunks: &[usize],
+    (lh, lw): (usize, usize),
+    seed: u64,
+    sample: &mut dyn FnMut(&[Guide], usize, usize, usize, &Tensor, &Tensor) -> Result<()>,
+) -> Result<(Tensor, Tensor)> {
+    let area = lh * lw;
+    let ctx = ext.context_frames;
+    let (ctx_slots, ctx_ticks) = (video_latent_t(ctx), extend::context_audio_ticks(ctx));
+    // the long latents so far, per video channel [T, h, w] and per audio channel x stream [Ta] (carried audio variable)
+    let mut video: Vec<Vec<f32>> = vec![Vec::new(); 24];
+    let mut audio: Vec<Vec<f32>> = vec![Vec::new(); 64];
+    let mut frames = 0usize;
+    for (k, &fk) in chunks.iter().enumerate() {
+        let t0 = std::time::Instant::now();
+        let (_, lt, at) = temporal_shape(fk);
+        // (uploads are synchronous: the stream must be idle, see upscaler.rs)
+        dev.sync()?;
+        let mut guides = Vec::new();
+        let (mut skip_v, mut skip_a) = (0, 0);
+        if k > 0 {
+            // the clean tail of what is there so far, anchored at the chunk's frame 0 (start = 5k latent frames in, a
+            // latent-cycle boundary: the long latent always has 5k+2)
+            let have = video[0].len() / area;
+            let mut v = Vec::with_capacity(24 * ctx_slots * area);
+            for ch in &video {
+                v.extend_from_slice(&ch[(have - ctx_slots) * area..]);
+            }
+            let have_a = audio[0].len();
+            let (audio_offset, first_new) = extend::audio_join(frames - ctx, have_a, ctx_ticks);
+            let mut a = Vec::with_capacity(64 * ctx_ticks);
+            for s in &audio {
+                // guides are clean latents: the carried variable over the audio scale
+                a.extend(s[have_a - ctx_ticks..].iter().map(|y| y / AUDIO_SHIFT_SCALE));
+            }
+            guides.push(Guide {
+                frame: 0,
+                video: Some(Tensor::from_f32(dev, &v, &[24, ctx_slots, lh, lw])?),
+                audio: Some(Tensor::from_f32(dev, &a, &[32, 2, ctx_ticks])?),
+                audio_offset,
+            });
+            (skip_v, skip_a) = (ctx_slots, first_new.min(at));
+        }
+        let s = chunk_seed(seed, k);
+        let xv = sampler::randn(dev, &[24, lt, lh, lw], s)?;
+        let xa = sampler::randn(dev, &[32, 2, at], s ^ 0x9E37_79B9_7F4A_7C15)?;
+        sample(&guides, lt, at, k, &xv, &xa)?;
+        drop(guides);
+        let hv = xv.to_f32_vec(dev)?;
+        for (ch, dst) in video.iter_mut().enumerate() {
+            dst.extend_from_slice(&hv[(ch * lt + skip_v) * area..(ch + 1) * lt * area]);
+        }
+        let ha = xa.to_f32_vec(dev)?;
+        for (s, dst) in audio.iter_mut().enumerate() {
+            dst.extend_from_slice(&ha[s * at + skip_a..(s + 1) * at]);
+        }
+        frames += if k == 0 { fk } else { fk - ctx };
+        crate::info!("chunk {}/{}: {fk} frames ({:.1} s of video so far) in {:.1}s", k + 1, chunks.len(), frames as f64 / FPS as f64, t0.elapsed().as_secs_f64());
+    }
+    let t = video[0].len() / area;
+    ensure!(t == video_latent_t(frames), "long video latent has {t} frames, expected {} for {frames} frames", video_latent_t(frames));
+    let ta = audio[0].len();
+    let xv = Tensor::from_f32(dev, &video.concat(), &[24, t, lh, lw])?;
+    let xa = Tensor::from_f32(dev, &audio.concat(), &[32, 2, ta])?;
+    Ok((xv, xa))
 }
 
 /// ComfyUI crops (centred) the reference waveform to a multiple of 800 samples before the audio VAE.

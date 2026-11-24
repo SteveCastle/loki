@@ -324,7 +324,7 @@ pub fn generate_many(dev: &Arc<Device>, host: &dyn Host, paths: &Paths, reqs: &[
             let denoise = req.init.as_ref().map_or(1.0, |(_, s)| s.clamp(0.0, 1.0));
             ensure!(denoise > 0.0, "--strength 0 leaves nothing to draw");
             let sigmas = schedule(&grid, req.steps, denoise);
-            let inp = DitInputs { text: &conds[ri].context, text_tags: &conds[ri].tags, refs: &refs[ri], latent_t: 1, latent_h: lh, latent_w: lw, audio_t: 0, seed: req.seed, cond_noise_aug: None };
+            let inp = DitInputs { text: &conds[ri].context, text_tags: &conds[ri].tags, guides: &[], refs: &refs[ri], latent_t: 1, latent_h: lh, latent_w: lw, audio_t: 0, seed: req.seed, cond_noise_aug: None };
             let mut run = dit.prepare(&inp).context("preparing the DiT run")?;
             run.sigmas = sigmas.clone();
             // torch.randn on the CPU like ComfyUI's prepare_noise, so a seed means the same there

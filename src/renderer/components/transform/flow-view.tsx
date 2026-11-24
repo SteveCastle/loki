@@ -36,6 +36,7 @@ import {
   runGroups,
   retouchPreset,
   reshootFileLabel,
+  reshootChunks,
   runSummary,
   SAME_VIEW,
   suggestTemplateName,
@@ -1197,6 +1198,8 @@ function ShapeView(props: FlowViewProps & { def: ReturnType<typeof intentById> }
   const eta = estimateSeconds(plan);
   const isRetouch = def.engine === 'retouch';
   const isReshoot = def.engine === 'reshoot';
+  // a long video's chunks (one entry for a plain run)
+  const chunks = isReshoot ? reshootChunks(plan.frames || 124) : [0];
   const isDream = def.engine === 'dream';
   const catalog: DreamCatalog = props.dreamCatalog || { models: [], defaultFile: '', loaded: false, loading: false };
   const manual = s.manualPrompt !== null;
@@ -1523,9 +1526,28 @@ function ShapeView(props: FlowViewProps & { def: ReturnType<typeof intentById> }
             <div className="ts-range-ticks">
               <span>1 s</span>
               <span className={(plan.frames || 124) < 124 ? 'warn' : 'good'}>5 s+ is best</span>
-              <span>15 s</span>
+              <span>{MAX_DURATION} s</span>
             </div>
             {(plan.frames || 124) < 124 && <p className="ts-note warn">Shorter than the model was trained on (5–15 s): it runs, quality may suffer.</p>}
+            {chunks.length > 1 && (
+              <p className="ts-note">
+                A long video: made in {chunks.length} chunks of about {(chunks[0] / 24).toFixed(0)} s, each continuing the last moment of the one before, in one pass.
+              </p>
+            )}
+          </Field>
+        )}
+
+        {isReshoot && chunks.length > 1 && (
+          <Field label="What happens next" hint="optional · chunks 2, 3, … separated by ---">
+            <textarea
+              className="ts-text"
+              rows={3}
+              value={s.chunkPrompts}
+              placeholder={'e.g. She turns from the railing and walks toward the camera.\n---\nShe stops and smiles.'}
+              aria-label="Prompts of the later chunks"
+              onChange={(e) => onSettings({ chunkPrompts: e.target.value })}
+            />
+            <p className="ts-note">Each is a full prompt for its chunk (the last one repeats): keep describing the subject, and say what they do next. Empty = the main prompt throughout.</p>
           </Field>
         )}
 
@@ -1551,7 +1573,7 @@ function ShapeView(props: FlowViewProps & { def: ReturnType<typeof intentById> }
           </Field>
         )}
 
-        {isReshoot && (
+        {isReshoot && chunks.length === 1 && (
           <Field label="Passes">
             <Segmented<ReshootPasses> label="Passes" value={s.reshootPasses} options={PASSES_OPTIONS} onChange={(v) => onSettings({ reshootPasses: v })} />
             {s.reshootPasses === 2 ? (

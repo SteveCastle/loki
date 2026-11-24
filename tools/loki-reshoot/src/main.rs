@@ -5,6 +5,7 @@ use loki_reshoot::worker;
 use loki_reshoot::genmeta;
 use loki_reshoot::media::{Ffmpeg, FPS};
 use loki_reshoot::models;
+use loki_reshoot::extend::{self, Extend};
 use loki_reshoot::fit::{self, Fit};
 use loki_reshoot::pipeline::{self, MediaSpec, Paths, RefImageSize, Request, SamplerKind, TwoPass};
 use loki_reshoot::sampler::Scheduler;
@@ -90,7 +91,7 @@ enum FitArg {
   The tags are printed at start-up.
 
 LIMITS
-  length  : 5.2-15 s trained (124-362 frames @ 24 fps); shorter runs, > 15.08 s is refused
+  length  : 5.2-15 s trained (124-362 frames @ 24 fps) per run; shorter runs; longer = a long video (below), up to 5 min
   size    : multiples of 32, up to ~2K (2048x1152); ComfyUI's table tops out at 1920x1088
   refs    : up to 9 images, 3 videos (each 5+ frames, ~0.2-15 s), 3 audio clips
 
@@ -117,6 +118,14 @@ QUALITY (--passes)
   6 for h3) er_sde steps. Sharper detail and less flicker at large sizes, at about the cost of one full-size pass.
   The soundtrack comes from pass 1.
   1 (fast): one pass at the output size with --model's recipe (the behaviour before two-pass existed).
+
+LONG VIDEOS (-d past 15 s, or --chunk-seconds)
+  Made of chained chunks of about --chunk-seconds (10): each chunk continues the clean latent of the last --context-frames
+  (22, ~0.9 s) of video and sound made so far, as a guide on its first frames, and the whole video is decoded in one go
+  (no seams in the pixels). The first chunk is the plain run of its length with the same seed. --chunk-prompt gives
+  chunks 2, 3, ... their own prompt (repeatable, the last one repeats): describe what happens NEXT, keeping the subject
+  description. References apply to every chunk, which keeps identities from drifting. One pass only for now.
+    loki-reshoot -i her.jpg -d 30 -p \"<Picture 1> ... walks to the railing\" --chunk-prompt \"... turns to the river\"
 
 ",
         include_str!("../docs/PROMPT_CHEATSHEET.txt")
@@ -195,6 +204,16 @@ struct Cli {
     /// Exact frame count instead of --duration (snapped up to 17k+5: 5, 22, 39, ... 124, ... 362).
     #[arg(long)]
     frames: Option<usize>,
+    /// Long videos: the longest chunk, seconds (5.2-15, default 10). Videos past 15 s are always made in chunks; giving
+    /// this makes any video longer than one chunk a long one. See LONG VIDEOS.
+    #[arg(long)]
+    chunk_seconds: Option<f64>,
+    /// Long videos: frames of the previous chunk each one continues from: 5, 22 (default) or 39.
+    #[arg(long, default_value_t = extend::DEFAULT_CONTEXT_FRAMES)]
+    context_frames: usize,
+    /// Long videos: the prompt of chunk 2, 3, ... (repeatable; the last one repeats for later chunks).
+    #[arg(long)]
+    chunk_prompt: Vec<String>,
     /// Output size WxH (multiples of 32). Default: the first reference's aspect at --megapixels.
     #[arg(long)]
     size: Option<String>,
@@ -500,7 +519,19 @@ fn run(argv: Vec<String>) -> Result<()> {
     }
     let steps = cli.steps.unwrap_or(cli.model.default_steps());
     ensure!(steps >= 1, "--steps must be at least 1");
-    let two_pass = if cli.passes == 2 {
+    // a long video: past one run's ~15 s, or past --chunk-seconds when that is given
+    let extend = {
+        let (fc, _, _) = pipeline::temporal_shape(frames);
+        let e = Extend::new(cli.chunk_seconds.unwrap_or(extend::DEFAULT_CHUNK_SECONDS), cli.context_frames, cli.chunk_prompt.clone())?;
+        (fc > pipeline::MAX_FRAMES || (cli.chunk_seconds.is_some() && fc > e.chunk_frames)).then_some(e)
+    };
+    if extend.is_none() && !cli.chunk_prompt.is_empty() {
+        eprintln!("note: --chunk-prompt is for long videos (past 15 s or --chunk-seconds); ignored");
+    }
+    let two_pass = if extend.is_some() && cli.passes == 2 {
+        eprintln!("note: long videos run one pass for now");
+        None
+    } else if cli.passes == 2 {
         ensure!(cli.refine_denoise > 0.0 && cli.refine_denoise < 1.0, "--refine-denoise must be between 0 and 1");
         ensure!(cli.first_pass_mp > 0.05, "--first-pass-mp is too small");
         match first_pass_size(width, height, cli.first_pass_mp) {
@@ -549,14 +580,22 @@ fn run(argv: Vec<String>) -> Result<()> {
             None => Scheduler::Simple,
         },
         two_pass,
+        extend,
         crf: cli.crf,
         out,
     };
     // fail on bad geometry before touching models
     let (fc, _, _) = pipeline::temporal_shape(req.frames);
-    pipeline::check_limits(req.width, req.height, fc)?;
+    let chunks = pipeline::chunk_plan(&req)?;
+    pipeline::check_limits(req.width, req.height, *chunks.iter().max().unwrap())?;
     let paths = model_paths(&cli)?;
     let mut record = generation_record(&cli, &req, &paths.dit, fc, fit_resolved, &ff, _stdin_tmp.0.as_deref());
+    if let Some(e) = &req.extend {
+        record
+            .set("chunks", chunks.clone())
+            .set("context_frames", e.context_frames)
+            .set("chunk_prompts", if e.prompts.is_empty() { None } else { Some(e.prompts.clone()) });
+    }
     record.set("meta", meta);
     record.set("dit", paths.dit.file_name().map(|f| f.to_string_lossy().into_owned()));
     // VSA needs the model's coarse gates: a fast finetune without them runs dense

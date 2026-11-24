@@ -163,6 +163,11 @@ export interface TransformSettings {
    * at the output size); 1 = fast (one pass at the output size).
    */
   reshootPasses: ReshootPasses;
+  /**
+   * A long video's later chunks (past ~15 s): what happens next, one prompt per chunk separated by lines of ---, the
+   * last one repeating ('' = the main prompt throughout).
+   */
+  chunkPrompts: string;
   noAudio: boolean;
   keepSoundtrack: boolean;
   /** What the picture should not have (Generate, Reimagine; the turbo quality ignores it). */
@@ -235,6 +240,7 @@ export const BASE_SETTINGS: TransformSettings = {
   reshootModel: 'h3',
   reshootFile: '',
   reshootPasses: 2,
+  chunkPrompts: '',
   noAudio: false,
   keepSoundtrack: true,
   pinned: [],
@@ -679,7 +685,26 @@ export function maxVariations(id: IntentId): number {
   return id === 'generate' ? MAX_DREAM_COUNT : MAX_VARIATIONS;
 }
 export const MIN_DURATION = 1;
-export const MAX_DURATION = 15;
+/** The Length slider's end. Past RUN_FRAMES the video is a long one (the server and engine allow up to 5 min). */
+export const MAX_DURATION = 60;
+/** One run of the video model (~15 s); longer videos are chained chunks, each continuing the end of the last. */
+export const RUN_FRAMES = 362;
+/** loki-reshoot's long-video defaults: chunks of up to ~10 s (243 frames), each continuing the last 22 frames. */
+const CHUNK_FRAMES = 243;
+const CHUNK_CONTEXT_FRAMES = 22;
+
+/** Frame counts of the runs that make a `frames`-long video: itself, or a long video's chunks (loki-reshoot extend::plan). */
+export function reshootChunks(frames: number): number[] {
+  if (frames <= RUN_FRAMES) return [frames];
+  // in units of 17 frames: chunk 1 = 17a + 5, a later one 17(u + 1) + 5 adds u; all about the same length
+  const ctxUnits = (CHUNK_CONTEXT_FRAMES - 5) / 17;
+  const units = (frames - 5) / 17;
+  const cap = (CHUNK_FRAMES - 5) / 17;
+  const more = Math.ceil((units - cap) / (cap - ctxUnits));
+  const n = more + 1;
+  const w = units + more * ctxUnits;
+  return Array.from({ length: n }, (_, i) => 17 * (Math.floor(w / n) + (i < w % n ? 1 : 0)) + 5);
+}
 
 export function stepsFor(engine: EngineId, q: Quality): number {
   return QUALITY_STEPS[engine][q];
@@ -1022,6 +1047,8 @@ export function buildJobs(
     put(f, 'duration', Math.min(MAX_DURATION, Math.max(MIN_DURATION, s.duration)));
     put(f, 'steps', steps);
     put(f, 'passes', s.reshootPasses === 1 ? 1 : 2);
+    // a long video (the server runs it in one pass) takes its later chunks' prompts
+    if (reshootFrames(s.duration) > RUN_FRAMES) put(f, 'chunkprompts', s.chunkPrompts.trim());
     put(f, 'seed', seed);
     if (s.refSize === 'max') put(f, 'refsize', 'max');
     put(f, 'noaudio', s.noAudio);
@@ -1239,10 +1266,13 @@ export function estimateSeconds(plan: Plan): number {
   }
   const w = plan.outWidth || 768;
   const h = plan.outHeight || 1344;
-  const latentT = Math.floor(((plan.frames || 124) - 5) / 17) * 5 + 2;
-  const tokens = latentT * (h / 32) * (w / 32);
-  const step = 0.655 + 1.419e-4 * tokens + 3.846e-9 * tokens * tokens;
-  return 35 + plan.steps * step + 8 + tokens * 0.0003;
+  const tokensOf = (frames: number) => (Math.floor((frames - 5) / 17) * 5 + 2) * (h / 32) * (w / 32);
+  // a long video samples each chunk in turn, then decodes the whole video once
+  const sampling = reshootChunks(plan.frames || 124).reduce((sum, frames) => {
+    const tokens = tokensOf(frames);
+    return sum + plan.steps * (0.655 + 1.419e-4 * tokens + 3.846e-9 * tokens * tokens);
+  }, 0);
+  return 35 + sampling + 8 + tokensOf(plan.frames || 124) * 0.0003;
 }
 
 export function formatDuration(seconds: number): string {
