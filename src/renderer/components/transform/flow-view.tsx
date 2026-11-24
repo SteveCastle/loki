@@ -61,6 +61,8 @@ import { markUsed, savedTransformKey } from '../../saved-recent';
 import CameraRig from './camera-rig';
 import type { ReshootModelChoice } from './reshoot-models';
 import ModelPicker from '../dream/model-picker';
+import LoraPicker from '../dream/lora-picker';
+import type { LoraList } from '../dream/loras';
 import { enhanceBody, enhanceTarget, randomEnhanceSeed, withChunks, type EnhancePhase, type EnhanceRequestBody, type EnhanceResult, type EnhanceTarget } from './enhance-prompt';
 import { dreamPromptGuide, dreamRecipeOf, effectiveDreamModel, type DreamCatalog } from '../dream/dream-models';
 import './transform-flow.css';
@@ -626,6 +628,9 @@ export interface FlowViewProps {
   /** The image models the server's loki-dream can run (dream-models.ts), for Generate / Reimagine. */
   dreamCatalog?: DreamCatalog;
   onRefreshDreamModels?: () => void;
+  /** The server's LoRAs (Generate / Reimagine). */
+  loraList?: LoraList;
+  onRefreshLoras?: () => void;
   intent: IntentId | null;
   phase: FlowPhase;
   settings: TransformSettings;
@@ -1489,6 +1494,24 @@ function ShapeView(props: FlowViewProps & { def: ReturnType<typeof intentById> }
               onChange={(file, m) => onSettings({ dreamModel: file, dreamLabel: file && m ? m.label : '', ...dreamRecipeOf(m || effectiveDreamModel(catalog, '')) })}
             />
             <p className="ts-note">{dreamPromptGuide(effectiveDreamModel(catalog, s.dreamModel)?.arch).tip}</p>
+          </Field>
+        )}
+
+        {isDream && props.loraList && (
+          <Field label="LoRAs" hint="optional · any number, each with a strength">
+            <LoraPicker
+              list={props.loraList}
+              model={effectiveDreamModel(catalog, s.dreamModel)}
+              value={s.dreamLoras || []}
+              onChange={(dreamLoras) => onSettings({ dreamLoras })}
+              onRefresh={() => props.onRefreshLoras?.()}
+              prompt={s.manualPrompt !== null ? s.manualPrompt : s.prompt}
+              onTrigger={(t) =>
+                s.manualPrompt !== null
+                  ? onSettings({ manualPrompt: `${t}, ${s.manualPrompt}`.replace(/, $/, '') })
+                  : onSettings({ prompt: s.prompt.trim() ? `${t}, ${s.prompt.trim()}` : t })
+              }
+            />
           </Field>
         )}
 

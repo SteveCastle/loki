@@ -1,3 +1,4 @@
+import { useLoras } from '../dream/loras';
 import React, { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useSelector } from '@xstate/react';
@@ -84,6 +85,7 @@ function FlowSession({ req }: { req: NonNullable<ReturnType<typeof useFlowReques
   const authToken = useSelector(libraryService, (state) => state.context.authToken);
   const reshootModels = useReshootModels(authToken);
   const dreamModels = useDreamModels(DREAM_ENABLED, authToken);
+  const loras = useLoras(DREAM_ENABLED, authToken);
   const [paths, setPaths] = useState<string[]>(req.paths);
   const [intent, setIntent] = useState<IntentId | null>(req.intent || null);
   const [phase, setPhase] = useState<FlowPhase>(req.phase || (req.intent ? 'shape' : 'choose'));
@@ -347,6 +349,8 @@ function FlowSession({ req }: { req: NonNullable<ReturnType<typeof useFlowReques
       dreamCatalog={dreamModels.catalog}
       onEnhancePrompt={(body, signal, onPhase) => requestEnhance(body, authToken || undefined, signal, onPhase)}
       onRefreshDreamModels={dreamModels.refresh}
+      loraList={loras.list}
+      onRefreshLoras={loras.refresh}
       intent={intent}
       phase={phase}
       settings={settings}

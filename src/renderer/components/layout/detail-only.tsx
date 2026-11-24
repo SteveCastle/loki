@@ -7,6 +7,7 @@ import './panels.css';
 import CommandPalette from '../controls/command-palette';
 import ContextPalette from '../controls/context-palette';
 import TransformFlow from '../transform/transform-flow';
+import TrainLoraHost from '../train-lora/train-lora-dialog';
 import EngineSetupDialog from '../transform/engine-setup-dialog';
 
 const DetailOnly = () => {
@@ -15,6 +16,7 @@ const DetailOnly = () => {
       <CommandPalette />
       <ContextPalette />
       <TransformFlow />
+      <TrainLoraHost />
       <EngineSetupDialog />
       <Panel className="panel">
         <Detail />

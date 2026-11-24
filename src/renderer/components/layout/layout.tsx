@@ -21,6 +21,7 @@ import Metadata from '../metadata/metadata';
 import CommandPalette from '../controls/command-palette';
 import ContextPalette from '../controls/context-palette';
 import TransformFlow from '../transform/transform-flow';
+import TrainLoraHost from '../train-lora/train-lora-dialog';
 import EngineSetupDialog from '../transform/engine-setup-dialog';
 import RegionSelect from '../controls/region-select';
 import SearchOverlay from './search-overlay';
@@ -319,6 +320,7 @@ const Layout = () => {
       <CommandPalette />
       <ContextPalette />
       <TransformFlow />
+      <TrainLoraHost />
       <EngineSetupDialog />
       <RegionSelect />
       {/* defaultSize props below only apply on first run (or after clearing

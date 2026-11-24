@@ -1,0 +1,238 @@
+/* Train LoRA dialog: the Transform flow's look (flat black, hairlines, the #00c896 accent). */
+.tl-backdrop {
+  --tl-accent: #00c896;
+  --tl-accent-soft: rgba(0, 200, 150, 0.15);
+  --tl-hairline: rgba(255, 255, 255, 0.1);
+  --tl-field: rgba(255, 255, 255, 0.05);
+  --tl-dim: rgba(255, 255, 255, 0.7);
+  --tl-faint: rgba(255, 255, 255, 0.5);
+  --tl-caution: #e6a23c;
+  --tl-danger: rgb(255, 120, 160);
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.7);
+  color: white;
+  font-size: 13px;
+  line-height: 1.4;
+}
+.tl-backdrop *,
+.tl-backdrop *::before,
+.tl-backdrop *::after {
+  box-sizing: border-box;
+}
+.tl-panel {
+  width: min(640px, 100%);
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+  padding: 16px 18px;
+  background-color: var(--controls-background-color, #000);
+  border: 1px solid var(--tl-hairline);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+.tl-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.tl-head h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+.tl-count {
+  color: var(--tl-dim);
+}
+.tl-faint {
+  margin: 8px 0 12px;
+  color: var(--tl-faint);
+}
+.tl-warn {
+  margin: 0 0 12px;
+  padding: 6px 10px;
+  border: 1px solid rgba(230, 162, 60, 0.4);
+  border-radius: 5px;
+  color: var(--tl-caution);
+}
+.tl-grid {
+  display: grid;
+  grid-template-columns: 96px 1fr;
+  gap: 10px 12px;
+  align-items: start;
+}
+.tl-label {
+  padding-top: 6px;
+  color: var(--tl-dim);
+}
+.tl-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.tl-row .tl-input {
+  flex: 1 1 140px;
+}
+.tl-input {
+  width: 100%;
+  padding: 6px 8px;
+  color: white;
+  font: inherit;
+  background: var(--tl-field);
+  border: 1px solid var(--tl-hairline);
+  border-radius: 5px;
+  outline: none;
+}
+.tl-input:focus {
+  border-color: var(--tl-accent);
+}
+.tl-input.tl-num {
+  flex: 0 0 110px;
+  width: 110px;
+}
+.tl-seg {
+  display: inline-flex;
+  flex-wrap: wrap;
+  border: 1px solid var(--tl-hairline);
+  border-radius: 5px;
+  overflow: hidden;
+}
+.tl-seg button {
+  padding: 5px 10px;
+  color: var(--tl-dim);
+  font: inherit;
+  background: transparent;
+  border: none;
+  border-right: 1px solid var(--tl-hairline);
+  cursor: pointer;
+}
+.tl-seg button:last-child {
+  border-right: none;
+}
+.tl-seg button:hover {
+  color: white;
+  background: var(--tl-field);
+}
+.tl-seg button.on {
+  color: white;
+  background: var(--tl-accent-soft);
+  box-shadow: inset 0 -2px 0 var(--tl-accent);
+}
+.tl-hint {
+  margin-top: 6px;
+  color: var(--tl-faint);
+  font-size: 12px;
+}
+.tl-error {
+  margin: 0 0 10px;
+  color: var(--tl-danger);
+}
+.tl-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.tl-btn {
+  padding: 6px 14px;
+  color: white;
+  font: inherit;
+  background: var(--tl-field);
+  border: 1px solid var(--tl-hairline);
+  border-radius: 5px;
+  cursor: pointer;
+}
+.tl-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.tl-btn.tl-primary {
+  background: var(--tl-accent-soft);
+  border-color: var(--tl-accent);
+}
+.tl-btn.tl-primary:hover:not(:disabled) {
+  background: rgba(0, 200, 150, 0.3);
+}
+
+/* tabs: New LoRA | Continue a run */
+.tl-tabs {
+  display: inline-flex;
+  gap: 4px;
+}
+.tl-tabs button {
+  padding: 4px 10px;
+  color: var(--tl-dim);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+}
+.tl-tabs button.on {
+  color: white;
+  border-bottom-color: var(--tl-accent);
+}
+/* Continue a run */
+.tl-runs {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 200px;
+  overflow: auto;
+  margin-bottom: 12px;
+}
+.tl-run {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 6px 10px;
+  color: white;
+  font: inherit;
+  text-align: left;
+  background: var(--tl-field);
+  border: 1px solid var(--tl-hairline);
+  border-radius: 5px;
+  cursor: pointer;
+}
+.tl-run.on {
+  background: var(--tl-accent-soft);
+  border-color: var(--tl-accent);
+}
+.tl-run-trig {
+  color: var(--tl-accent);
+}
+.tl-run-line {
+  color: var(--tl-faint);
+  font-size: 12px;
+}
+.tl-previews {
+  display: flex;
+  gap: 8px;
+}
+.tl-previews figure {
+  margin: 0;
+  width: 160px;
+}
+.tl-previews img {
+  display: block;
+  width: 160px;
+  height: 160px;
+  object-fit: cover;
+  border: 1px solid var(--tl-hairline);
+  border-radius: 4px;
+}
+.tl-previews figcaption {
+  color: var(--tl-faint);
+  font-size: 11px;
+  margin-top: 2px;
+}
+.tl-faint-inline {
+  color: var(--tl-faint);
+}

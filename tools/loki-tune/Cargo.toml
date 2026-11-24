@@ -1,0 +1,35 @@
+[package]
+name = "loki-tune"
+version = "0.1.0"
+edition = "2021"
+default-run = "loki-tune"
+
+[[bin]]
+name = "loki-tune"
+path = "src/main.rs"
+
+[dependencies]
+# the MOSS-Image engine (DiT, Qwen3.5 text encoder, FLUX.2 VAE, CUDA layer and kernels) the LoRAs are trained against
+loki-dream = { path = "../loki-dream" }
+half = "2.7"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+indicatif = "0.17"
+ctrlc = "3"
+ureq = "2"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "bmp", "tiff"] }
+
+[build-dependencies]
+anyhow = "1"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+debug = 1
+
+[profile.dev]
+opt-level = 1

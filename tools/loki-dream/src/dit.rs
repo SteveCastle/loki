@@ -50,15 +50,15 @@ impl Lin {
     }
 }
 
-struct Block {
-    norm1: Tensor,
-    norm2: Tensor,
-    q_norm: Tensor,
-    k_norm: Tensor,
-    qkv: Lin,
-    o: Lin,
-    up_gate: Lin,
-    down: Lin,
+pub struct Block {
+    pub norm1: Tensor,
+    pub norm2: Tensor,
+    pub q_norm: Tensor,
+    pub k_norm: Tensor,
+    pub qkv: Lin,
+    pub o: Lin,
+    pub up_gate: Lin,
+    pub down: Lin,
 }
 
 struct TextBlock {
@@ -78,16 +78,16 @@ pub struct Dit {
     pub int8: bool,
     /// attention: false = bf16 flash attention, true = int8/fp8 SageAttention-style kernel
     pub sage: bool,
-    video_in: (Tensor, Tensor),
+    pub video_in: (Tensor, Tensor),
     text_in: (Tensor, Tensor),
     text_blocks: Vec<TextBlock>,
     t1: (Tensor, Tensor),
     t2: (Tensor, Tensor),
     modulation: (Tensor, Tensor),
     head_mod: (Tensor, Tensor),
-    blocks: Vec<Block>,
-    final_norm: Tensor,
-    final_linear: Tensor,
+    pub blocks: Vec<Block>,
+    pub final_norm: Tensor,
+    pub final_linear: Tensor,
     /// unmerged LoRA deltas per block (empty when no LoRA)
     pub lora: Vec<BlockLora>,
     /// diagnostics: copies of the residual stream after these blocks are pushed to `tapped`
@@ -98,9 +98,9 @@ pub struct Dit {
 /// Step-independent state of one prompt at one latent size.
 pub struct Run {
     /// refined text tokens [T, 3072] bf16
-    text: Tensor,
+    pub text: Tensor,
     /// rope table [N, 64, 2] (image tokens, then text tokens)
-    rope: Tensor,
+    pub rope: Tensor,
     pub t_len: usize,
     pub h: usize,
     pub w: usize,
@@ -108,9 +108,9 @@ pub struct Run {
 
 /// Per-timestep modulation (f32 tensors holding bf16 values).
 pub struct Modulation {
-    v: Vec<Tensor>, // shift_a, scale_a, gate_a, shift_f, scale_f, gate_f
-    head_shift: Tensor,
-    head_scale: Tensor,
+    pub v: Vec<Tensor>, // shift_a, scale_a, gate_a, shift_f, scale_f, gate_f
+    pub head_shift: Tensor,
+    pub head_scale: Tensor,
     pub t: f32,
 }
 
@@ -121,6 +121,9 @@ fn bias(l: &mut Loader, name: &str) -> Result<Tensor> {
 impl Dit {
     pub fn load(dev: Arc<Device>, path: &Path, force_bf16_attn: Option<bool>) -> Result<Dit> {
         let st = SafeTensors::open(path)?;
+        // ComfyUI's full-checkpoint saves prefix every key (model.diffusion_model.layers.0...)
+        let prefix = crate::arch::PREFIXES.iter().find(|p| st.has(&format!("{p}shared_block_modulation.weight"))).copied().unwrap_or("");
+        let st = if prefix.is_empty() { st } else { st.renamed(|k| k.strip_prefix(prefix).map(str::to_string)) };
         ensure!(st.has("shared_block_modulation.weight") && st.has("layers.0.proj.ffn_up_gate.weight"), "{} is not a MOSS-Image diffusion model", path.display());
         let int8 = st.has("layers.0.proj.qkv.comfy_quant");
         let fused = st.has("layers.0.proj.qkv.weight");

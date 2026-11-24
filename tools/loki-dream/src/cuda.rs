@@ -57,6 +57,11 @@ pub struct Device {
 
 impl Device {
     pub fn new(ordinal: usize) -> Result<Arc<Self>> {
+        Self::with_modules(ordinal, &[])
+    }
+
+    /// A device that also loads `extra` fatbins (another crate's kernels, e.g. loki-tune's training kernels).
+    pub fn with_modules(ordinal: usize, extra: &[(&str, &[u8])]) -> Result<Arc<Self>> {
         let ctx = CudaContext::new(ordinal).context("creating CUDA context (is an NVIDIA driver installed?)")?;
         // Single-stream engine: skip cudarc's per-buffer event bookkeeping.
         unsafe { ctx.disable_event_tracking(); }
@@ -77,7 +82,7 @@ impl Device {
         let sm_count = ctx.attribute(sys::CUdevice_attribute::CU_DEVICE_ATTRIBUTE_MULTIPROCESSOR_COUNT)?;
         let (_free, total) = ctx.mem_get_info()?;
         let mut modules = Vec::new();
-        for (name, bin) in FATBINS {
+        for (name, bin) in FATBINS.iter().chain(extra.iter()) {
             let m = ctx
                 .load_module(Ptx::from_binary(bin.to_vec()))
                 .with_context(|| format!("loading CUDA module {name}"))?;

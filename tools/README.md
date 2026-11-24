@@ -59,6 +59,7 @@ input and its path is printed, so the tools chain: `loki-retouch --preset restor
 | **loki-reshoot** | reference images / videos / audio → video with generated sound | MiniMax H3, or FastH3 Omni (`--model fast`, 8 steps); two-pass by default (low-res pass, learned latent upscale, refine) | [`loki-reshoot/`](loki-reshoot) |
 | **loki-segment** | concept / click / box segmentation of images, tracked roto masks of video (`--serve` for editors) | Meta SAM 3.1 | [`loki-segment/`](loki-segment) |
 | **loki-scribe** | image -> text and text -> text: descriptions, OCR, captions, batched (`--batch` JSONL queue) | Qwen3.8 27B, or any Qwen3.5/3.8 GGUF (`--model`, e.g. one already in LM Studio) | [`loki-scribe/`](loki-scribe) |
+| **loki-tune** | images -> LoRA: captions (by LoRA kind), training with checkpoints, previews and resume (`--resume`) | MOSS-Image (Kromoss, or any MOSS checkpoint via `--model`) | [`loki-tune/`](loki-tune) |
 | **loki-dream** | text -> image, img2img, inpainting, LoRAs, 8-step turbo (`--turbo`) | Kromoss (MOSS-Image fine-tune), Krea 2, FLUX.2 klein, Anima, SDXL or MiniMax H3 Image (`--model FILE`, detected from the file; `--arch h3`, reference pictures with `--ref`) | [`loki-dream/`](loki-dream) |
 
 They share one set of conventions (streams, flags, exit codes, model discovery, and `--worker`, the resident mode that keeps

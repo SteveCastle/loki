@@ -2490,6 +2490,8 @@ func main() {
 	mux.HandleFunc("/api/transform/enhance-prompt", renderer.ApplyMiddlewares(transformEnhanceHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/reshoot/models", renderer.ApplyMiddlewares(reshootModelsHandler, renderer.RoleAdmin))
 	mux.HandleFunc("/api/dream/models", renderer.ApplyMiddlewares(dreamModelsHandler, renderer.RoleAdmin))
+	mux.HandleFunc("/api/loras", renderer.ApplyMiddlewares(lorasHandler, renderer.RoleAdmin))
+	mux.HandleFunc("/api/lora-runs", renderer.ApplyMiddlewares(loraRunsHandler, renderer.RoleAdmin))
 	mux.HandleFunc("/media", renderer.ApplyMiddlewares(mediaHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/media/api", renderer.ApplyMiddlewares(mediaAPIHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/media/file", renderer.ApplyMiddlewares(mediaFileHandler(deps), renderer.RolePublicRead))

@@ -63,6 +63,16 @@ function knownSettings(raw: Json): Partial<TransformSettings> {
       if (v === 'square' || v === 'landscape' || v === 'portrait' || v === 'custom') out[k] = v;
     } else if (k === 'pinned') {
       if (Array.isArray(v)) out[k] = v.filter((p) => typeof p === 'string' && p);
+    } else if (k === 'dreamLoras') {
+      if (Array.isArray(v))
+        out[k] = v
+          .filter((l) => l && typeof l === 'object' && typeof (l as any).path === 'string' && (l as any).path)
+          .map((l: any) => ({
+            path: l.path,
+            scale: typeof l.scale === 'number' && Number.isFinite(l.scale) ? l.scale : 1,
+            name: typeof l.name === 'string' ? l.name : undefined,
+            trigger: typeof l.trigger === 'string' ? l.trigger : undefined,
+          }));
     } else if (k === 'chunkParts') {
       // by position: empty parts stay
       if (Array.isArray(v)) out[k] = v.map((p) => (typeof p === 'string' ? p : ''));
@@ -222,6 +232,13 @@ function fromDream(rec: Json, args: string[]): RebuiltTask | null {
       s.dreamDistilled = rec.turbo === true;
       s.dreamSteps = typeof rec.steps === 'number' ? rec.steps : 0;
     }
+  }
+  // the run's own LoRAs (the turbo LoRA is the quality, not a choice)
+  if (!other && Array.isArray(rec.loras)) {
+    s.dreamLoras = (rec.loras as unknown[])
+      .filter((l): l is { path: string; strength?: number } => !!l && typeof l === 'object' && typeof (l as any).path === 'string')
+      .filter((l) => !/8-steps-dmd2?-lora/i.test(l.path))
+      .map((l) => ({ path: l.path, scale: typeof l.strength === 'number' ? l.strength : 1, name: l.path.split(/[\\/]/).pop()?.replace(/\.safetensors$/i, '') }));
   }
   if (other) {
     s.quality = 'balanced';

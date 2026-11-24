@@ -34,6 +34,7 @@ func TestGetTasks(t *testing.T) {
 		{"move", "Move Media Files"},
 		{"autotag", "Auto Tag (ONNX)"},
 		{"lora-dataset", "Create LoRA Dataset"},
+		{"train-lora", "Train LoRA (MOSS-Image)"},
 		{"hls", "HLS Transcode"},
 		// Split-out per-item ops + the combined runner
 		{"describe", "Generate Descriptions"},

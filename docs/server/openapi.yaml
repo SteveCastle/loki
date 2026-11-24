@@ -14558,6 +14558,129 @@ paths:
             text/plain:
               schema:
                 type: string
+  /api/lora-runs:
+    get:
+      tags:
+        - Transform and Models
+      operationId: listLoraRuns
+      summary: List the LoRA training runs that can be continued.
+      description: |
+        Every loki-tune run folder in the training folder (`<data>/loras`): its
+        settings from `run.json`, the last logged step and smoothed loss, whether
+        it finished, and its resumable checkpoints (those with optimizer state)
+        with their preview images. A `train-lora` job with the `resume` option
+        set to a checkpoint's `dir` (plus `steps`, optionally `lr`) continues it;
+        an earlier checkpoint than the last branches into `<run>-from<step>`.
+      x-access: admin
+      responses:
+        '200':
+          description: The runs, most recently changed first.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  dir:
+                    type: string
+                    description: The training folder.
+                  runs:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name: {type: string}
+                        dir: {type: string}
+                        kind: {type: string}
+                        trigger: {type: string}
+                        class: {type: string}
+                        model: {type: string, description: The base checkpoint's file name.}
+                        rank: {type: integer}
+                        resolution: {type: integer}
+                        lr: {type: number}
+                        steps: {type: integer, description: The planned total.}
+                        images: {type: integer}
+                        step: {type: integer, description: The last step logged.}
+                        loss: {type: number, description: The smoothed loss at that step.}
+                        finished: {type: boolean}
+                        modified: {type: string, format: date-time}
+                        checkpoints:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              step: {type: integer}
+                              dir: {type: string}
+                              lora: {type: string}
+                              samples:
+                                type: array
+                                items: {type: string}
+                            required: [step, dir, samples]
+                      required: [name, dir, steps, images, step, finished, checkpoints, modified]
+                required: [runs, dir]
+  /api/loras:
+    get:
+      tags:
+        - Transform and Models
+      operationId: listLoras
+      summary: List the LoRA files the Generate / Reimagine picker offers.
+      description: |
+        Scans the training runs folder (`<data>/loras`, where the `train-lora`
+        task writes: each run's final LoRA and its checkpoints, plus LoRA files
+        dropped there) and a `loras` folder next to the engines' models. Only
+        safetensors headers are read: `arch` comes from the tensor names
+        (`moss` = MOSS-Image block linears; empty when no engine can apply it),
+        and loki-tune's `loki` metadata adds the trigger word, base model, rank
+        and training step. A dream job takes the chosen files in its `loras`
+        field, one `path:scale` per line.
+      x-access: admin
+      responses:
+        '200':
+          description: The LoRAs, newest first (a run's final LoRA before its checkpoints).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  loras:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        path: {type: string}
+                        file: {type: string}
+                        name: {type: string, description: The run name for loki-tune LoRAs, else the file name.}
+                        arch: {type: string, description: 'The architecture it applies to (moss), or empty.'}
+                        trigger: {type: string}
+                        base_model: {type: string, description: The checkpoint it was trained against.}
+                        rank: {type: integer}
+                        step: {type: integer}
+                        steps: {type: integer}
+                        checkpoint: {type: boolean, description: An intermediate checkpoint of a training run.}
+                        run: {type: string}
+                        size_mb: {type: integer}
+                        modified: {type: string, format: date-time}
+                      required: [path, file, name, arch, size_mb, modified]
+                  dirs:
+                    type: array
+                    items: {type: string}
+                    description: The folders that exist and were scanned.
+                required: [loras, dirs]
+              example:
+                loras:
+                  - path: C:\ProgramData\Lowkey Media Server\loras\zkx\zkx.safetensors
+                    file: zkx.safetensors
+                    name: zkx
+                    arch: moss
+                    trigger: zkx
+                    base_model: kromoss_bf16.safetensors
+                    rank: 16
+                    step: 1000
+                    steps: 1000
+                    run: zkx
+                    size_mb: 94
+                    modified: '2026-11-24T18:00:00Z'
+                dirs:
+                  - C:\ProgramData\Lowkey Media Server\loras
   /api/dream/models:
     get:
       tags:

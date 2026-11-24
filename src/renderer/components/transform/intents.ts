@@ -5,6 +5,7 @@
 // `dream` (loki-dream, text -> image) tasks. No React in here: it is
 // unit-tested and shared by the palette's one-click chips and the Transform flow.
 
+import { lorasField, type ChosenLora } from '../dream/loras';
 import { DREAM_ENABLED } from '../../features';
 import type { EnhanceRequestBody } from './enhance-prompt';
 
@@ -196,6 +197,11 @@ export interface TransformSettings {
    * enhance-prompt job, seeded with the run's seed) and the run is queued with the rewrite. See withAutoEnhance.
    */
   autoEnhance: boolean;
+  /**
+   * Generate / Reimagine: LoRAs applied to the model (GET /api/loras), each FILE:SCALE. Sent only to a model that
+   * takes LoRAs (MOSS-Image: its Turbo is a LoRA); kept when another model is picked so switching back restores them.
+   */
+  dreamLoras: ChosenLora[];
 }
 
 export interface IntentDef {
@@ -242,6 +248,7 @@ export const BASE_SETTINGS: TransformSettings = {
   reshootFile: '',
   reshootPasses: 2,
   chunkParts: [],
+  dreamLoras: [],
   noAudio: false,
   keepSoundtrack: true,
   pinned: [],
@@ -461,6 +468,8 @@ export function runSummary(id: IntentId, s: TransformSettings): string {
   else if (engine === 'dream') {
     if (s.dreamModel) parts.push(dreamModelName(s));
     parts.push(dreamQualityLabel(s));
+    const loras = dreamRecipe(s) === 'lora' ? (s.dreamLoras || []).filter((l) => l.scale !== 0) : [];
+    if (loras.length) parts.push(loras.length === 1 ? `LoRA ${loras[0].name || 'x1'}` : `${loras.length} LoRAs`);
   } else parts.push(engine === 'reshoot' && s.reshootModel === 'fast' ? 'fast model' : qualityLabel(engine, s.quality));
   if (engine === 'reshoot') parts.push(s.reshootPasses === 1 ? 'one pass' : 'two-pass');
   if (s.variations > 1) parts.push(`${s.variations} variations`);
@@ -1149,6 +1158,7 @@ function buildDreamJobs(
     put(f, 'prompt', prompt);
     put(f, 'model', s.dreamModel);
     const kind = dreamRecipe(s);
+    if (kind === 'lora') put(f, 'loras', lorasField(s.dreamLoras || []));
     // Turbo (the LoRA) and a distilled checkpoint run their own steps at CFG 1, which ignores a negative prompt:
     // send neither.
     if (kind === 'lora' && s.quality === 'draft') put(f, 'turbo', true);

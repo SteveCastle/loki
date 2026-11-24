@@ -263,6 +263,14 @@ func TestUIContractDream(t *testing.T) {
 		}
 	})
 
+	t.Run("LoRAs: the picker's path:scale lines, each its own --lora (Windows paths keep their drive colon)", func(t *testing.T) {
+		p := parse(map[string]string{"prompt": "zkx, a man", "turbo": "1", "seed": "1",
+			"loras": `C:\loras\zkx\zkx.safetensors:0.8` + "\n" + `C:\loras\style.safetensors`})
+		args := buildDreamArgs(p, "", "out.png", "")
+		has(t, args, "--lora", `C:\loras\zkx\zkx.safetensors:0.8`)
+		has(t, args, "--lora", `C:\loras\style.safetensors`)
+	})
+
 	t.Run("generate turbo: turbo=1 and no steps or negative from the UI", func(t *testing.T) {
 		p := parse(map[string]string{"prompt": "x", "turbo": "1", "size": "1024x1024", "seed": "1"})
 		if !p.Turbo || p.Steps != 0 {

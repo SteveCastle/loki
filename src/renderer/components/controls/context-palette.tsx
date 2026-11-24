@@ -55,6 +55,8 @@ import { GlyphScene } from '../transform/icons';
 import { canStartScene, openSceneEditor } from '../scene/launch';
 import { mediaKind, type IntentId } from '../transform/intents';
 import { openTransformFlow, templateSettings, type PromptTemplate } from '../transform/store';
+import { openTrainLora } from '../train-lora/store';
+import { isTrainImage } from '../train-lora/plan';
 import SavedPicker, { type SavedWorkflow } from './saved-picker';
 import './context-palette.css';
 
@@ -1112,6 +1114,15 @@ export default function ContextPalette() {
   // selection, so (in builds that have it) the Transform row is offered
   // whenever the server is.
   const canGenerate = !!serverAvailable && !!authToken && (DREAM_ENABLED || transformPaths.length > 0);
+  // Train LoRA (loki-tune via the server's train-lora task). With the scope widened to the library (or a tag /
+  // category / view target) it trains on the query's images: the server resolves the query, so every match counts,
+  // not just the right-clicked file. The view's images give the count when the view is the query.
+  const loraByQuery = effectiveTarget.type !== 'file' && !hasSelection && !!queryString;
+  const loraImages = loraByQuery ? items.map((i) => i.path).filter(isTrainImage) : transformPaths.filter(isTrainImage);
+  const loraCount = loraByQuery && effectiveTarget.type !== 'library' ? null : loraImages.length;
+  const canTrainLora = !!serverAvailable && !!authToken && (loraByQuery || loraImages.length > 0);
+  // Continuing an earlier training run needs no images: offered whenever jobs can be launched.
+  const canContinueLora = !!serverAvailable && !!authToken;
   // The Scene editor (masked edit + animate, its own window) takes one image or video: a header icon like Studio.
   const canScene = canTransform && transformPaths.length === 1 && canStartScene(transformPaths[0]);
   // Playback position (seconds) of the video on screen — only meaningful when
@@ -1753,6 +1764,50 @@ export default function ContextPalette() {
             })
           }
         />
+      )}
+
+      {(canTrainLora || canContinueLora) && (
+        <div className="context-palette-merge">
+          <span className="action-group-title">LoRA</span>
+          {canTrainLora && (
+            <>
+              <button
+                type="button"
+                className="merge-selection-btn"
+                onClick={() => {
+                  openTrainLora(
+                    loraByQuery
+                      ? { paths: loraImages, count: loraCount, query64, label: contextLabel, authToken }
+                      : { paths: transformPaths, authToken }
+                  );
+                  libraryService.send('HIDE_CONTEXT_PALETTE');
+                }}
+                title="Train a MOSS-Image (Kromoss) LoRA on these images: captions, training, checkpoints and previews run on the server (loki-tune)"
+              >
+                {loraCount === null ? 'Train LoRA…' : loraCount > 1 ? `Train LoRA on ${loraCount} images…` : 'Train LoRA…'}
+              </button>
+              <span className="merge-selection-note">
+                {loraByQuery
+                  ? `every image in ${contextLabel}`
+                  : loraImages.length > 1
+                  ? 'a character, style, object or concept from the selection'
+                  : 'select more images first (15–50 work best)'}
+              </span>
+            </>
+          )}
+          <button
+            type="button"
+            className="merge-selection-btn"
+            onClick={() => {
+              openTrainLora({ paths: [], authToken, mode: 'continue' });
+              libraryService.send('HIDE_CONTEXT_PALETTE');
+            }}
+            title="Train an earlier LoRA run further from one of its checkpoints (more steps, another learning rate)"
+          >
+            Continue a LoRA run…
+          </button>
+          <span className="merge-selection-note">more steps from a checkpoint, with its previews</span>
+        </div>
       )}
 
       {personTarget && serverAvailable && authToken && (

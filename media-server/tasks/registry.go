@@ -131,6 +131,7 @@ func init() {
 	gpuDiffusion := func(string) string { return HostBucketGPUDiffusion }
 	RegisterHostResolver("retouch", gpuDiffusion)
 	RegisterHostResolver("reshoot", gpuDiffusion)
+	RegisterHostResolver("train-lora", gpuDiffusion)
 	RegisterHostResolver("dream", gpuDiffusion)
 	RegisterHostResolver("4kify", gpuDiffusion)
 	// Splat training holds the GPU for minutes too; it shares the bucket so
@@ -157,6 +158,7 @@ func init() {
 	RegisterTask("ffmpeg-rotate", "FFmpeg Rotate", ffmpegRotateOptions, ffmpegRotateTask)
 	RegisterTask("retouch", "Retouch (AI image edit)", retouchOptions, retouchTask)
 	RegisterTask("reshoot", "Reshoot (AI video)", reshootOptions, reshootTask)
+	RegisterTask("train-lora", "Train LoRA (MOSS-Image)", trainLoraOptions, trainLoraTask)
 	// Text-to-image ships only in builds made with `-tags dream` (features.Dream).
 	if features.Dream {
 		RegisterTask("dream", "Dream (AI image from a prompt)", dreamOptions, dreamTask)
@@ -203,6 +205,8 @@ var gracefulPauseTasks = map[string]bool{
 	"assign-person": true, "metadata": true, "hls": true, "move": true,
 	"split-dir": true, "dedupe": true, "find-duplicates": true,
 	"merge-duplicates": true, "lora-dataset": true,
+	// train-lora polls PauseRequested every 2 s and has loki-tune checkpoint and exit (resume continues from it)
+	"train-lora": true,
 	"ffmpeg": true, "ffmpeg-scale": true, "ffmpeg-convert": true,
 	"ffmpeg-extract-audio": true, "ffmpeg-extract-audio-clip": true,
 	"ffmpeg-screenshot": true, "ffmpeg-thumbnail": true, "ffmpeg-reverse": true,

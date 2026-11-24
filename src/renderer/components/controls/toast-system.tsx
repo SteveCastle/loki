@@ -94,6 +94,7 @@ const JOB_TITLES: Record<string, string> = {
   hls: 'Preparing Video Streaming',
   'split-dir': 'Splitting Folder',
   'lora-dataset': 'Building LoRA Dataset',
+  'train-lora': 'Training LoRA',
   'ffmpeg-scale': 'Scaling Video',
   'ffmpeg-convert': 'Converting Media',
   'ffmpeg-extract-audio': 'Extracting Audio',
