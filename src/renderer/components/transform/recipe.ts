@@ -63,6 +63,9 @@ function knownSettings(raw: Json): Partial<TransformSettings> {
       if (v === 'square' || v === 'landscape' || v === 'portrait' || v === 'custom') out[k] = v;
     } else if (k === 'pinned') {
       if (Array.isArray(v)) out[k] = v.filter((p) => typeof p === 'string' && p);
+    } else if (k === 'chunkParts') {
+      // by position: empty parts stay
+      if (Array.isArray(v)) out[k] = v.map((p) => (typeof p === 'string' ? p : ''));
     } else if (typeof v === typeof want && !(typeof v === 'number' && !Number.isFinite(v))) {
       out[k] = v;
     }
@@ -187,12 +190,17 @@ function fromReshoot(rec: Json, args: string[]): RebuiltTask | null {
   // one, so its record says nothing about the choice: keep the default.
   const long = Array.isArray(rec.chunks);
   s.reshootPasses = rec.passes === 2 || long ? 2 : 1;
-  if (long && Array.isArray(rec.chunk_prompts)) s.chunkPrompts = rec.chunk_prompts.filter((p: unknown) => typeof p === 'string').join('\n---\n');
+  if (id === 'direct' && long && Array.isArray(rec.chunk_prompts)) {
+    // the record has each chunk's whole prompt, not the shared part: they become the chunks' own parts
+    const later = rec.chunk_prompts.filter((p: unknown) => typeof p === 'string');
+    s.chunkParts = [s.prompt, ...later];
+    s.prompt = '';
+  }
   s.noAudio = rec.audio === false;
   s.keepSoundtrack = !hasArg(args, '--no-video-audio');
   if (typeof rec.seed === 'number') s.seed = rec.seed;
   s.pinned = id === 'direct' ? carriedPins(id, inputPaths(rec)) : [];
-  if (id === 'direct' && !s.prompt) return null;
+  if (id === 'direct' && !s.prompt && !s.chunkParts.some(Boolean)) return null;
   return { intent: id, settings: s, approximate: true };
 }
 

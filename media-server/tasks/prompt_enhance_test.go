@@ -47,6 +47,58 @@ func TestEnhanceSystemPromptNamesTokens(t *testing.T) {
 	}
 }
 
+// A long video asks for one prompt per chunk, with each chunk's time span.
+func TestEnhanceLongVideoSegments(t *testing.T) {
+	// loki-reshoot's plan for 30 s (736 frames)
+	chunks := []int{209, 209, 192, 192}
+	spans := chunkSpans(chunks)
+	if len(spans) != 4 || spans[1][0] != spans[0][1] || int(spans[3][1]*24+0.5) != 736 {
+		t.Fatalf("spans = %v", spans)
+	}
+	sys := enhanceSystemPrompt(EnhanceRequest{Task: "video", Chunks: chunks}, "GUIDE")
+	for _, want := range []string{"30.7 s long", "4 consecutive segments", "segment 2: 8.7 s to 16.5 s", "{chunk}", "only ===", "the 4 segment parts"} {
+		if !strings.Contains(sys, want) {
+			t.Errorf("system prompt lacks %q:\n%s", want, sys)
+		}
+	}
+	if strings.Contains(enhanceSystemPrompt(EnhanceRequest{Task: "video", Chunks: []int{362}}, "GUIDE"), "segment") {
+		t.Error("a plain video asks for segments")
+	}
+
+	answer := "<think>plan</think>\nShared part:\nsubject_definitions: S1 is a woman.\n{chunk}\noverall_soundscape: rain.\n===\nSegment 1 (0-8.7 s):\nShe walks in.\n---\n**Segment 2**\nShe sits.\n---\nShe talks.\n---\nShe laughs.\n---\nShe leaves."
+	shared, got := splitEnhancedChunks(answer, 4)
+	want := []string{"She walks in.", "She sits.", "She talks.", "She laughs.\n\nShe leaves."}
+	if shared != "subject_definitions: S1 is a woman.\n{chunk}\noverall_soundscape: rain." || strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Errorf("splitEnhancedChunks = %q %q, want %q", shared, got, want)
+	}
+	// no === line: all segments; too few: padded
+	if shared, got := splitEnhancedChunks("A.\n---\nB.", 3); shared != "" || strings.Join(got, "|") != "A.|B.|" {
+		t.Errorf("without shared part = %q %q", shared, got)
+	}
+
+	if got := ComposeChunkPrompt("defs\n{chunk}\nsound", "action"); got != "defs\naction\nsound" {
+		t.Errorf("compose in slot = %q", got)
+	}
+	if got := ComposeChunkPrompt("defs\n  {chunk}  \nsound", ""); got != "defs\nsound" {
+		t.Errorf("compose empty slot = %q", got)
+	}
+	if got := ComposeChunkPrompt("a woman in a red coat", "she waves"); got != "a woman in a red coat\n\nshe waves" {
+		t.Errorf("compose without slot = %q", got)
+	}
+	if got := ComposeChunkPrompt("", "she waves"); got != "she waves" {
+		t.Errorf("compose without shared = %q", got)
+	}
+
+	// "Enhance first": the run gets each chunk's whole prompt
+	args := enhancedArgs([]string{"--duration", "30", "--prompt", "rough", "--chunkprompts", "rough 2"}, EnhanceResult{Prompt: "S\n{chunk}", Segments: []string{"a", "b", "c"}})
+	if strings.Join(args, " ") != "--duration 30 --prompt S\na --chunkprompts S\nb\n---\nS\nc" {
+		t.Errorf("enhancedArgs = %q", args)
+	}
+	if args := enhancedArgs([]string{"--prompt", "rough"}, EnhanceResult{Prompt: "p1"}); strings.Join(args, " ") != "--prompt p1" {
+		t.Errorf("plain enhancedArgs = %q", args)
+	}
+}
+
 func TestEnhanceImagesFromReferences(t *testing.T) {
 	req := EnhanceRequest{
 		Task: "video",

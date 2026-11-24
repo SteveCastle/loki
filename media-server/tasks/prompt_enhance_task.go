@@ -128,25 +128,46 @@ func QueueEnhanceThen(q *jobqueue.Queue, req EnhanceRequest, then EnhanceThen) (
 // withPrompt returns args with --prompt's value set to prompt (added when the
 // job had none).
 func withPrompt(args []string, prompt string) []string {
+	return withArg(args, "--prompt", prompt)
+}
+
+// withArg returns args with flag's value set to value (added when the job had
+// none).
+func withArg(args []string, flag, value string) []string {
 	out := make([]string, 0, len(args)+2)
 	set := false
 	for i := 0; i < len(args); i++ {
 		switch {
-		case args[i] == "--prompt" && i+1 < len(args):
-			out = append(out, "--prompt", prompt)
+		case args[i] == flag && i+1 < len(args):
+			out = append(out, flag, value)
 			i++
 			set = true
-		case strings.HasPrefix(args[i], "--prompt="):
-			out = append(out, "--prompt", prompt)
+		case strings.HasPrefix(args[i], flag+"="):
+			out = append(out, flag, value)
 			set = true
 		default:
 			out = append(out, args[i])
 		}
 	}
 	if !set {
-		out = append(out, "--prompt", prompt)
+		out = append(out, flag, value)
 	}
 	return out
+}
+
+// enhancedArgs are the follow-up job's arguments with the rewrite: its prompt
+// and, for a chunked one (a long video), each chunk's whole prompt (chunk 1's
+// as --prompt, the rest as --chunkprompts).
+func enhancedArgs(args []string, res EnhanceResult) []string {
+	if len(res.Segments) == 0 {
+		return withPrompt(args, res.Prompt)
+	}
+	prompts := make([]string, len(res.Segments))
+	for i, sg := range res.Segments {
+		prompts[i] = ComposeChunkPrompt(res.Prompt, sg)
+	}
+	args = withPrompt(args, prompts[0])
+	return withArg(args, "--chunkprompts", strings.Join(prompts[1:], "\n---\n"))
 }
 
 // EnhanceJobState is GET /api/transform/enhance-prompt?job=ID's answer.
@@ -259,12 +280,15 @@ func enhancePromptTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error
 	q.PushJobStdout(j.ID, fmt.Sprintf("%s: done in %.1fs", tag, time.Since(start).Seconds()))
 	if then != nil {
 		q.PushJobStdout(j.ID, tag+": prompt: "+res.Prompt)
+		for i, sg := range res.Segments {
+			q.PushJobStdout(j.ID, fmt.Sprintf("%s: chunk %d: %s", tag, i+1, sg))
+		}
 		if len(res.MissingTokens) > 0 {
 			q.PushJobStdout(j.ID, fmt.Sprintf("%s: warning: the rewrite dropped %s", tag, strings.Join(res.MissingTokens, ", ")))
 		}
 		ids, err := q.AddWorkflow(jobqueue.Workflow{WorkflowID: j.WorkflowID, Tasks: []jobqueue.WorkflowTask{{
 			Command:   then.Command,
-			Arguments: withPrompt(then.Arguments, res.Prompt),
+			Arguments: enhancedArgs(then.Arguments, res),
 			Input:     then.Input,
 		}}})
 		if err != nil {

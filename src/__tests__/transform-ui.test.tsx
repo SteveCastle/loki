@@ -1038,3 +1038,69 @@ describe('Transform: Generate and Reimagine (loki-dream)', () => {
     expect(screen.getByText(/new pictures are added to your library/)).toBeTruthy();
   });
 });
+
+describe('Transform: a long video is written in chunks', () => {
+  const noop = jest.fn();
+  function Harness({ initial, onEnhancePrompt }: { initial: Partial<TransformSettings>; onEnhancePrompt?: any }) {
+    const [settings, setSettings] = React.useState({ ...settingsFor('direct'), ...initial });
+    return (
+      <TransformFlowView
+        paths={[IMG]}
+        intent="direct"
+        phase="shape"
+        settings={settings}
+        source={{ width: 1000, height: 500 }}
+        queueAhead={0}
+        status="idle"
+        thumbUrl={(p: string) => p}
+        onSettings={(patch: Partial<TransformSettings>) => setSettings((cur) => ({ ...cur, ...patch }))}
+        onIntent={noop}
+        onPhase={noop}
+        onRun={noop}
+        onClose={noop}
+        onRemovePath={noop}
+        onAgain={noop}
+        onEnhancePrompt={onEnhancePrompt}
+      />
+    );
+  }
+
+  it('a plain video has one prompt box', () => {
+    render(<Harness initial={{ prompt: 'a tram', duration: 10 }} />);
+    expect(screen.queryByText('Every chunk')).toBeNull();
+    expect(screen.queryByLabelText(/^Chunk 1/)).toBeNull();
+  });
+
+  it('shows the shared part, one box per chunk with its time, and each whole prompt', () => {
+    render(<Harness initial={{ prompt: 'a red tram on a coastal street', duration: 30 }} />);
+    expect(screen.getByText('Every chunk')).toBeTruthy();
+    expect(screen.getByLabelText('Chunk 1, 0 to 8.7 seconds')).toBeTruthy();
+    expect(screen.getByLabelText('Chunk 4, 23.6 to 30.7 seconds')).toBeTruthy();
+    fireEvent.change(screen.getByLabelText(/^Chunk 2,/), { target: { value: 'it turns the corner ' } });
+    // typed text is kept as typed (no trimming under the cursor)
+    expect((screen.getByLabelText(/^Chunk 2,/) as HTMLTextAreaElement).value).toBe('it turns the corner ');
+    fireEvent.click(screen.getByText(/Show each chunk/));
+    expect(screen.getByText(/a red tram on a coastal street\s+it turns the corner/)).toBeTruthy();
+  });
+
+  it('Enhance divides the prompt into the chunks, and Undo puts both back', async () => {
+    const onEnhancePrompt = jest.fn(async () => ({
+      prompt: 'subjects\n{chunk}\nsound',
+      segments: ['one', 'two', 'three', 'four'],
+      model: 'h3-video',
+    }));
+    render(<Harness initial={{ prompt: 'thirty seconds of story', chunkParts: ['my first'], duration: 30 }} onEnhancePrompt={onEnhancePrompt} />);
+    await act(async () => {
+      fireEvent.click(screen.getByText('Enhance'));
+    });
+    const body = (onEnhancePrompt.mock.calls[0] as any)[0];
+    expect(body).toMatchObject({ prompt: 'thirty seconds of story', chunks: [209, 209, 192, 192], segments: ['my first', '', '', ''] });
+    await waitFor(() => expect((screen.getByLabelText(/^Chunk 3,/) as HTMLTextAreaElement).value).toBe('three'));
+    expect(screen.getByDisplayValue(/subjects/)).toBeTruthy();
+    expect(screen.getByText(/goes in the/)).toBeTruthy();
+    fireEvent.click(screen.getByText('Undo enhance'));
+    expect((screen.getByLabelText(/^Chunk 1,/) as HTMLTextAreaElement).value).toBe('my first');
+    expect((screen.getByLabelText(/^Chunk 3,/) as HTMLTextAreaElement).value).toBe('');
+    expect(screen.getByDisplayValue('thirty seconds of story')).toBeTruthy();
+  });
+});

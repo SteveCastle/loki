@@ -16,6 +16,8 @@ import {
   referenceTokens,
   remapTokens,
   reshootChunks,
+  composeChunkPrompt,
+  chunkedPrompts,
   reshootFrames,
   retouchPreset,
   settingsFor,
@@ -27,6 +29,7 @@ import {
   tokenIssues,
   usesReferences,
 } from '../renderer/components/transform/intents';
+import { withChunks } from '../renderer/components/transform/enhance-prompt';
 
 const IMG = 'C:/media/photo.jpg';
 const IMG2 = 'C:/media/other.png';
@@ -183,10 +186,38 @@ describe('buildJobs: reshoot', () => {
     expect(buildJobs('alive', s, [IMG], fixed).jobs[0].fields.duration).toBe('60');
   });
 
-  it('sends chunk prompts only for a long video', () => {
-    const s = { ...settingsFor('direct'), prompt: 'a tram', chunkPrompts: ' it turns the corner \n---\nit stops ' };
-    expect(buildJobs('direct', { ...s, duration: 15 }, [IMG], fixed).jobs[0].fields.chunkprompts).toBeUndefined();
-    expect(buildJobs('direct', { ...s, duration: 30 }, [IMG], fixed).jobs[0].fields.chunkprompts).toBe('it turns the corner \n---\nit stops');
+  it('a long video runs each chunk with the shared part and its own', () => {
+    const s = { ...settingsFor('direct'), prompt: 'a red tram on a coastal street', chunkParts: ['it sets off', '', 'it turns the corner'] };
+    // a plain run: the prompt alone
+    const plain = buildJobs('direct', { ...s, duration: 15 }, [IMG], fixed).jobs[0].fields;
+    expect(plain.prompt).toBe('a red tram on a coastal street');
+    expect(plain.chunkprompts).toBeUndefined();
+    // 30 s = 4 chunks: an empty part is the shared part alone, a missing one too
+    const long = buildJobs('direct', { ...s, duration: 30 }, [IMG], fixed).jobs[0].fields;
+    expect(long.prompt).toBe('a red tram on a coastal street\n\nit sets off');
+    expect(long.chunkprompts).toBe(
+      'a red tram on a coastal street\n---\na red tram on a coastal street\n\nit turns the corner\n---\na red tram on a coastal street'
+    );
+    // written in the chunk parts alone
+    expect(buildJobs('direct', { ...s, prompt: '', duration: 30 }, [IMG], fixed).jobs[0].fields.prompt).toBe('it sets off');
+    expect(buildJobs('direct', { ...s, prompt: '', chunkParts: [], duration: 30 }, [IMG]).error).toMatch(/Describe/);
+  });
+
+  it('puts a chunk part in the {chunk} line', () => {
+    expect(composeChunkPrompt('defs\n{chunk}\nsound', 'action')).toBe('defs\naction\nsound');
+    expect(composeChunkPrompt('defs\n  {chunk}\nsound', '  ')).toBe('defs\nsound');
+    expect(composeChunkPrompt('a tram', 'it stops')).toBe('a tram\n\nit stops');
+    expect(composeChunkPrompt('', 'it stops')).toBe('it stops');
+    // nothing at all: the chunk before's prompt (as the engine would repeat it)
+    expect(chunkedPrompts('', ['a', ''], 3)).toEqual(['a', 'a', 'a']);
+  });
+
+  it('asks the enhancer for a chunked rewrite of a long video', () => {
+    const s = { ...settingsFor('direct'), prompt: 'the whole story', chunkParts: ['first', '', 'third'], duration: 30 };
+    const body = withChunks({ prompt: 'x', model: 'h3-video', task: 'video', references: [] }, 'direct', s);
+    expect(body).toMatchObject({ prompt: 'the whole story', chunks: [209, 209, 192, 192], segments: ['first', '', 'third', ''] });
+    const plain = withChunks({ prompt: 'x', model: 'h3-video', task: 'video', references: [] }, 'direct', { ...s, duration: 10 });
+    expect(plain.chunks).toBeUndefined();
   });
 });
 

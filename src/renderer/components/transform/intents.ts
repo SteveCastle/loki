@@ -164,10 +164,11 @@ export interface TransformSettings {
    */
   reshootPasses: ReshootPasses;
   /**
-   * A long video's later chunks (past ~15 s): what happens next, one prompt per chunk separated by lines of ---, the
-   * last one repeating ('' = the main prompt throughout).
+   * Direct, a long video (past ~15 s): each chunk's own part, chunks 1, 2, ... by position ('' = none; parts past the
+   * video's chunks are kept for a longer one). `prompt` is then the part every chunk shares; a chunk runs with
+   * composeChunkPrompt(prompt, its part).
    */
-  chunkPrompts: string;
+  chunkParts: string[];
   noAudio: boolean;
   keepSoundtrack: boolean;
   /** What the picture should not have (Generate, Reimagine; the turbo quality ignores it). */
@@ -240,7 +241,7 @@ export const BASE_SETTINGS: TransformSettings = {
   reshootModel: 'h3',
   reshootFile: '',
   reshootPasses: 2,
-  chunkPrompts: '',
+  chunkParts: [],
   noAudio: false,
   keepSoundtrack: true,
   pinned: [],
@@ -706,6 +707,38 @@ export function reshootChunks(frames: number): number[] {
   return Array.from({ length: n }, (_, i) => 17 * (Math.floor(w / n) + (i < w % n ? 1 : 0)) + 5);
 }
 
+/** The [start, end] seconds each chunk adds to a long video (every chunk after the first re-makes the context first). */
+export function chunkSpans(chunks: number[]): Array<[number, number]> {
+  let end = 0;
+  return chunks.map((frames, i) => {
+    const start = end;
+    end += (i === 0 ? frames : frames - CHUNK_CONTEXT_FRAMES) / 24;
+    return [start, end];
+  });
+}
+
+/** The line of a shared part where each chunk's own part goes (else it follows the shared part). */
+export const CHUNK_SLOT = '{chunk}';
+
+/** The prompt one chunk runs with: `shared` with the chunk's part in its {chunk} line, or after it (the server's ComposeChunkPrompt). */
+export function composeChunkPrompt(shared: string, part: string): string {
+  const seg = part.trim();
+  const lines = shared.replace(/\r\n/g, '\n').split('\n');
+  const slot = lines.findIndex((l) => l.trim() === CHUNK_SLOT);
+  if (slot >= 0) {
+    const out = [...lines.slice(0, slot), ...(seg ? [seg] : []), ...lines.slice(slot + 1)];
+    return out.join('\n').trim();
+  }
+  return [shared.trim(), seg].filter(Boolean).join('\n\n');
+}
+
+/** Each of `n` chunks' whole prompt (one with nothing at all repeats the one before, as the engine would). */
+export function chunkedPrompts(shared: string, parts: string[], n: number): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < n; i += 1) out.push(composeChunkPrompt(shared, parts[i] || '') || out[i - 1] || '');
+  return out;
+}
+
 export function stepsFor(engine: EngineId, q: Quality): number {
   return QUALITY_STEPS[engine][q];
 }
@@ -1037,7 +1070,9 @@ export function buildJobs(
   // reshoot
   const manual = s.manualPrompt !== null ? s.manualPrompt.trim() : null;
   if (manual === '') return { jobs: [], error: 'Write the prompt, or reset it to the generated one' };
-  if (id === 'direct' && !(manual ?? s.prompt.trim()))
+  // (a long video may be written in its chunk parts alone)
+  const chunkText = reshootChunks(reshootFrames(s.duration)).length > 1 ? s.chunkParts.join('').trim() : '';
+  if (id === 'direct' && !(manual ?? s.prompt.trim()) && !chunkText)
     return { jobs: [], error: 'Describe the scene' };
   const common = (f: Record<string, string>, seed: number) => {
     // Only the fast model is named: H3 is the engine's default, so its jobs run on engines from before --model.
@@ -1047,8 +1082,6 @@ export function buildJobs(
     put(f, 'duration', Math.min(MAX_DURATION, Math.max(MIN_DURATION, s.duration)));
     put(f, 'steps', steps);
     put(f, 'passes', s.reshootPasses === 1 ? 1 : 2);
-    // a long video (the server runs it in one pass) takes its later chunks' prompts
-    if (reshootFrames(s.duration) > RUN_FRAMES) put(f, 'chunkprompts', s.chunkPrompts.trim());
     put(f, 'seed', seed);
     if (s.refSize === 'max') put(f, 'refsize', 'max');
     put(f, 'noaudio', s.noAudio);
@@ -1076,9 +1109,13 @@ export function buildJobs(
     return { jobs };
   }
   const all = [...inputs.images, ...inputs.videos, ...inputs.audios];
+  // a long video: each chunk's whole prompt (the shared part + its own), chunk 1's as the prompt
+  const chunks = reshootChunks(reshootFrames(s.duration));
+  const prompts = chunks.length > 1 ? chunkedPrompts(manual ?? s.prompt, s.chunkParts, chunks.length) : [manual ?? s.prompt.trim()];
   seedList.forEach((seed) => {
     const f: Record<string, string> = {};
-    put(f, 'prompt', manual ?? s.prompt.trim());
+    put(f, 'prompt', prompts[0]);
+    if (prompts.length > 1) put(f, 'chunkprompts', prompts.slice(1).join('\n---\n'));
     common(f, seed);
     stamp(f, all);
     jobs.push({ input: `reshoot ${q(all)}`, fields: f, label: `Direct · ${all.length} references` });

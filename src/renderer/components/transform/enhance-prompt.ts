@@ -7,7 +7,15 @@
 import { mediaServerBase } from '../../platform';
 import { subscribeStream } from '../../stream-bus';
 import { effectiveDreamModel, loadedDreamCatalog, type DreamCatalog } from '../dream/dream-models';
-import { mediaKind, referenceTokens, type IntentId, type JobRequest, type TransformSettings } from './intents';
+import {
+  mediaKind,
+  referenceTokens,
+  reshootChunks,
+  reshootFrames,
+  type IntentId,
+  type JobRequest,
+  type TransformSettings,
+} from './intents';
 
 export type EnhanceTask = 'generate' | 'reimagine' | 'edit' | 'video';
 
@@ -28,10 +36,19 @@ export interface EnhanceRequestBody {
   imageToken?: string;
   /** The text model's sampling seed: another seed, another rewrite (absent = the engine's default). */
   seed?: number;
+  /**
+   * A long video's chunk frame counts: the prompt is a chunked one, `prompt` the part every chunk shares (or the whole
+   * story to divide) and `segments` each chunk's own part.
+   */
+  chunks?: number[];
+  segments?: string[];
 }
 
 export interface EnhanceResult {
+  /** The rewrite; for a chunked prompt, the shared part. */
   prompt: string;
+  /** A chunked prompt's parts, chunks 1, 2, ... */
+  segments?: string[];
   model: string;
   missingTokens?: string[];
 }
@@ -94,6 +111,18 @@ export function enhanceBody(
   return body;
 }
 
+/** Direct as a long video: the body asks for a chunked rewrite of the shared part and every chunk's part. */
+export function withChunks(body: EnhanceRequestBody, intent: IntentId, s: TransformSettings): EnhanceRequestBody {
+  const chunks = reshootChunks(reshootFrames(s.duration));
+  if (intent !== 'direct' || chunks.length < 2) return body;
+  return {
+    ...body,
+    prompt: s.manualPrompt ?? s.prompt,
+    chunks,
+    segments: chunks.map((_, i) => s.chunkParts[i] || ''),
+  };
+}
+
 /** A seed for a rewrite nothing else seeds (the Enhance button: each press asks for another take). */
 export function randomEnhanceSeed(): number {
   return 1 + Math.floor(Math.random() * 2147483646);
@@ -135,7 +164,8 @@ export function withAutoEnhance(
       seen.add(t);
       refs.push({ token: t, path: p });
     });
-    const body = enhanceBody(target, prompt, refs, paths);
+    // (a long video's job has each chunk's whole prompt; the rewrite starts from the parts)
+    const body = withChunks(enhanceBody(target, prompt, refs, paths), intent, s);
     const seed = Number(job.fields.seed);
     if (Number.isFinite(seed) && seed > 0) body.seed = seed;
     return { ...job, enhance: body, label: `${job.label} · enhanced` };

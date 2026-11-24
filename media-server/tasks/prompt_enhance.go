@@ -62,12 +62,22 @@ type EnhanceRequest struct {
 	// seed give the same rewrite, another seed another one. 0 = the engine's
 	// default seed.
 	Seed uint64 `json:"seed,omitempty"`
+	// Chunks (video, optional) are the frame counts of a long video's chunks
+	// (loki-reshoot's plan; see extend.rs). Two or more make the prompt a
+	// chunked one: Prompt is the part every chunk shares (or the whole story,
+	// to be split), Segments each chunk's own part (see ComposeChunkPrompt).
+	Chunks []int `json:"chunks,omitempty"`
+	// Segments are the user's own texts for chunks 1, 2, ... (optional).
+	Segments []string `json:"segments,omitempty"`
 }
 
 // EnhanceResult is the rewritten prompt.
 type EnhanceResult struct {
+	// Prompt is the rewrite; for a chunked prompt, the part every chunk shares.
 	Prompt string `json:"prompt"`
-	Model  string `json:"model"`
+	// Segments are a chunked prompt's per-chunk parts, chunks 1, 2, ...
+	Segments []string `json:"segments,omitempty"`
+	Model    string   `json:"model"`
 	// MissingTokens are reference tokens the input prompt used that the
 	// rewrite dropped (the UI warns; the user decides).
 	MissingTokens []string `json:"missingTokens,omitempty"`
@@ -193,10 +203,112 @@ func enhanceSystemPrompt(req EnhanceRequest, guide string) string {
 		}
 		b.WriteString("Look at them to build the prompt from what they really show: who or what is in each reference (appearance, clothing, objects, style), the setting and the light, so the prompt can say precisely what to take from which input. Write only what the prompt needs: do not describe what should stay unchanged at length, and do not describe a reference in place of naming it by its token.\n")
 	}
+	if spans := chunkSpans(req.Chunks); len(spans) > 1 {
+		total := spans[len(spans)-1][1]
+		fmt.Fprintf(&b, "\nThis video is %s long, longer than the model makes at once, so it is generated in %d consecutive segments, each from its own prompt:\n", secs(total), len(spans))
+		for i, sp := range spans {
+			fmt.Fprintf(&b, "- segment %d: %s to %s (%s)\n", i+1, secs(sp[0]), secs(sp[1]), secs(sp[1]-sp[0]))
+		}
+		b.WriteString("Each segment continues seamlessly from the last moment of the one before (same shot, no cut). The model sees one segment at a time: the SHARED part with that segment's own part put in place of the line {chunk}. Write the prompt in that form:\n")
+		fmt.Fprintf(&b, "- First the SHARED part: everything that holds for the whole video, in the guide's section order (who or what is in it with their reference tokens, appearance, clothing and voice; the setting; the style and light; the ongoing soundscape and the music). Where the time-dependent sections go (for this guide: summary and detailed_description), write a line containing only {chunk}.\n")
+		fmt.Fprintf(&b, "- Then a line containing only ===, then the %d segment parts in order, separated by lines containing only ---. A segment part holds only the time-dependent sections, for that segment's time span. No headings, numbers or labels of your own.\n", len(spans))
+		b.WriteString("- Never repeat the shared descriptions inside the segment parts; refer to people and things by the same labels.\n")
+		b.WriteString("- Divide the user's action, dialogue and sound events over the segments in story order, about as much as fits each segment's length: each happens in exactly one segment and is never repeated. Each spoken line goes whole into one segment.\n")
+		b.WriteString("- Segment 2 onwards picks up mid-scene where the previous segment ended: say where people are and what they are doing at that moment, then what happens next. Never describe an opening, an establishing shot, an introduction, a cut or an ending before the last segment.\n")
+		b.WriteString("- If the user already wrote text for some segments, keep its content in those segments.\n")
+	}
 	b.WriteString("\n--- Model guide ---\n\n")
 	b.WriteString(guide)
 	b.WriteString("\n")
 	return b.String()
+}
+
+// enhanceContextFrames is loki-reshoot's long-video context: every chunk after
+// the first re-makes this many frames of the previous one before going on.
+const enhanceContextFrames = 22
+
+// chunkSpans turns a long video's chunk frame counts into the [start, end]
+// seconds each chunk adds to the video.
+func chunkSpans(chunks []int) [][2]float64 {
+	var out [][2]float64
+	end := 0.0
+	for i, f := range chunks {
+		n := f
+		if i > 0 {
+			n -= enhanceContextFrames
+		}
+		if n <= 0 {
+			return nil
+		}
+		out = append(out, [2]float64{end, end + float64(n)/24})
+		end += float64(n) / 24
+	}
+	return out
+}
+
+func secs(s float64) string { return fmt.Sprintf("%.1f s", s) }
+
+// ChunkSlot is the line of a chunked prompt's shared part where each chunk's
+// own part goes; without it the chunk's part follows the shared one.
+const ChunkSlot = "{chunk}"
+
+// ComposeChunkPrompt is the prompt one chunk of a long video runs with: the
+// shared part with the chunk's own part in its {chunk} line (or after it).
+// The renderer's composeChunkPrompt (intents.ts) is the same rule.
+func ComposeChunkPrompt(shared, segment string) string {
+	segment = strings.TrimSpace(segment)
+	lines := strings.Split(strings.ReplaceAll(shared, "\r\n", "\n"), "\n")
+	for i, l := range lines {
+		if strings.TrimSpace(l) == ChunkSlot {
+			out := append(append(append([]string{}, lines[:i]...), segment), lines[i+1:]...)
+			if segment == "" {
+				out = append(append([]string{}, lines[:i]...), lines[i+1:]...)
+			}
+			return strings.TrimSpace(strings.Join(out, "\n"))
+		}
+	}
+	var parts []string
+	for _, p := range []string{strings.TrimSpace(shared), segment} {
+		if p != "" {
+			parts = append(parts, p)
+		}
+	}
+	return strings.Join(parts, "\n\n")
+}
+
+// enhanceSegmentLabel is a heading a model puts above a part anyway.
+var enhanceSegmentLabel = regexp.MustCompile(`(?i)^[#*\s]*(?:(?:segment|chunk|part|clip)\s*\d+\b|shared(?: part)?\b)[^\n]{0,60}\n`)
+
+// enhanceSharedEnd is the line between a chunked rewrite's shared part and its
+// segments.
+var enhanceSharedEnd = regexp.MustCompile(`(?m)^[ \t]*={3,}[ \t]*$`)
+
+// splitEnhancedChunks splits a long video's rewrite into its shared part and
+// n segment parts: extra segments join the last one, missing ones are empty.
+// An answer without the === line is all segments (each then a whole prompt).
+func splitEnhancedChunks(answer string, n int) (string, []string) {
+	// (the reasoning and a code fence wrap the whole answer)
+	answer = cleanEnhanced(answer)
+	shared, rest := "", answer
+	if loc := enhanceSharedEnd.FindStringIndex(answer); loc != nil {
+		shared, rest = answer[:loc[0]], answer[loc[1]:]
+	}
+	clean := func(p string) string {
+		return cleanEnhanced(strings.TrimSpace(enhanceSegmentLabel.ReplaceAllString(strings.TrimSpace(p), "")))
+	}
+	var parts []string
+	for _, p := range splitChunkPrompts(rest) {
+		if p = clean(p); p != "" {
+			parts = append(parts, p)
+		}
+	}
+	if len(parts) > n {
+		parts = append(parts[:n-1], strings.Join(parts[n-1:], "\n\n"))
+	}
+	for len(parts) < n {
+		parts = append(parts, "")
+	}
+	return clean(shared), parts
 }
 
 var enhanceLabel = regexp.MustCompile(`(?i)^(?:\*\*)?(?:optimized |enhanced |final |rewritten )?prompt(?:\*\*)?\s*:(?:\*\*)?\s*`)
@@ -230,7 +342,7 @@ func trimQuotes(s string) string {
 
 // validateEnhance checks what can be checked before any model work.
 func validateEnhance(req EnhanceRequest) (string, error) {
-	if strings.TrimSpace(req.Prompt) == "" {
+	if strings.TrimSpace(req.Prompt+strings.Join(req.Segments, "")) == "" {
 		return "", fmt.Errorf("%w: write a prompt first", ErrEnhanceInput)
 	}
 	guide, ok := promptGuide(req.Model)
@@ -252,10 +364,25 @@ func enhancePrompt(ctx context.Context, req EnhanceRequest, logf func(string)) (
 	if err != nil {
 		return out, err
 	}
+	user := "Rewrite this prompt:\n\n" + strings.TrimSpace(req.Prompt)
+	maxTokens := enhanceMaxTokens
+	segments := len(chunkSpans(req.Chunks))
+	if segments > 1 {
+		user = fmt.Sprintf("Write the shared part and the %d segment parts for this video.", segments)
+		if p := strings.TrimSpace(req.Prompt); p != "" {
+			user += "\n\nThe user's prompt (what is shared, or the whole story to divide):\n\n" + p
+		}
+		for i, sg := range req.Segments {
+			if sg = strings.TrimSpace(sg); sg != "" && i < segments {
+				user += fmt.Sprintf("\n\nWhat the user wrote for segment %d:\n%s", i+1, sg)
+			}
+		}
+		maxTokens = min(600+700*segments, 6000)
+	}
 	text := textRequest{
 		System:      enhanceSystemPrompt(req, guide),
-		Prompt:      "Rewrite this prompt:\n\n" + strings.TrimSpace(req.Prompt),
-		MaxTokens:   enhanceMaxTokens,
+		Prompt:      user,
+		MaxTokens:   maxTokens,
 		Temperature: 0.7,
 		NoRepeat:    true,
 		Seed:        req.Seed,
@@ -289,12 +416,27 @@ func enhancePrompt(ctx context.Context, req EnhanceRequest, logf func(string)) (
 	if err != nil {
 		return out, err
 	}
-	out.Prompt = cleanEnhanced(answer)
-	if out.Prompt == "" {
+	if segments > 1 {
+		out.Prompt, out.Segments = splitEnhancedChunks(answer, segments)
+		written := 0
+		for _, sg := range out.Segments {
+			if sg != "" {
+				written++
+			}
+		}
+		if logf != nil && written < segments {
+			logf(fmt.Sprintf("note: the text model wrote %d of %d segment parts", written, segments))
+		}
+	} else {
+		out.Prompt = cleanEnhanced(answer)
+	}
+	if strings.TrimSpace(out.Prompt+strings.Join(out.Segments, "")) == "" {
 		return out, errors.New("the text model returned an empty prompt")
 	}
+	in := strings.Join(append([]string{req.Prompt}, req.Segments...), "\n")
+	all := strings.Join(append([]string{out.Prompt}, out.Segments...), "\n")
 	for _, r := range req.References {
-		if strings.Contains(req.Prompt, r.Token) && !strings.Contains(out.Prompt, r.Token) {
+		if strings.Contains(in, r.Token) && !strings.Contains(all, r.Token) {
 			out.MissingTokens = append(out.MissingTokens, r.Token)
 		}
 	}

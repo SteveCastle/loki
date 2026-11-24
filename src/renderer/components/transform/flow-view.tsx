@@ -37,6 +37,9 @@ import {
   retouchPreset,
   reshootFileLabel,
   reshootChunks,
+  chunkSpans,
+  chunkedPrompts,
+  CHUNK_SLOT,
   runSummary,
   SAME_VIEW,
   suggestTemplateName,
@@ -58,7 +61,7 @@ import { markUsed, savedTransformKey } from '../../saved-recent';
 import CameraRig from './camera-rig';
 import type { ReshootModelChoice } from './reshoot-models';
 import ModelPicker from '../dream/model-picker';
-import { enhanceBody, enhanceTarget, randomEnhanceSeed, type EnhancePhase, type EnhanceRequestBody, type EnhanceResult, type EnhanceTarget } from './enhance-prompt';
+import { enhanceBody, enhanceTarget, randomEnhanceSeed, withChunks, type EnhancePhase, type EnhanceRequestBody, type EnhanceResult, type EnhanceTarget } from './enhance-prompt';
 import { dreamPromptGuide, dreamRecipeOf, effectiveDreamModel, type DreamCatalog } from '../dream/dream-models';
 import './transform-flow.css';
 
@@ -675,12 +678,16 @@ interface EnhanceState {
   missing?: string[];
 }
 
-/** The Enhance button's run / cancel / undo, for one prompt box. */
+/**
+ * The Enhance button's run / cancel / undo, for one prompt: `prompt` is everything the rewrite replaces (a chunked
+ * prompt's shared part and chunk parts as one value, see chunkedValue), `fromResult` turns a rewrite into that value.
+ */
 function usePromptEnhance(
   onEnhance: FlowViewProps['onEnhancePrompt'],
   prompt: string,
   setPrompt: (v: string) => void,
-  resetKey: string
+  resetKey: string,
+  fromResult: (res: EnhanceResult) => string = (res) => res.prompt
 ) {
   const [state, setState] = useState<EnhanceState>({ status: 'idle' });
   const ctlRef = useRef<AbortController | null>(null);
@@ -697,7 +704,7 @@ function usePromptEnhance(
     ctlRef.current = ctl;
     // No time limit here: the job may wait its turn behind long GPU work (the button cancels it), and the server
     // bounds the text model's own run.
-    const before = body.prompt;
+    const before = promptRef.current;
     setState({ status: 'running', phase: 'queued' });
     try {
       const res = await onEnhance(body, ctl.signal, (phase, progress) => {
@@ -709,8 +716,9 @@ function usePromptEnhance(
         setState({ status: 'error', error: 'The prompt changed while it was being enhanced, so your edit was kept.' });
         return;
       }
-      setPrompt(res.prompt);
-      setState({ status: 'idle', before, after: res.prompt, missing: res.missingTokens });
+      const after = fromResult(res);
+      setPrompt(after);
+      setState({ status: 'idle', before, after, missing: res.missingTokens });
     } catch (e) {
       if (ctl.signal.aborted) return;
       setState({ status: 'error', error: e instanceof Error ? e.message : String(e) });
@@ -728,6 +736,111 @@ function usePromptEnhance(
   };
   const canUndo = state.status === 'idle' && state.before !== undefined && state.after === prompt;
   return { state, run, cancel, undo, canUndo };
+}
+
+// A chunked prompt as the one value the Enhance button rewrites and undoes.
+function chunkedValue(shared: string, parts: string[]): string {
+  return JSON.stringify([shared, ...parts]);
+}
+function fromChunkedValue(v: string): Pick<TransformSettings, 'prompt' | 'chunkParts'> {
+  const [shared, ...parts] = JSON.parse(v) as string[];
+  return { prompt: shared, chunkParts: parts };
+}
+
+const CHUNK_SHARED_PLACEHOLDER =
+  'What stays the same throughout: who is in it (by their reference tokens) and how they look and sound, the place, the light and style, the ongoing sound. ' +
+  'Or write the whole story here and press Enhance to divide it into the chunks.';
+
+const fmtSecs = (x: number) => `${Math.round(x * 10) / 10}`;
+
+/**
+ * A long Direct video's chunk parts: one box per chunk with its stretch of the video (what happens then), and on
+ * request each chunk's whole prompt as the model gets it.
+ */
+function ChunkParts({
+  chunks,
+  shared,
+  parts,
+  onChange,
+  readOnly,
+}: {
+  chunks: number[];
+  shared: string;
+  parts: string[];
+  onChange: (parts: string[]) => void;
+  readOnly: boolean;
+}) {
+  const [showFull, setShowFull] = useState(false);
+  const spans = chunkSpans(chunks);
+  // parts past this length's chunks are kept (a longer video uses them again) but not shown
+  const hidden = parts.slice(chunks.length).filter((p) => p.trim()).length;
+  const setPart = (i: number, v: string) => {
+    const next = [...parts];
+    while (next.length <= i) next.push('');
+    next[i] = v;
+    while (next.length > 0 && !next[next.length - 1]) next.pop();
+    onChange(next);
+  };
+  const full = chunkedPrompts(shared, parts, chunks.length);
+  const slotted = shared.split('\n').some((l) => l.trim() === CHUNK_SLOT);
+  return (
+    <div className="ts-chunks">
+      <p className="ts-note">
+        This video is made in {chunks.length} chunks, and the model sees one chunk&apos;s prompt at a time: the text above plus that chunk&apos;s own
+        text below. Write each chunk&apos;s action, dialogue and camera here, picking up where the one before ends.
+      </p>
+      {spans.map(([a, b], i) => (
+        // eslint-disable-next-line react/no-array-index-key
+        <div className="ts-chunk" key={i}>
+          <div className="ts-chunk-when">
+            <b>Chunk {i + 1}</b>
+            {fmtSecs(a)}–{fmtSecs(b)} s
+          </div>
+          <textarea
+            className="ts-text"
+            rows={2}
+            value={parts[i] || ''}
+            readOnly={readOnly}
+            placeholder={i === 0 ? 'What happens first, e.g. She walks to the railing and says: "It never stops raining here."' : 'What happens next. Empty: the scene just carries on.'}
+            aria-label={`Chunk ${i + 1}, ${fmtSecs(a)} to ${fmtSecs(b)} seconds`}
+            onChange={(e) => setPart(i, e.target.value)}
+          />
+        </div>
+      ))}
+      {hidden > 0 && (
+        <p className="ts-note warn">
+          {hidden} more chunk{hidden > 1 ? 's have' : ' has'} text past this length; lengthen the video to use {hidden > 1 ? 'them' : 'it'}.
+        </p>
+      )}
+      <div className="ts-chunks-foot">
+        <button type="button" className="ts-linkbtn" onClick={() => setShowFull((v) => !v)} aria-expanded={showFull}>
+          {showFull ? 'Hide' : 'Show'} each chunk&apos;s whole prompt
+        </button>
+        <span className="ts-note">
+          {slotted ? (
+            <>
+              Each chunk&apos;s text goes in the <code>{CHUNK_SLOT}</code> line above.
+            </>
+          ) : (
+            <>
+              Each chunk&apos;s text goes after the text above (or in a line <code>{CHUNK_SLOT}</code> there).
+            </>
+          )}
+        </span>
+      </div>
+      {showFull &&
+        full.map((p, i) => (
+          // eslint-disable-next-line react/no-array-index-key
+          <div className="ts-chunk" key={i}>
+            <div className="ts-chunk-when">
+              <b>Chunk {i + 1}</b>
+              whole prompt
+            </div>
+            <pre className="ts-chunk-full">{p || '(empty)'}</pre>
+          </div>
+        ))}
+    </div>
+  );
 }
 
 /** Sparkle glyph for the Enhance button. */
@@ -1200,6 +1313,8 @@ function ShapeView(props: FlowViewProps & { def: ReturnType<typeof intentById> }
   const isReshoot = def.engine === 'reshoot';
   // a long video's chunks (one entry for a plain run)
   const chunks = isReshoot ? reshootChunks(plan.frames || 124) : [0];
+  // Direct as a long video: the prompt box is the part every chunk shares, and each chunk has its own part
+  const longDirect = def.id === 'direct' && chunks.length > 1;
   const isDream = def.engine === 'dream';
   const catalog: DreamCatalog = props.dreamCatalog || { models: [], defaultFile: '', loaded: false, loading: false };
   const manual = s.manualPrompt !== null;
@@ -1226,10 +1341,19 @@ function ShapeView(props: FlowViewProps & { def: ReturnType<typeof intentById> }
   const promptField: 'prompt' | null = def.needsText === 'prompt' ? 'prompt' : null;
   const insertPromptToken = useTokenInsert(textRef, s.prompt, (v) => onSettings({ prompt: v }));
   const target = props.onEnhancePrompt ? enhanceTarget(def.id, s, props.dreamCatalog) : null;
-  const enhance = usePromptEnhance(props.onEnhancePrompt, s.prompt, (v) => onSettings({ prompt: v }), def.id);
+  // a chunked prompt is rewritten (and undone) as one: the shared part with every chunk's part
+  const enhanceValue = longDirect ? chunkedValue(s.prompt, s.chunkParts) : s.prompt;
+  const enhance = usePromptEnhance(
+    props.onEnhancePrompt,
+    enhanceValue,
+    (v) => onSettings(longDirect ? fromChunkedValue(v) : { prompt: v }),
+    def.id,
+    (res) => (longDirect ? chunkedValue(res.prompt, res.segments ?? s.chunkParts) : res.prompt)
+  );
+  const hasPrompt = !!s.prompt.trim() || (longDirect && s.chunkParts.some((p) => p.trim()));
   const runEnhance = () => {
     // each press is another take on the prompt
-    if (target && s.prompt.trim()) void enhance.run({ ...enhanceBody(target, s.prompt, refs, paths), seed: randomEnhanceSeed() });
+    if (target && hasPrompt) void enhance.run(withChunks({ ...enhanceBody(target, s.prompt, refs, paths), seed: randomEnhanceSeed() }, def.id, s));
   };
   const pickToken = (token: string) => {
     if (promptField) insertPromptToken(token);
@@ -1254,11 +1378,11 @@ function ShapeView(props: FlowViewProps & { def: ReturnType<typeof intentById> }
 
         {def.needsText === 'prompt' && (
           <Field
-            label={promptLabel(def.id, shared, stills)}
-            hint="sent as written · Enter ▸ review"
+            label={longDirect ? 'Every chunk' : promptLabel(def.id, shared, stills)}
+            hint={longDirect ? `who and what, the place, look and sound · shared by all ${chunks.length} chunks` : 'sent as written · Enter ▸ review'}
             action={
               <>
-                {target && <EnhanceButton target={target} enhance={enhance} disabled={!s.prompt.trim()} onRun={runEnhance} />}
+                {target && <EnhanceButton target={target} enhance={enhance} disabled={!hasPrompt} onRun={runEnhance} />}
                 <SavePrompt intent={def.id} settings={s} />
               </>
             }
@@ -1267,7 +1391,7 @@ function ShapeView(props: FlowViewProps & { def: ReturnType<typeof intentById> }
               textRef={textRef}
               rows={3}
               value={s.prompt}
-              placeholder={examples[0]}
+              placeholder={longDirect ? CHUNK_SHARED_PLACEHOLDER : examples[0]}
               label={promptLabel(def.id, false, stills)}
               onChange={(v) => onSettings({ prompt: v })}
               submitOnEnter
@@ -1283,6 +1407,15 @@ function ShapeView(props: FlowViewProps & { def: ReturnType<typeof intentById> }
               }
             />
             <EnhanceNote enhance={enhance} />
+            {longDirect && (
+              <ChunkParts
+                chunks={chunks}
+                shared={s.manualPrompt ?? s.prompt}
+                parts={s.chunkParts}
+                onChange={(chunkParts) => onSettings({ chunkParts })}
+                readOnly={enhance.state.status === 'running'}
+              />
+            )}
             <SavedPrompts
               intent={def.id}
               prompt={s.prompt}
@@ -1532,22 +1665,9 @@ function ShapeView(props: FlowViewProps & { def: ReturnType<typeof intentById> }
             {chunks.length > 1 && (
               <p className="ts-note">
                 A long video: made in {chunks.length} chunks of about {(chunks[0] / 24).toFixed(0)} s, each continuing the last moment of the one before, in one pass.
+                {longDirect ? ' Write what happens in each under the prompt.' : ''}
               </p>
             )}
-          </Field>
-        )}
-
-        {isReshoot && chunks.length > 1 && (
-          <Field label="What happens next" hint="optional · chunks 2, 3, … separated by ---">
-            <textarea
-              className="ts-text"
-              rows={3}
-              value={s.chunkPrompts}
-              placeholder={'e.g. She turns from the railing and walks toward the camera.\n---\nShe stops and smiles.'}
-              aria-label="Prompts of the later chunks"
-              onChange={(e) => onSettings({ chunkPrompts: e.target.value })}
-            />
-            <p className="ts-note">Each is a full prompt for its chunk (the last one repeats): keep describing the subject, and say what they do next. Empty = the main prompt throughout.</p>
           </Field>
         )}
 

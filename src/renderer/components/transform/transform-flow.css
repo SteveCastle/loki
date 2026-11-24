@@ -542,6 +542,70 @@
   opacity: 0.55;
 }
 
+/* A long video's chunk parts: a time gutter beside each box, a rail tying them into one sequence. */
+.ts-chunks {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.ts-chunk {
+  display: grid;
+  grid-template-columns: 74px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+}
+
+.ts-chunk-when {
+  padding: 5px 0 5px 8px;
+  border-left: 2px solid var(--ts-accent-strong);
+  font-size: 11px;
+  color: var(--ts-faint);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.35;
+}
+
+.ts-chunk-when b {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ts-dim);
+}
+
+.ts-chunk .ts-text {
+  min-height: 44px;
+}
+
+.ts-chunks-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+}
+
+.ts-chunks-foot .ts-linkbtn {
+  font-size: 11px;
+  color: var(--ts-accent);
+}
+
+.ts-chunk-full {
+  margin: 0;
+  max-height: 180px;
+  overflow: auto;
+  padding: 6px 8px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font: inherit;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--ts-dim);
+  background: var(--ts-field);
+  border: 1px solid var(--ts-hairline);
+  border-radius: 5px;
+  user-select: text;
+}
+
 .ts-note.warn,
 .warn {
   color: var(--ts-caution);
