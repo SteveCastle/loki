@@ -1,12 +1,13 @@
-// Prompt enhancement: the Enhance button next to a Transform prompt asks the server's text model (loki-scribe) to
-// rewrite the prompt the way the target model reads best (POST /api/transform/enhance-prompt, guides in
-// media-server/tasks/prompt_guides/). Only ever on request: a run never waits for it, and the result lands in the
-// prompt box where it can be edited or undone. The rewrite is an enhance-prompt job in the server's queue, followed
-// on the /stream job events.
+// Prompt enhancement: the server's text model (loki-scribe) rewrites a Transform prompt the way the target model
+// reads best (POST /api/transform/enhance-prompt, guides in media-server/tasks/prompt_guides/). Only ever on
+// request, two ways: the Enhance button puts the rewrite in the prompt box, where it can be reviewed, edited or
+// undone; the review step's "Enhance first" box (settings.autoEnhance, withAutoEnhance) sends every queued run
+// through its own rewrite, seeded with the run's seed, and the server queues the run with it. Either way the rewrite
+// is an enhance-prompt job in the server's queue; the button follows it on the /stream job events.
 import { mediaServerBase } from '../../platform';
 import { subscribeStream } from '../../stream-bus';
-import { effectiveDreamModel, type DreamCatalog } from '../dream/dream-models';
-import { mediaKind, type IntentId, type TransformSettings } from './intents';
+import { effectiveDreamModel, loadedDreamCatalog, type DreamCatalog } from '../dream/dream-models';
+import { mediaKind, referenceTokens, type IntentId, type JobRequest, type TransformSettings } from './intents';
 
 export type EnhanceTask = 'generate' | 'reimagine' | 'edit' | 'video';
 
@@ -25,6 +26,8 @@ export interface EnhanceRequestBody {
   references: Array<{ token: string; kind: string; path?: string }>;
   image?: string;
   imageToken?: string;
+  /** The text model's sampling seed: another seed, another rewrite (absent = the engine's default). */
+  seed?: number;
 }
 
 export interface EnhanceResult {
@@ -89,6 +92,54 @@ export function enhanceBody(
     }
   }
   return body;
+}
+
+/** A seed for a rewrite nothing else seeds (the Enhance button: each press asks for another take). */
+export function randomEnhanceSeed(): number {
+  return 1 + Math.floor(Math.random() * 2147483646);
+}
+
+// The paths a job runs on: the last, quoted token of its input (see JobRequest).
+function jobPaths(job: JobRequest): string[] {
+  const m = /"([^"]*)"\s*$/.exec(job.input);
+  return m ? m[1].split('\n').filter(Boolean) : [];
+}
+
+/**
+ * "Enhance first": give every job that sends a prompt its own rewrite request, seeded with the job's seed, so runs
+ * queued with a random seed get different prompts and a fixed seed gets the same one again. The server queues each
+ * job once its rewrite is done (store.ts submitJobs). Jobs are returned as they were when the setting is off or the
+ * intent's prompt has no guide.
+ */
+export function withAutoEnhance(
+  jobs: JobRequest[],
+  intent: IntentId,
+  s: TransformSettings,
+  catalog: DreamCatalog | undefined = loadedDreamCatalog()
+): JobRequest[] {
+  if (!s.autoEnhance) return jobs;
+  const target = enhanceTarget(intent, s, catalog);
+  if (!target) return jobs;
+  const manual = s.manualPrompt !== null;
+  return jobs.map((job) => {
+    const prompt = job.fields.prompt;
+    if (!prompt || !prompt.trim()) return job;
+    const paths = jobPaths(job);
+    // the tokens as this job's run numbers them (each pinned-references run has its own paths)
+    const tokens = referenceTokens(intent, paths, manual);
+    const seen = new Set<string>();
+    const refs: Array<{ token: string; path: string }> = [];
+    Object.keys(tokens).forEach((p) => {
+      const t = tokens[p];
+      if (!t.startsWith('<') || seen.has(t)) return;
+      seen.add(t);
+      refs.push({ token: t, path: p });
+    });
+    const body = enhanceBody(target, prompt, refs, paths);
+    const seed = Number(job.fields.seed);
+    if (Number.isFinite(seed) && seed > 0) body.seed = seed;
+    return { ...job, enhance: body, label: `${job.label} · enhanced` };
+  });
 }
 
 /** Where a queued rewrite is: waiting its turn in the job queue, or running. */

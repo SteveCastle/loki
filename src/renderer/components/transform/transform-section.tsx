@@ -21,6 +21,7 @@ import {
   submitJobs,
   useLastRun,
 } from './store';
+import { withAutoEnhance } from './enhance-prompt';
 import { validateForRun } from './flow-view';
 import { GlyphReplay, IntentIcon } from './icons';
 import './transform-section.css';
@@ -78,7 +79,7 @@ export default function TransformSection(props: TransformSectionProps) {
     }
     setBusy(key);
     try {
-      await submitJobs(built.jobs, { mediaServerBase, authToken });
+      await submitJobs(withAutoEnhance(built.jobs, id, settings), { mediaServerBase, authToken });
       saveLastRun(id, settings, paths);
       rememberTemplateRun(id, settings);
       onDone();

@@ -221,3 +221,67 @@ func TestEnhanceJobWithoutWaiterIsSkipped(t *testing.T) {
 		t.Errorf("state = %v; want error", got.State)
 	}
 }
+
+// "Enhance first": the rewrite runs with the run's seed and, once done,
+// queues the run itself in the same workflow with the rewrite as its prompt.
+func TestEnhanceThenQueuesTheRun(t *testing.T) {
+	node := newScribeNode(t, "Prompt: <Picture 1> walks along a misty lake at dawn")
+	usePools(t, nil, appconfig.EnginesConfig{
+		Pools:  []appconfig.WorkerPool{{Name: "gpu", Nodes: []appconfig.WorkerNode{{Name: "fake", URL: node.srv.URL}}}},
+		Routes: map[string]string{"loki-scribe": "pool"},
+	})
+	t.Setenv("PATH", t.TempDir())
+	q := jobqueue.NewQueueWithDB(setupItemOpsDB(t))
+
+	then := EnhanceThen{Command: "reshoot", Arguments: []string{"--seed", "42", "--prompt", "she walks by the lake", "--duration", "5"}, Input: `C:\in.png`}
+	if _, err := QueueEnhanceThen(q, EnhanceRequest{Prompt: "x", Model: "h3-video"}, EnhanceThen{}); !errors.Is(err, ErrEnhanceInput) {
+		t.Fatalf("no follow-up job: %v; want ErrEnhanceInput", err)
+	}
+	id, err := QueueEnhanceThen(q, EnhanceRequest{Prompt: "she walks by the lake", Model: "h3-video", Task: "video", Seed: 42}, then)
+	if err != nil {
+		t.Fatal(err)
+	}
+	j, _ := q.ClaimJob()
+	if j == nil || j.ID != id {
+		t.Fatalf("claimed %v; want the enhance job", j)
+	}
+	if err := enhancePromptTask(j, q, &sync.Mutex{}); err != nil {
+		t.Fatal(err)
+	}
+	if got := q.GetJob(id); got.State != jobqueue.StateCompleted {
+		t.Fatalf("enhance state = %v", got.State)
+	}
+	if len(node.specs) != 1 {
+		t.Fatalf("text runs = %d; want 1", len(node.specs))
+	}
+	if i := slices.Index(node.specs[0].Args, "--seed"); i < 0 || node.specs[0].Args[i+1] != "42" {
+		t.Errorf("text run args %q lack --seed 42", node.specs[0].Args)
+	}
+	next, _ := q.ClaimJob()
+	if next == nil || next.Command != "reshoot" {
+		t.Fatalf("queued after the rewrite: %v; want the reshoot", next)
+	}
+	want := []string{"--seed", "42", "--prompt", "<Picture 1> walks along a misty lake at dawn", "--duration", "5"}
+	if !slices.Equal(next.Arguments, want) {
+		t.Errorf("run args = %q; want %q", next.Arguments, want)
+	}
+	if next.OriginalInput != then.Input {
+		t.Errorf("run input = %q", next.OriginalInput)
+	}
+	if next.WorkflowID == "" || next.WorkflowID != q.GetJob(id).WorkflowID {
+		t.Errorf("run workflow %q; want the enhance job's %q", next.WorkflowID, q.GetJob(id).WorkflowID)
+	}
+}
+
+func TestWithPrompt(t *testing.T) {
+	cases := []struct{ in, want []string }{
+		{[]string{"--a", "1", "--prompt", "old"}, []string{"--a", "1", "--prompt", "new"}},
+		{[]string{"--prompt=old", "--a", "1"}, []string{"--prompt", "new", "--a", "1"}},
+		{[]string{"--a", "1"}, []string{"--a", "1", "--prompt", "new"}},
+	}
+	for _, c := range cases {
+		if got := withPrompt(c.in, "new"); !slices.Equal(got, c.want) {
+			t.Errorf("withPrompt(%q) = %q; want %q", c.in, got, c.want)
+		}
+	}
+}

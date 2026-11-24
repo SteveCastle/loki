@@ -34,7 +34,7 @@ import { useReshootModels } from './reshoot-models';
 import { applyPromptGuide, dreamPromptGuide, dreamRecipeOf, effectiveDreamModel, useDreamModels } from '../dream/dream-models';
 import { DREAM_ENABLED } from '../../features';
 import { TransformFlowView, validateForRun, validateShape, type PromptPreviewState } from './flow-view';
-import { requestEnhance } from './enhance-prompt';
+import { requestEnhance, withAutoEnhance } from './enhance-prompt';
 import { canStartScene, openSceneEditor } from '../scene/launch';
 import { requestLibraryPick } from '../scene/pick-bridge';
 
@@ -298,7 +298,7 @@ function FlowSession({ req }: { req: NonNullable<ReturnType<typeof useFlowReques
     setStatus('submitting');
     setError(undefined);
     try {
-      await submitJobs(built.jobs, { mediaServerBase, authToken });
+      await submitJobs(withAutoEnhance(built.jobs, intent, settings, dreamModels.catalog), { mediaServerBase, authToken });
       saveRemembered(intent, settings);
       saveLastRun(intent, settings, paths);
       rememberTemplateRun(intent, settings);
@@ -319,7 +319,7 @@ function FlowSession({ req }: { req: NonNullable<ReturnType<typeof useFlowReques
       setStatus('error');
       setError(`Could not queue the job (${e instanceof Error ? e.message : String(e)}). Is the media server running?`);
     }
-  }, [intent, settings, paths, authToken, req.videoTime, libraryService]);
+  }, [intent, settings, paths, authToken, req.videoTime, libraryService, dreamModels.catalog]);
 
   // Esc minimizes the app, as it does everywhere else, and leaves the flow open with everything in it (closing
   // is the corner button only, so no keypress loses a prompt). Caught here first, so nothing inside the flow

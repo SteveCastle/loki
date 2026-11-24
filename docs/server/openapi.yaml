@@ -14405,9 +14405,16 @@ paths:
         local-compute buckets like a `describe` job, so it waits its turn
         behind other model work instead of loading beside it. Follow it on
         `/stream` and read the rewrite with `GET ?job=ID`; cancel it with
-        `POST /job/{id}/cancel`. No generation ever calls this: the Transform
-        flow's Enhance button does, and puts the answer in the prompt box for
-        the user to keep, edit or undo.
+        `POST /job/{id}/cancel`. No generation enhances on its own: the
+        Transform flow's Enhance button calls this and puts the answer in the
+        prompt box for the user to keep, edit or undo, and its review step's
+        "Enhance first" box sends each run here with `then` (and the run's
+        `seed`).
+
+        With `then` (a `POST /create` body) nobody reads the answer: when the
+        rewrite is done the job queues `then` in its own workflow with the
+        rewrite as its `--prompt` (and logs the prompt it used). A failed or
+        cancelled rewrite queues nothing.
 
         The rewrite keeps the given reference tokens verbatim; `missingTokens`
         lists any the input prompt used that the rewrite dropped. The text model
@@ -14452,6 +14459,19 @@ paths:
                 imageToken:
                   type: string
                   description: The token `image` goes by in the prompt, if any.
+                seed:
+                  type: integer
+                  description: The text model's sampling seed. The same request and seed give the same rewrite; omitted = the engine's default seed.
+                then:
+                  type: object
+                  description: A job to queue with the rewrite as its prompt, as `POST /create` takes it.
+                  properties:
+                    input:
+                      type: string
+                    fields:
+                      type: object
+                      additionalProperties:
+                        type: string
               required:
                 - prompt
                 - model

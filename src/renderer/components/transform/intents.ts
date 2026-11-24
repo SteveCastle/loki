@@ -6,6 +6,7 @@
 // unit-tested and shared by the palette's one-click chips and the Transform flow.
 
 import { DREAM_ENABLED } from '../../features';
+import type { EnhanceRequestBody } from './enhance-prompt';
 
 export type EngineId = 'retouch' | 'reshoot' | 'dream';
 export type IntentId =
@@ -184,6 +185,11 @@ export interface TransformSettings {
   dreamDistilled: boolean;
   /** The steps it runs with by default (0 = unknown: Kromoss's table). */
   dreamSteps: number;
+  /**
+   * "Enhance first": each queued run's prompt is rewritten for its model by the server's text model (its own
+   * enhance-prompt job, seeded with the run's seed) and the run is queued with the rewrite. See withAutoEnhance.
+   */
+  autoEnhance: boolean;
 }
 
 export interface IntentDef {
@@ -240,6 +246,7 @@ export const BASE_SETTINGS: TransformSettings = {
   dreamTurbo: true,
   dreamDistilled: false,
   dreamSteps: 0,
+  autoEnhance: false,
 };
 
 const ALL_INTENTS: IntentDef[] = [
@@ -861,6 +868,8 @@ export interface JobRequest {
   fields: Record<string, string>;
   /** Human label for toasts / review. */
   label: string;
+  /** Rewrite the prompt first (enhance-prompt.ts withAutoEnhance): the job is queued by the rewrite job. */
+  enhance?: EnhanceRequestBody;
 }
 
 export interface BuildContext {

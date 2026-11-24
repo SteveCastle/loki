@@ -80,6 +80,7 @@ const REMEMBER_KEYS: Array<keyof TransformSettings> = [
   'keepSoundtrack',
   'aspect',
   'strength',
+  'autoEnhance',
 ];
 
 export function loadRemembered(id: IntentId): Partial<TransformSettings> {
@@ -414,19 +415,26 @@ export async function submitJobs(
   for (const job of jobs) {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (ctx.authToken) headers.Authorization = `Bearer ${ctx.authToken}`;
+    const run = { input: job.input, fields: job.fields };
+    // "Enhance first": the rewrite job queues the run itself once the prompt is rewritten
     // eslint-disable-next-line no-await-in-loop
-    const res = await fetch(`${ctx.mediaServerBase}/create`, {
+    const res = await fetch(`${ctx.mediaServerBase}${job.enhance ? '/api/transform/enhance-prompt' : '/create'}`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ input: job.input, fields: job.fields }),
+      body: JSON.stringify(job.enhance ? { ...job.enhance, then: run } : run),
       signal: AbortSignal.timeout(10000),
       redirect: 'error',
     });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    if (!res.ok) {
+      // eslint-disable-next-line no-await-in-loop
+      const err = job.enhance ? ((await res.json().catch(() => null)) as { error?: string } | null) : null;
+      throw new Error((err && err.error) || `HTTP ${res.status}`);
+    }
     try {
       // eslint-disable-next-line no-await-in-loop
-      const body = (await res.json()) as { id?: string };
-      if (body && body.id) ids.push(body.id);
+      const body = (await res.json()) as { id?: string; jobId?: string };
+      const id = body && (body.id || body.jobId);
+      if (id) ids.push(id);
     } catch {
       // older servers may not echo an id
     }

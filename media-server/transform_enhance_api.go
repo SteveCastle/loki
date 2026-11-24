@@ -3,10 +3,14 @@ package main
 // transform_enhance_api.go — /api/transform/enhance-prompt
 //
 // Rewrites a Transform prompt for its target model with loki-scribe. Only ever
-// on request (the Enhance button), and as a queued job (tasks.QueueEnhanceJob)
-// so the text model takes its turn with the other model work:
+// on request (the Enhance button, or a run queued with "Enhance first"), and
+// as a queued job (tasks.QueueEnhanceJob) so the text model takes its turn
+// with the other model work:
 //
 //	POST {EnhanceRequest}  -> 202 {"jobId"}; the job's state arrives on /stream
+//	POST {EnhanceRequest, "then": {input, fields}}
+//	                       -> 202 {"jobId"}; the job queues `then` (a /create
+//	                          body) with the rewrite as its prompt when done
 //	GET ?job=ID            -> {state, result?, error?} (tasks.EnhanceJobState)
 //	GET                    -> {"models": [...]}, the targets with a prompt guide
 //
@@ -41,12 +45,33 @@ func transformEnhanceHandler(deps *Dependencies) http.HandlerFunc {
 			http.Error(w, "Use POST", http.StatusMethodNotAllowed)
 			return
 		}
-		var req tasks.EnhanceRequest
+		var req struct {
+			tasks.EnhanceRequest
+			Then *CreateJobHandlerRequest `json:"then"`
+		}
 		if err := readJSONBody(r, &req); err != nil {
 			http.Error(w, "bad json", http.StatusBadRequest)
 			return
 		}
-		id, err := tasks.QueueEnhanceJob(deps.Queue, req)
+		var id string
+		var err error
+		if req.Then != nil {
+			// parsed as POST /create parses its body
+			args := ParseCommand(req.Then.Input)
+			if len(args) == 0 {
+				http.Error(w, "Invalid input", http.StatusBadRequest)
+				return
+			}
+			then := tasks.EnhanceThen{Command: args[0]}
+			if len(args) > 1 {
+				then.Input = args[len(args)-1]
+				then.Arguments = args[1 : len(args)-1]
+			}
+			then.Arguments = appendFieldArgs(then.Arguments, req.Then.Fields)
+			id, err = tasks.QueueEnhanceThen(deps.Queue, req.EnhanceRequest, then)
+		} else {
+			id, err = tasks.QueueEnhanceJob(deps.Queue, req.EnhanceRequest)
+		}
 		if err != nil {
 			status := http.StatusInternalServerError
 			if errors.Is(err, tasks.ErrEnhanceInput) {

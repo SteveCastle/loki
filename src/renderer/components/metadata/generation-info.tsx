@@ -5,6 +5,7 @@ import { rerunFromRecord, suggestTaskName, taskFromRecord, type RebuiltTask, typ
 import { buildJobs, intentById } from '../transform/intents';
 import { EngineSetupDeferred } from '../transform/engine-setup';
 import { openTransformFlow, saveTemplate, submitJobs } from '../transform/store';
+import { withAutoEnhance } from '../transform/enhance-prompt';
 import copyIcon from '../../../../assets/copy.svg';
 
 import './generation-info.css';
@@ -139,7 +140,7 @@ function Regenerate({ rerun, jobs }: { rerun: Rerun; jobs: JobAccess }) {
     }
     setState('busy');
     try {
-      await submitJobs(built.jobs, { mediaServerBase, authToken });
+      await submitJobs(withAutoEnhance(built.jobs, task.intent, task.settings), { mediaServerBase, authToken });
       setState('queued');
       setTimeout(() => setState('idle'), 2500);
     } catch (e) {

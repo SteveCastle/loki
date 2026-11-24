@@ -26,6 +26,12 @@ import (
 // answers with the job id at once; the client follows the job's state on the
 // /stream SSE events like any other job, and reads the rewrite with
 // EnhanceJobStatus once it has finished. Cancelling is the job's own cancel.
+//
+// A job queued with a generation to follow (QueueEnhanceThen: the review
+// step's "Enhance first" box) has nobody waiting for its answer: when the
+// rewrite is done it queues that generation with the rewrite as its --prompt,
+// in the same workflow. Everything it needs is in its arguments, so it also
+// runs after a server restart. If the rewrite fails, nothing is queued.
 
 const enhancePromptCommand = "enhance-prompt"
 
@@ -76,6 +82,71 @@ func QueueEnhanceJob(q *jobqueue.Queue, req EnhanceRequest) (string, error) {
 		return "", err
 	}
 	return id, nil
+}
+
+// EnhanceThen is the job an enhance-prompt job queues when it is done, as
+// POST /create would make it; its --prompt is replaced with the rewrite.
+type EnhanceThen struct {
+	Command   string   `json:"command"`
+	Arguments []string `json:"arguments"`
+	Input     string   `json:"input"`
+}
+
+// QueueEnhanceThen queues the rewrite of req.Prompt followed by `then`, which
+// runs with the rewritten prompt, returning the enhance job's id.
+func QueueEnhanceThen(q *jobqueue.Queue, req EnhanceRequest, then EnhanceThen) (string, error) {
+	if _, err := validateEnhance(req); err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(then.Command) == "" {
+		return "", fmt.Errorf("%w: no job to run after the rewrite", ErrEnhanceInput)
+	}
+	if q == nil {
+		return "", errors.New("the job queue is not available")
+	}
+	raw, err := json.Marshal(req)
+	if err != nil {
+		return "", err
+	}
+	next, err := json.Marshal(then)
+	if err != nil {
+		return "", err
+	}
+	ids, err := q.AddWorkflow(jobqueue.Workflow{Tasks: []jobqueue.WorkflowTask{{
+		Command:   enhancePromptCommand,
+		Arguments: []string{"--model", req.Model, "--request", string(raw), "--then", string(next)},
+	}}})
+	if err != nil {
+		return "", err
+	}
+	if len(ids) == 0 {
+		return "", errors.New("the enhance job was not queued")
+	}
+	return ids[0], nil
+}
+
+// withPrompt returns args with --prompt's value set to prompt (added when the
+// job had none).
+func withPrompt(args []string, prompt string) []string {
+	out := make([]string, 0, len(args)+2)
+	set := false
+	for i := 0; i < len(args); i++ {
+		switch {
+		case args[i] == "--prompt" && i+1 < len(args):
+			out = append(out, "--prompt", prompt)
+			i++
+			set = true
+		case strings.HasPrefix(args[i], "--prompt="):
+			out = append(out, "--prompt", prompt)
+			set = true
+		default:
+			out = append(out, args[i])
+		}
+	}
+	if !set {
+		out = append(out, "--prompt", prompt)
+	}
+	return out
 }
 
 // EnhanceJobState is GET /api/transform/enhance-prompt?job=ID's answer.
@@ -145,18 +216,27 @@ func enhancePromptTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error
 		q.ErrorJob(j.ID)
 		return err
 	}
-	enhanceJobs.Lock()
-	_, known := enhanceJobs.m[j.ID]
-	enhanceJobs.Unlock()
-	if !known {
-		return fail(errors.New("queued before the server restarted, so nobody is waiting for it; skipped"))
-	}
 	var req EnhanceRequest
+	var then *EnhanceThen
 	for i := 0; i+1 < len(j.Arguments); i++ {
-		if j.Arguments[i] == "--request" {
+		switch j.Arguments[i] {
+		case "--request":
 			if err := json.Unmarshal([]byte(j.Arguments[i+1]), &req); err != nil {
 				return fail(fmt.Errorf("%w: bad request: %v", ErrEnhanceInput, err))
 			}
+		case "--then":
+			then = &EnhanceThen{}
+			if err := json.Unmarshal([]byte(j.Arguments[i+1]), then); err != nil {
+				return fail(fmt.Errorf("%w: bad follow-up job: %v", ErrEnhanceInput, err))
+			}
+		}
+	}
+	if then == nil {
+		enhanceJobs.Lock()
+		_, known := enhanceJobs.m[j.ID]
+		enhanceJobs.Unlock()
+		if !known {
+			return fail(errors.New("queued before the server restarted, so nobody is waiting for it; skipped"))
 		}
 	}
 	q.PushJobStdout(j.ID, fmt.Sprintf("%s: rewriting the prompt for %s", tag, req.Model))
@@ -177,6 +257,23 @@ func enhancePromptTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error
 		return fail(err)
 	}
 	q.PushJobStdout(j.ID, fmt.Sprintf("%s: done in %.1fs", tag, time.Since(start).Seconds()))
+	if then != nil {
+		q.PushJobStdout(j.ID, tag+": prompt: "+res.Prompt)
+		if len(res.MissingTokens) > 0 {
+			q.PushJobStdout(j.ID, fmt.Sprintf("%s: warning: the rewrite dropped %s", tag, strings.Join(res.MissingTokens, ", ")))
+		}
+		ids, err := q.AddWorkflow(jobqueue.Workflow{WorkflowID: j.WorkflowID, Tasks: []jobqueue.WorkflowTask{{
+			Command:   then.Command,
+			Arguments: withPrompt(then.Arguments, res.Prompt),
+			Input:     then.Input,
+		}}})
+		if err != nil {
+			return fail(fmt.Errorf("queuing the %s job: %w", then.Command, err))
+		}
+		if len(ids) > 0 {
+			q.PushJobStdout(j.ID, fmt.Sprintf("%s: queued %s job %s", tag, then.Command, ids[0]))
+		}
+	}
 	// the result is readable before the completion event reaches the client
 	finishEnhance(j.ID, res, nil)
 	_ = q.SetJobProgress(j.ID, 100, 100)

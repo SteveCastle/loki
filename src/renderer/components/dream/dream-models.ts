@@ -277,6 +277,11 @@ async function load(authToken: string | undefined, refresh: boolean): Promise<vo
   return run;
 }
 
+/** The shared catalog as last loaded (by any useDreamModels), or undefined before the first list arrived. */
+export function loadedDreamCatalog(): DreamCatalog | undefined {
+  return shared.loaded ? shared : undefined;
+}
+
 /**
  * The shared catalog and a refresh (asks the engine to rescan its model folders). Nothing loads unless `enabled`;
  * without an `authToken` the viewer's stored server credential is used.

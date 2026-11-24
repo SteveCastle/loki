@@ -1657,6 +1657,22 @@
   margin-right: 6px;
 }
 
+/* Review step: "Enhance first" beside the Queue button (each run's prompt rewritten before it runs). */
+.ts-enhance-first {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--ts-dim);
+  cursor: pointer;
+  user-select: none;
+}
+
+.ts-enhance-first input {
+  margin: 0;
+  cursor: inherit;
+}
+
 /* Running: the job's progress fills in behind the label (--ts-enhance-p, flow-view.tsx), with a light sheen sweeping
    across so it reads as alive between progress events. Queued: no fill yet, a slower, dimmer sheen. */
 .ts-enhance.running {

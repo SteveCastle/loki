@@ -86,6 +86,9 @@ type textRequest struct {
 	Temperature float64
 	// NoRepeat turns on the engine's DRY loop guard (scribeDRYArgs).
 	NoRepeat bool
+	// Seed (optional) is the sampling seed; 0 = the engine's default, so the
+	// same request samples the same answer every time.
+	Seed uint64
 	// MinImageTokens (optional) upscales an image smaller than this many
 	// vision tokens before reading it (capped at Config.TextMaxImageTokens).
 	MinImageTokens int
@@ -138,7 +141,7 @@ func generateText(ctx context.Context, logf func(string), req textRequest) (stri
 		req.MaxTokens = textMaxOutputTokens
 	}
 	it := &textItem{req: req, ctx: ctx, logf: logf, done: make(chan textResult, 1)}
-	key := strings.Join([]string{req.Model, req.System, req.Prompt, strconv.Itoa(req.MaxTokens), strconv.FormatBool(req.Image != ""), strconv.FormatFloat(req.Temperature, 'f', -1, 64), strconv.FormatBool(req.NoRepeat), strings.Join(req.Images, "\x01"), strconv.Itoa(req.MaxImageTokens)}, "\x00")
+	key := strings.Join([]string{req.Model, req.System, req.Prompt, strconv.Itoa(req.MaxTokens), strconv.FormatBool(req.Image != ""), strconv.FormatFloat(req.Temperature, 'f', -1, 64), strconv.FormatBool(req.NoRepeat), strconv.FormatUint(req.Seed, 10), strings.Join(req.Images, "\x01"), strconv.Itoa(req.MaxImageTokens)}, "\x00")
 	batch := max(1, cfg.TextBatch)
 	if req.Image == "" || len(req.Images) > 0 {
 		batch = 1 // a text-only or multi-image request is one engine run
@@ -240,6 +243,9 @@ func runTextBatch(items []*textItem) {
 	}
 	if r.NoRepeat {
 		args = append(args, scribeDRYArgs...)
+	}
+	if r.Seed != 0 {
+		args = append(args, "--seed", strconv.FormatUint(r.Seed, 10))
 	}
 	args = append(args, "-p", r.Prompt)
 	// log lines name their input as the engine saw it (a worker's own path),

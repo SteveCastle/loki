@@ -17,10 +17,12 @@ import (
 // --- prompt enhancement (POST /api/transform/enhance-prompt) ---
 //
 // Rewrites a rough Transform prompt into one written the way the target model
-// was trained to read, with loki-scribe. The user asks for it (a button in the
-// Transform flow): it is never a step of a generation, so generation stays as
-// fast as before and the prompt that runs is always one the user has seen. The
-// rewrite itself runs as an enhance-prompt job (prompt_enhance_task.go), so the
+// was trained to read, with loki-scribe. The user asks for it: the Enhance
+// button puts the rewrite in the prompt box to review before running, and the
+// review step's "Enhance first" box sends each queued run through its own
+// rewrite (seeded like the run, so runs of one prompt read differently) before
+// the generation is queued with it. A generation never enhances on its own.
+// The rewrite runs as an enhance-prompt job (prompt_enhance_task.go), so the
 // text model takes its turn with the other model work.
 //
 // Each target model has a guide in prompt_guides/<model>.md, distilled from
@@ -56,6 +58,10 @@ type EnhanceRequest struct {
 	Image string `json:"image"`
 	// ImageToken is the token Image goes by in the prompt, if it has one.
 	ImageToken string `json:"imageToken"`
+	// Seed (optional) seeds the text model's sampling: the same request and
+	// seed give the same rewrite, another seed another one. 0 = the engine's
+	// default seed.
+	Seed uint64 `json:"seed,omitempty"`
 }
 
 // EnhanceResult is the rewritten prompt.
@@ -252,6 +258,7 @@ func enhancePrompt(ctx context.Context, req EnhanceRequest, logf func(string)) (
 		MaxTokens:   enhanceMaxTokens,
 		Temperature: 0.7,
 		NoRepeat:    true,
+		Seed:        req.Seed,
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()

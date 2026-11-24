@@ -57,7 +57,7 @@ import { markUsed, savedTransformKey } from '../../saved-recent';
 import CameraRig from './camera-rig';
 import type { ReshootModelChoice } from './reshoot-models';
 import ModelPicker from '../dream/model-picker';
-import { enhanceBody, enhanceTarget, type EnhancePhase, type EnhanceRequestBody, type EnhanceResult, type EnhanceTarget } from './enhance-prompt';
+import { enhanceBody, enhanceTarget, randomEnhanceSeed, type EnhancePhase, type EnhanceRequestBody, type EnhanceResult, type EnhanceTarget } from './enhance-prompt';
 import { dreamPromptGuide, dreamRecipeOf, effectiveDreamModel, type DreamCatalog } from '../dream/dream-models';
 import './transform-flow.css';
 
@@ -1225,7 +1225,8 @@ function ShapeView(props: FlowViewProps & { def: ReturnType<typeof intentById> }
   const target = props.onEnhancePrompt ? enhanceTarget(def.id, s, props.dreamCatalog) : null;
   const enhance = usePromptEnhance(props.onEnhancePrompt, s.prompt, (v) => onSettings({ prompt: v }), def.id);
   const runEnhance = () => {
-    if (target && s.prompt.trim()) void enhance.run(enhanceBody(target, s.prompt, refs, paths));
+    // each press is another take on the prompt
+    if (target && s.prompt.trim()) void enhance.run({ ...enhanceBody(target, s.prompt, refs, paths), seed: randomEnhanceSeed() });
   };
   const pickToken = (token: string) => {
     if (promptField) insertPromptToken(token);
@@ -1879,6 +1880,7 @@ function ReviewView(props: FlowViewProps & { def: ReturnType<typeof intentById> 
   const pins = activePins(def.id, s.pinned).length;
   const busy = status === 'submitting';
   const problem = validateForRun(def.id, s, paths);
+  const enhanceFor = props.onEnhancePrompt ? enhanceTarget(def.id, s, props.dreamCatalog) : null;
   return (
     <div className="ts-review">
       <div className="ts-review-main">
@@ -1987,6 +1989,17 @@ function ReviewView(props: FlowViewProps & { def: ReturnType<typeof intentById> 
             {busy ? 'Queuing…' : `Queue ${plan.jobCount > 1 ? `${plan.jobCount} jobs` : 'it'}`}
             <kbd>Ctrl ⏎</kbd>
           </button>
+          {enhanceFor ? (
+            <label
+              className="ts-enhance-first"
+              title={`Rewrite the prompt for ${enhanceFor.label} with the text model before each run, then run it with the rewrite. ${
+                s.seedMode === 'fixed' ? 'The fixed seed gives the same rewrite every time.' : 'Each run gets its own random rewrite.'
+              }`}
+            >
+              <input type="checkbox" checked={s.autoEnhance} disabled={busy} onChange={(e) => props.onSettings({ autoEnhance: e.target.checked })} />
+              <GlyphSparkle /> Enhance first
+            </label>
+          ) : null}
           {problem ? <span className="ts-footer-note">{problem}</span> : null}
         </div>
       </aside>
