@@ -21,6 +21,52 @@
   opacity: 0.8;
 }
 
+/* Filters: search + type + state (jobMatches). */
+.JobQueue .jq-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.JobQueue .jq-filters input,
+.JobQueue .jq-filters select {
+  height: 24px;
+  box-sizing: border-box;
+  padding: 0 6px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.04);
+  color: #fff;
+  font-size: 0.75rem;
+  min-width: 0;
+}
+
+.JobQueue .jq-filters select option {
+  background: #1e1e1e;
+}
+
+.JobQueue .jq-filters input:focus,
+.JobQueue .jq-filters select:focus {
+  outline: none;
+  border-color: rgba(255, 255, 255, 0.4);
+}
+
+.JobQueue .jq-search {
+  flex: 1 1 100%;
+}
+
+.JobQueue .jq-filters select {
+  flex: 1 1 0;
+}
+
+.JobQueue .jq-count {
+  font-size: 0.7rem;
+  opacity: 0.6;
+  font-variant-numeric: tabular-nums;
+  margin-right: auto;
+}
+
 .JobQueue button {
   background: transparent;
   border: 1px solid rgba(255, 255, 255, 0.15);

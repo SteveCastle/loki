@@ -14,7 +14,7 @@ import {
 } from '../../job-timing';
 import './job-queue.css';
 
-type QueueJob = {
+export type QueueJob = {
   id: string;
   command: string;
   arguments?: string[];
@@ -136,6 +136,71 @@ const STATE_LABEL: Record<string, string> = {
   error: 'Failed',
 };
 
+export interface JobFilter {
+  /** Words that must all appear in the job's command, arguments, input, id or title. */
+  q: string;
+  /** A command ('' = every type). */
+  type: string;
+  /** A state, 'active' (pending, running, paused) or '' = every state. */
+  state: string;
+}
+
+export const NO_FILTER: JobFilter = { q: '', type: '', state: '' };
+
+export const STATE_FILTERS: Array<{ value: string; label: string }> = [
+  { value: '', label: 'All states' },
+  { value: 'active', label: 'Active (queued, running, paused)' },
+  { value: 'pending', label: 'Queued' },
+  { value: 'in_progress', label: 'Running' },
+  { value: 'paused', label: 'Paused' },
+  { value: 'completed', label: 'Done' },
+  { value: 'error', label: 'Failed' },
+  { value: 'cancelled', label: 'Cancelled' },
+];
+
+/** Whether a job passes the filter (the server Jobs page's filters: search, type, state). */
+export function jobMatches(job: QueueJob, f: JobFilter, title = ''): boolean {
+  if (f.type && job.command !== f.type) return false;
+  if (f.state === 'active') {
+    if (!ACTIVE.has(job.state)) return false;
+  } else if (f.state && job.state !== f.state) {
+    return false;
+  }
+  const words = f.q.toLowerCase().split(/\s+/).filter(Boolean);
+  if (!words.length) return true;
+  const hay = [job.command, ...(job.arguments || []), job.input, job.id, title]
+    .join(' ')
+    .toLowerCase();
+  return words.every((w) => hay.includes(w));
+}
+
+// The filter is a per-viewer convenience: kept in this browser only.
+const FILTER_KEY = 'lowkey.jobQueue.filter';
+
+function loadFilter(): JobFilter {
+  try {
+    const raw = JSON.parse(window.localStorage.getItem(FILTER_KEY) || 'null');
+    if (raw && typeof raw === 'object') {
+      return {
+        q: typeof raw.q === 'string' ? raw.q : '',
+        type: typeof raw.type === 'string' ? raw.type : '',
+        state: STATE_FILTERS.some((o) => o.value === raw.state) ? raw.state : '',
+      };
+    }
+  } catch {
+    // no storage: start unfiltered
+  }
+  return NO_FILTER;
+}
+
+function saveFilter(f: JobFilter) {
+  try {
+    window.localStorage.setItem(FILTER_KEY, JSON.stringify(f));
+  } catch {
+    // not kept
+  }
+}
+
 function timeAgo(iso: string): string {
   const t = Date.parse(iso);
   if (!t || t < 0) return '';
@@ -155,6 +220,21 @@ export default function JobQueue() {
   const canWrite = useCanWrite();
   const [jobs, setJobs] = useState<QueueJob[]>([]);
   const [loaded, setLoaded] = useState(false);
+  const [filter, setFilterState] = useState<JobFilter>(loadFilter);
+  // the search box updates at once; the list follows a moment later (fast typing over thousands of jobs)
+  const [search, setSearch] = useState(filter.q);
+  const setFilter = useCallback((patch: Partial<JobFilter>) => {
+    setFilterState((prev) => {
+      const next = { ...prev, ...patch };
+      saveFilter(next);
+      return next;
+    });
+  }, []);
+  useEffect(() => {
+    if (search === filter.q) return undefined;
+    const t = setTimeout(() => setFilter({ q: search }), 120);
+    return () => clearTimeout(t);
+  }, [search, filter.q, setFilter]);
 
   const headers = useMemo(() => {
     const h: Record<string, string> = {};
@@ -249,11 +329,30 @@ export default function JobQueue() {
     [headers, libraryService, refetch]
   );
 
+  // every type in the list, with its count, plus the selected one even when no job has it
+  const typeOptions = useMemo(() => {
+    const counts = new Map<string, number>();
+    jobs.forEach((j) => {
+      if (j.command) counts.set(j.command, (counts.get(j.command) || 0) + 1);
+    });
+    if (filter.type && !counts.has(filter.type)) counts.set(filter.type, 0);
+    return [...counts.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  }, [jobs, filter.type]);
+
+  const filtering = !!(filter.q || filter.type || filter.state);
+  const shownJobs = useMemo(
+    () =>
+      filtering
+        ? jobs.filter((j) => jobMatches(j, filter, getJobTitle(j as any)))
+        : jobs,
+    [jobs, filter, filtering]
+  );
+
   const { active, finished, finishedTotal } = useMemo(() => {
     const byNewest = (a: QueueJob, b: QueueJob) =>
       Date.parse(b.created_at) - Date.parse(a.created_at);
-    const act = jobs.filter((j) => ACTIVE.has(j.state));
-    const fin = jobs.filter((j) => !ACTIVE.has(j.state)).sort(byNewest);
+    const act = shownJobs.filter((j) => ACTIVE.has(j.state));
+    const fin = shownJobs.filter((j) => !ACTIVE.has(j.state)).sort(byNewest);
     // Running first, then queued/paused in submission order.
     act.sort((a, b) => {
       if ((a.state === 'in_progress') !== (b.state === 'in_progress')) {
@@ -266,7 +365,7 @@ export default function JobQueue() {
       finished: fin.slice(0, MAX_FINISHED_SHOWN),
       finishedTotal: fin.length,
     };
-  }, [jobs]);
+  }, [shownJobs]);
 
   const openFile = useCallback(
     (path: string) => navigateToMedia(libraryService as any, path),
@@ -385,9 +484,74 @@ export default function JobQueue() {
           </button>
         )}
       </div>
+      {jobs.length > 0 && (
+        <div className="jq-filters" role="search">
+          <input
+            type="search"
+            className="jq-search"
+            placeholder="Search command, arguments, input or id…"
+            aria-label="Search jobs"
+            autoComplete="off"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            onKeyDown={(e) => {
+              // Esc in the box clears the search first
+              if (e.key === 'Escape' && search) {
+                e.preventDefault();
+                e.stopPropagation();
+                setSearch('');
+                setFilter({ q: '' });
+              }
+            }}
+          />
+          <select
+            aria-label="Job type"
+            value={filter.type}
+            onChange={(e) => setFilter({ type: e.target.value })}
+          >
+            <option value="">All types</option>
+            {typeOptions.map(([c, n]) => (
+              <option key={c} value={c}>
+                {c} ({n})
+              </option>
+            ))}
+          </select>
+          <select
+            aria-label="Job state"
+            value={filter.state}
+            onChange={(e) => setFilter({ state: e.target.value })}
+          >
+            {STATE_FILTERS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+          {filtering && (
+            <>
+              <span className="jq-count" aria-live="polite">
+                Showing {shownJobs.length} of {jobs.length}
+              </span>
+              <button
+                type="button"
+                className="jq-filter-clear"
+                onClick={() => {
+                  setSearch('');
+                  setFilter(NO_FILTER);
+                }}
+              >
+                Clear filters
+              </button>
+            </>
+          )}
+        </div>
+      )}
       {!loaded && <div className="jq-empty">Loading…</div>}
       {loaded && jobs.length === 0 && (
         <div className="jq-empty">The job queue is empty.</div>
+      )}
+      {filtering && jobs.length > 0 && shownJobs.length === 0 && (
+        <div className="jq-empty">No jobs match these filters.</div>
       )}
       {active.length > 0 && (
         <div className="jq-section">
