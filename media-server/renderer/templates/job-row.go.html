@@ -1,5 +1,11 @@
 {{ define "jobRow" }}
-<div class="jobs-row" id="{{ .ID }}">
+<div
+  class="jobs-row"
+  id="{{ .ID }}"
+  data-command="{{ .Command }}"
+  data-state="{{ printf "%d" .State }}"
+  data-search="{{ .ID }} {{ .Command }} {{ range .Arguments }}{{ . }} {{ end }}{{ .Input }}"
+>
   <div class="jobs-cell state" data-label="State">
     <span class="job-status {{.State}}"></span>
   </div>

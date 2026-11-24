@@ -252,6 +252,64 @@
         color: var(--accent-primary);
       }
 
+      /* Filter bar: search + type + state, applied in the page (filterJobs). */
+      .jobs-filters {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: var(--space-2);
+        padding: var(--space-3) var(--space-4);
+        background: var(--bg-surface);
+        border-bottom: 1px solid var(--border-subtle);
+      }
+
+      .jobs-filters input[type='search'],
+      .jobs-filters select {
+        padding: var(--space-2) var(--space-3);
+        border-radius: var(--radius-lg);
+        border: 1px solid var(--border-default);
+        background: var(--bg-card);
+        color: var(--text-primary);
+        font-size: var(--text-sm);
+      }
+
+      .jobs-filters input[type='search'] {
+        flex: 1 1 260px;
+        min-width: 0;
+        font-family: var(--font-mono);
+      }
+
+      .jobs-filters input[type='search']:focus,
+      .jobs-filters select:focus {
+        outline: none;
+        border-color: var(--accent-primary);
+        box-shadow: 0 0 0 3px var(--accent-primary-dim);
+      }
+
+      .jobs-filters .jobs-count {
+        margin-left: auto;
+        font-size: var(--text-xs);
+        color: var(--text-muted);
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+      }
+
+      .jobs-filters button {
+        font-size: var(--text-xs);
+        padding: var(--space-1) var(--space-3);
+      }
+
+      .jobs-row.filtered-out {
+        display: none;
+      }
+
+      .jobs-no-match {
+        padding: var(--space-5);
+        text-align: center;
+        color: var(--text-muted);
+        font-size: var(--text-sm);
+      }
+
       @media screen and (max-width: 800px) {
         .jobs-header,
         .jobs-row {
@@ -321,6 +379,30 @@
             Clear All
           </button>
         </div>
+        <div class="jobs-filters" role="search">
+          <input
+            type="search"
+            id="jobsSearch"
+            placeholder="Search command, arguments, input or id…"
+            aria-label="Search jobs"
+            autocomplete="off"
+          />
+          <select id="jobsType" aria-label="Job type">
+            <option value="">All types</option>
+          </select>
+          <select id="jobsState" aria-label="Job state">
+            <option value="">All states</option>
+            <option value="active">Active (pending, running, paused)</option>
+            <option value="0">Pending</option>
+            <option value="1">Running</option>
+            <option value="5">Paused</option>
+            <option value="2">Completed</option>
+            <option value="4">Error</option>
+            <option value="3">Cancelled</option>
+          </select>
+          <button type="button" id="jobsFilterClear" class="btn--ghost" hidden>Clear filters</button>
+          <span class="jobs-count" id="jobsCount" aria-live="polite"></span>
+        </div>
         <div class="jobs-header">
           <div class="jobs-cell">State</div>
           <div class="jobs-cell">Command</div>
@@ -344,6 +426,7 @@
           </div>
           {{end}}
         </div>
+        <div id="jobs-no-match" class="jobs-no-match" hidden>No jobs match these filters.</div>
       </div>
     </div>
 
@@ -502,6 +585,7 @@
                 const emptyState = document.getElementById('jobs-empty');
                 if (emptyState) emptyState.remove();
                 jobsElement.insertBefore(node, jobsElement.firstChild);
+                jobsFilterChanged();
               }
             });
             es.addEventListener('update', (event) => {
@@ -518,6 +602,7 @@
                   jobsElement.insertBefore(node, jobsElement.firstChild);
                 }
               }
+              if (node) jobsFilterChanged();
             });
             es.addEventListener('delete', (event) => {
               onActivity();
@@ -525,6 +610,7 @@
               const jobElement = document.getElementById(message.job?.id);
               if (jobElement) jobElement.remove();
               maybeRestoreEmptyState();
+              jobsFilterChanged();
             });
             es.addEventListener('progress', (event) => {
               onActivity();
@@ -753,6 +839,138 @@
       }
       tickElapsed();
       setInterval(tickElapsed, 1000);
+
+      // ---- filters: search (every word must appear in the row's command, arguments, input or id, raw or as shown),
+      // job type and state. Applied in the page, also to rows the stream adds or replaces; kept in the URL
+      // (?q=&type=&state=) so a reload or a shared link keeps them.
+      const jobsFilter = { q: '', type: '', state: '' };
+      const ACTIVE_STATES = ['0', '1', '5'];
+
+      function rowMatches(row, words) {
+        if (jobsFilter.type && row.dataset.command !== jobsFilter.type) return false;
+        if (jobsFilter.state === 'active') {
+          if (!ACTIVE_STATES.includes(row.dataset.state)) return false;
+        } else if (jobsFilter.state && row.dataset.state !== jobsFilter.state) {
+          return false;
+        }
+        if (!words.length) return true;
+        const hay = ((row.dataset.search || '') + ' ' + row.textContent).toLowerCase();
+        return words.every((w) => hay.includes(w));
+      }
+
+      // the type list: every command in the table (with its count), plus the selected one even when no row has it
+      function refreshTypeOptions(rows) {
+        const sel = document.getElementById('jobsType');
+        if (!sel) return;
+        const counts = new Map();
+        rows.forEach((r) => {
+          const c = r.dataset.command || '';
+          if (c) counts.set(c, (counts.get(c) || 0) + 1);
+        });
+        if (jobsFilter.type && !counts.has(jobsFilter.type)) counts.set(jobsFilter.type, 0);
+        const want = ['', ...[...counts.keys()].sort()];
+        const have = [...sel.options].map((o) => o.value);
+        const label = (c) => (c ? `${c} (${counts.get(c)})` : 'All types');
+        if (want.join('\n') === have.join('\n')) {
+          [...sel.options].forEach((o) => (o.textContent = label(o.value)));
+        } else {
+          sel.replaceChildren(
+            ...want.map((c) => {
+              const o = document.createElement('option');
+              o.value = c;
+              o.textContent = label(c);
+              return o;
+            })
+          );
+        }
+        sel.value = jobsFilter.type;
+      }
+
+      function filterJobs() {
+        const rows = [...document.querySelectorAll('#jobs .jobs-row')];
+        refreshTypeOptions(rows);
+        const words = jobsFilter.q.toLowerCase().split(/\s+/).filter(Boolean);
+        let shown = 0;
+        rows.forEach((row) => {
+          const ok = rowMatches(row, words);
+          row.classList.toggle('filtered-out', !ok);
+          if (ok) shown++;
+        });
+        const filtering = !!(jobsFilter.q || jobsFilter.type || jobsFilter.state);
+        const count = document.getElementById('jobsCount');
+        if (count) count.textContent = rows.length ? (filtering ? `Showing ${shown} of ${rows.length}` : `${rows.length} jobs`) : '';
+        const clear = document.getElementById('jobsFilterClear');
+        if (clear) clear.hidden = !filtering;
+        const none = document.getElementById('jobs-no-match');
+        if (none) none.hidden = !(filtering && rows.length && shown === 0);
+      }
+
+      // stream bursts (a big batch queueing) re-filter once per frame
+      let filterFrame = 0;
+      function jobsFilterChanged() {
+        if (filterFrame) return;
+        filterFrame = requestAnimationFrame(() => {
+          filterFrame = 0;
+          filterJobs();
+        });
+      }
+
+      function saveFilterToURL() {
+        const u = new URL(location.href);
+        for (const [k, v] of Object.entries(jobsFilter)) {
+          if (v) u.searchParams.set(k, v);
+          else u.searchParams.delete(k);
+        }
+        history.replaceState(null, '', u);
+      }
+
+      document.addEventListener('DOMContentLoaded', function () {
+        const params = new URLSearchParams(location.search);
+        jobsFilter.q = params.get('q') || '';
+        jobsFilter.type = params.get('type') || '';
+        jobsFilter.state = params.get('state') || '';
+        const search = document.getElementById('jobsSearch');
+        const type = document.getElementById('jobsType');
+        const state = document.getElementById('jobsState');
+        search.value = jobsFilter.q;
+        state.value = jobsFilter.state;
+        let typing = 0;
+        search.addEventListener('input', () => {
+          clearTimeout(typing);
+          typing = setTimeout(() => {
+            jobsFilter.q = search.value.trim();
+            saveFilterToURL();
+            filterJobs();
+          }, 120);
+        });
+        // Esc in the box clears the search first
+        search.addEventListener('keydown', (e) => {
+          if (e.key === 'Escape' && search.value) {
+            e.preventDefault();
+            search.value = '';
+            search.dispatchEvent(new Event('input'));
+          }
+        });
+        type.addEventListener('change', () => {
+          jobsFilter.type = type.value;
+          saveFilterToURL();
+          filterJobs();
+        });
+        state.addEventListener('change', () => {
+          jobsFilter.state = state.value;
+          saveFilterToURL();
+          filterJobs();
+        });
+        document.getElementById('jobsFilterClear').addEventListener('click', () => {
+          jobsFilter.q = jobsFilter.type = jobsFilter.state = '';
+          search.value = '';
+          state.value = '';
+          saveFilterToURL();
+          filterJobs();
+          search.focus();
+        });
+        filterJobs();
+      });
 
       function htmlToNode(html) {
         const template = document.createElement('template');
