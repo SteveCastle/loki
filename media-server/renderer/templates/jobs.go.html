@@ -299,6 +299,98 @@
         padding: var(--space-1) var(--space-3);
       }
 
+      /* Type filter: a dropdown of checkboxes; the checked types are shown, or hidden in Hide mode. */
+      .jobs-types {
+        position: relative;
+      }
+
+      .jobs-filters .jobs-types-btn {
+        padding: var(--space-2) var(--space-3);
+        border-radius: var(--radius-lg);
+        border: 1px solid var(--border-default);
+        background: var(--bg-card);
+        color: var(--text-primary);
+        font-size: var(--text-sm);
+        max-width: 260px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        cursor: pointer;
+      }
+
+      .jobs-types-btn[aria-expanded='true'],
+      .jobs-types-btn:focus-visible {
+        outline: none;
+        border-color: var(--accent-primary);
+        box-shadow: 0 0 0 3px var(--accent-primary-dim);
+      }
+
+      .jobs-types-pop {
+        position: absolute;
+        top: calc(100% + 4px);
+        left: 0;
+        z-index: 20;
+        min-width: 220px;
+        max-height: 360px;
+        overflow-y: auto;
+        padding: var(--space-2);
+        background: var(--bg-elevated, var(--bg-card));
+        border: 1px solid var(--border-default);
+        border-radius: var(--radius-lg);
+        box-shadow: var(--shadow-lg, 0 4px 12px rgba(0, 0, 0, 0.25));
+      }
+
+      .jobs-types-mode {
+        display: flex;
+        gap: 2px;
+        margin-bottom: var(--space-2);
+      }
+
+      .jobs-filters .jobs-types-mode button {
+        flex: 1;
+        padding: var(--space-1) var(--space-2);
+        border-radius: var(--radius-md, 6px);
+        border: 1px solid var(--border-default);
+        background: transparent;
+        color: var(--text-secondary);
+        cursor: pointer;
+      }
+
+      .jobs-filters .jobs-types-mode button[aria-pressed='true'] {
+        background: var(--accent-primary-dim);
+        border-color: var(--accent-primary);
+        color: var(--text-primary);
+      }
+
+      .jobs-types-list label {
+        display: flex;
+        align-items: center;
+        gap: var(--space-2);
+        padding: 3px var(--space-2);
+        border-radius: var(--radius-md, 6px);
+        font-size: var(--text-sm);
+        color: var(--text-primary);
+        cursor: pointer;
+        white-space: nowrap;
+      }
+
+      .jobs-types-list label:hover {
+        background: var(--bg-hover, rgba(255, 255, 255, 0.06));
+      }
+
+      .jobs-types-list .n {
+        margin-left: auto;
+        padding-left: var(--space-3);
+        color: var(--text-muted);
+        font-size: var(--text-xs);
+        font-variant-numeric: tabular-nums;
+      }
+
+      .jobs-filters .jobs-types-none {
+        width: 100%;
+        margin-top: var(--space-2);
+      }
+
       .jobs-row.filtered-out {
         display: none;
       }
@@ -387,9 +479,17 @@
             aria-label="Search jobs"
             autocomplete="off"
           />
-          <select id="jobsType" aria-label="Job type">
-            <option value="">All types</option>
-          </select>
+          <div class="jobs-types" id="jobsTypes">
+            <button type="button" class="jobs-types-btn" id="jobsTypesBtn" aria-haspopup="true" aria-expanded="false">All types ▾</button>
+            <div class="jobs-types-pop" id="jobsTypesPop" role="group" aria-label="Job types" hidden>
+              <div class="jobs-types-mode">
+                <button type="button" data-mode="show" aria-pressed="true" title="Show only the checked types">Show</button>
+                <button type="button" data-mode="hide" aria-pressed="false" title="Show every type but the checked ones">Hide</button>
+              </div>
+              <div class="jobs-types-list" id="jobsTypesList"></div>
+              <button type="button" class="btn--ghost jobs-types-none" id="jobsTypesNone">All types</button>
+            </div>
+          </div>
           <select id="jobsState" aria-label="Job state">
             <option value="">All states</option>
             <option value="active">Active (pending, running, paused)</option>
@@ -841,13 +941,18 @@
       setInterval(tickElapsed, 1000);
 
       // ---- filters: search (every word must appear in the row's command, arguments, input or id, raw or as shown),
-      // job type and state. Applied in the page, also to rows the stream adds or replaces; kept in the URL
-      // (?q=&type=&state=) so a reload or a shared link keeps them.
-      const jobsFilter = { q: '', type: '', state: '' };
+      // job types and state. Applied in the page, also to rows the stream adds or replaces; kept in the URL
+      // (?q=&type=a,b&typeMode=hide&state=) so a reload or a shared link keeps them. The checked types are shown
+      // (typeMode show) or hidden (hide); none checked = every type.
+      const jobsFilter = { q: '', types: [], typeMode: 'show', state: '' };
       const ACTIVE_STATES = ['0', '1', '5'];
 
+      function typeFiltering() {
+        return jobsFilter.types.length > 0;
+      }
+
       function rowMatches(row, words) {
-        if (jobsFilter.type && row.dataset.command !== jobsFilter.type) return false;
+        if (typeFiltering() && jobsFilter.types.includes(row.dataset.command || '') !== (jobsFilter.typeMode === 'show')) return false;
         if (jobsFilter.state === 'active') {
           if (!ACTIVE_STATES.includes(row.dataset.state)) return false;
         } else if (jobsFilter.state && row.dataset.state !== jobsFilter.state) {
@@ -858,32 +963,54 @@
         return words.every((w) => hay.includes(w));
       }
 
-      // the type list: every command in the table (with its count), plus the selected one even when no row has it
+      // the type list: every command in the table (with its count), plus checked ones no row has any more.
+      // Rebuilt only when the set of types changes, so a checkbox keeps focus while the stream updates counts.
       function refreshTypeOptions(rows) {
-        const sel = document.getElementById('jobsType');
-        if (!sel) return;
+        const list = document.getElementById('jobsTypesList');
+        if (!list) return;
         const counts = new Map();
         rows.forEach((r) => {
           const c = r.dataset.command || '';
           if (c) counts.set(c, (counts.get(c) || 0) + 1);
         });
-        if (jobsFilter.type && !counts.has(jobsFilter.type)) counts.set(jobsFilter.type, 0);
-        const want = ['', ...[...counts.keys()].sort()];
-        const have = [...sel.options].map((o) => o.value);
-        const label = (c) => (c ? `${c} (${counts.get(c)})` : 'All types');
-        if (want.join('\n') === have.join('\n')) {
-          [...sel.options].forEach((o) => (o.textContent = label(o.value)));
-        } else {
-          sel.replaceChildren(
+        jobsFilter.types.forEach((t) => {
+          if (!counts.has(t)) counts.set(t, 0);
+        });
+        const want = [...counts.keys()].sort();
+        const have = [...list.querySelectorAll('input')].map((i) => i.value);
+        if (want.join('\n') !== have.join('\n')) {
+          list.replaceChildren(
             ...want.map((c) => {
-              const o = document.createElement('option');
-              o.value = c;
-              o.textContent = label(c);
-              return o;
+              const label = document.createElement('label');
+              const box = document.createElement('input');
+              box.type = 'checkbox';
+              box.value = c;
+              const name = document.createElement('span');
+              name.textContent = c;
+              const n = document.createElement('span');
+              n.className = 'n';
+              label.append(box, name, n);
+              return label;
             })
           );
         }
-        sel.value = jobsFilter.type;
+        list.querySelectorAll('label').forEach((label) => {
+          const box = label.querySelector('input');
+          box.checked = jobsFilter.types.includes(box.value);
+          label.querySelector('.n').textContent = String(counts.get(box.value) || 0);
+        });
+        document.querySelectorAll('#jobsTypesPop .jobs-types-mode button').forEach((b) => {
+          b.setAttribute('aria-pressed', String(b.dataset.mode === jobsFilter.typeMode));
+        });
+        const btn = document.getElementById('jobsTypesBtn');
+        const t = jobsFilter.types;
+        let text = 'All types';
+        if (t.length) {
+          const names = t.length <= 2 ? t.join(', ') : `${t.length} types`;
+          text = jobsFilter.typeMode === 'hide' ? `All but ${names}` : names;
+        }
+        btn.textContent = `${text} ▾`;
+        btn.title = t.length ? `${jobsFilter.typeMode === 'hide' ? 'Hiding' : 'Showing'}: ${t.join(', ')}` : 'Filter by job type';
       }
 
       function filterJobs() {
@@ -896,7 +1023,7 @@
           row.classList.toggle('filtered-out', !ok);
           if (ok) shown++;
         });
-        const filtering = !!(jobsFilter.q || jobsFilter.type || jobsFilter.state);
+        const filtering = !!(jobsFilter.q || typeFiltering() || jobsFilter.state);
         const count = document.getElementById('jobsCount');
         if (count) count.textContent = rows.length ? (filtering ? `Showing ${shown} of ${rows.length}` : `${rows.length} jobs`) : '';
         const clear = document.getElementById('jobsFilterClear');
@@ -917,7 +1044,13 @@
 
       function saveFilterToURL() {
         const u = new URL(location.href);
-        for (const [k, v] of Object.entries(jobsFilter)) {
+        const params = {
+          q: jobsFilter.q,
+          type: jobsFilter.types.join(','),
+          typeMode: jobsFilter.types.length && jobsFilter.typeMode === 'hide' ? 'hide' : '',
+          state: jobsFilter.state,
+        };
+        for (const [k, v] of Object.entries(params)) {
           if (v) u.searchParams.set(k, v);
           else u.searchParams.delete(k);
         }
@@ -927,11 +1060,14 @@
       document.addEventListener('DOMContentLoaded', function () {
         const params = new URLSearchParams(location.search);
         jobsFilter.q = params.get('q') || '';
-        jobsFilter.type = params.get('type') || '';
+        jobsFilter.types = (params.get('type') || '').split(',').map((t) => t.trim()).filter(Boolean);
+        jobsFilter.typeMode = params.get('typeMode') === 'hide' ? 'hide' : 'show';
         jobsFilter.state = params.get('state') || '';
         const search = document.getElementById('jobsSearch');
-        const type = document.getElementById('jobsType');
         const state = document.getElementById('jobsState');
+        const typesBox = document.getElementById('jobsTypes');
+        const typesBtn = document.getElementById('jobsTypesBtn');
+        const typesPop = document.getElementById('jobsTypesPop');
         search.value = jobsFilter.q;
         state.value = jobsFilter.state;
         let typing = 0;
@@ -951,10 +1087,43 @@
             search.dispatchEvent(new Event('input'));
           }
         });
-        type.addEventListener('change', () => {
-          jobsFilter.type = type.value;
+        const typesChanged = () => {
           saveFilterToURL();
           filterJobs();
+        };
+        const openTypes = (open) => {
+          typesPop.hidden = !open;
+          typesBtn.setAttribute('aria-expanded', String(open));
+        };
+        typesBtn.addEventListener('click', () => openTypes(typesPop.hidden));
+        typesPop.addEventListener('change', (e) => {
+          const box = e.target;
+          if (!(box instanceof HTMLInputElement)) return;
+          jobsFilter.types = box.checked
+            ? [...jobsFilter.types.filter((t) => t !== box.value), box.value]
+            : jobsFilter.types.filter((t) => t !== box.value);
+          typesChanged();
+        });
+        typesPop.querySelectorAll('.jobs-types-mode button').forEach((b) =>
+          b.addEventListener('click', () => {
+            jobsFilter.typeMode = b.dataset.mode === 'hide' ? 'hide' : 'show';
+            typesChanged();
+          })
+        );
+        document.getElementById('jobsTypesNone').addEventListener('click', () => {
+          jobsFilter.types = [];
+          typesChanged();
+        });
+        // closes on a click outside it or Esc (back on its button)
+        document.addEventListener('mousedown', (e) => {
+          if (!typesPop.hidden && !typesBox.contains(e.target)) openTypes(false);
+        });
+        typesBox.addEventListener('keydown', (e) => {
+          if (e.key === 'Escape' && !typesPop.hidden) {
+            e.preventDefault();
+            openTypes(false);
+            typesBtn.focus();
+          }
         });
         state.addEventListener('change', () => {
           jobsFilter.state = state.value;
@@ -962,7 +1131,9 @@
           filterJobs();
         });
         document.getElementById('jobsFilterClear').addEventListener('click', () => {
-          jobsFilter.q = jobsFilter.type = jobsFilter.state = '';
+          jobsFilter.q = jobsFilter.state = '';
+          jobsFilter.types = [];
+          jobsFilter.typeMode = 'show';
           search.value = '';
           state.value = '';
           saveFilterToURL();

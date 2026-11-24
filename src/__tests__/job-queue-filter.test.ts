@@ -1,4 +1,4 @@
-import { jobMatches, NO_FILTER, type QueueJob } from '../renderer/components/metadata/job-queue';
+import { jobMatches, NO_FILTER, typesLabel, type QueueJob } from '../renderer/components/metadata/job-queue';
 
 const job = (over: Partial<QueueJob>): QueueJob => ({
   id: 'abc-123',
@@ -23,10 +23,23 @@ describe('job queue filter', () => {
   });
 
   it('filters by type and state, with active = queued, running or paused', () => {
-    expect(jobMatches(job({}), { ...NO_FILTER, type: 'dream' })).toBe(false);
-    expect(jobMatches(job({}), { ...NO_FILTER, type: 'reshoot', state: 'pending' })).toBe(true);
+    expect(jobMatches(job({}), { ...NO_FILTER, types: ['dream'] })).toBe(false);
+    expect(jobMatches(job({}), { ...NO_FILTER, types: ['dream', 'reshoot'], state: 'pending' })).toBe(true);
     expect(jobMatches(job({ state: 'paused' }), { ...NO_FILTER, state: 'active' })).toBe(true);
     expect(jobMatches(job({ state: 'completed' }), { ...NO_FILTER, state: 'active' })).toBe(false);
     expect(jobMatches(job({ state: 'error' }), { ...NO_FILTER, state: 'error' })).toBe(true);
+  });
+
+  it('hides the checked types in Hide mode', () => {
+    const hide = { ...NO_FILTER, types: ['reshoot', 'enhance-prompt'], typeMode: 'hide' as const };
+    expect(jobMatches(job({}), hide)).toBe(false);
+    expect(jobMatches(job({ command: 'dream' }), hide)).toBe(true);
+    expect(jobMatches(job({ command: 'dream' }), { ...hide, types: [] })).toBe(true);
+  });
+
+  it('labels the type button', () => {
+    expect(typesLabel(NO_FILTER)).toBe('All types');
+    expect(typesLabel({ types: ['dream', 'reshoot'], typeMode: 'show' })).toBe('dream, reshoot');
+    expect(typesLabel({ types: ['a', 'b', 'c'], typeMode: 'hide' })).toBe('All but 3 types');
   });
 });

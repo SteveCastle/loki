@@ -1,4 +1,4 @@
-import { useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useSelector } from '@xstate/react';
 import { GlobalStateContext } from '../../state';
 import { mediaServerBase, send } from '../../platform';
@@ -139,13 +139,14 @@ const STATE_LABEL: Record<string, string> = {
 export interface JobFilter {
   /** Words that must all appear in the job's command, arguments, input, id or title. */
   q: string;
-  /** A command ('' = every type). */
-  type: string;
+  /** Commands to show (typeMode 'show') or hide ('hide'); none = every type. */
+  types: string[];
+  typeMode: 'show' | 'hide';
   /** A state, 'active' (pending, running, paused) or '' = every state. */
   state: string;
 }
 
-export const NO_FILTER: JobFilter = { q: '', type: '', state: '' };
+export const NO_FILTER: JobFilter = { q: '', types: [], typeMode: 'show', state: '' };
 
 export const STATE_FILTERS: Array<{ value: string; label: string }> = [
   { value: '', label: 'All states' },
@@ -160,7 +161,7 @@ export const STATE_FILTERS: Array<{ value: string; label: string }> = [
 
 /** Whether a job passes the filter (the server Jobs page's filters: search, type, state). */
 export function jobMatches(job: QueueJob, f: JobFilter, title = ''): boolean {
-  if (f.type && job.command !== f.type) return false;
+  if (f.types.length && f.types.includes(job.command) !== (f.typeMode === 'show')) return false;
   if (f.state === 'active') {
     if (!ACTIVE.has(job.state)) return false;
   } else if (f.state && job.state !== f.state) {
@@ -181,9 +182,16 @@ function loadFilter(): JobFilter {
   try {
     const raw = JSON.parse(window.localStorage.getItem(FILTER_KEY) || 'null');
     if (raw && typeof raw === 'object') {
+      let types: string[] = [];
+      if (Array.isArray(raw.types)) {
+        types = raw.types.filter((t: unknown) => typeof t === 'string' && t);
+      } else if (typeof raw.type === 'string' && raw.type) {
+        types = [raw.type]; // saved before types could be combined
+      }
       return {
         q: typeof raw.q === 'string' ? raw.q : '',
-        type: typeof raw.type === 'string' ? raw.type : '',
+        types,
+        typeMode: raw.typeMode === 'hide' ? 'hide' : 'show',
         state: STATE_FILTERS.some((o) => o.value === raw.state) ? raw.state : '',
       };
     }
@@ -199,6 +207,107 @@ function saveFilter(f: JobFilter) {
   } catch {
     // not kept
   }
+}
+
+/** The type filter's button text: every type, the checked ones, or every type but them. */
+export function typesLabel(f: Pick<JobFilter, 'types' | 'typeMode'>): string {
+  if (!f.types.length) return 'All types';
+  const names = f.types.length <= 2 ? f.types.join(', ') : `${f.types.length} types`;
+  return f.typeMode === 'hide' ? `All but ${names}` : names;
+}
+
+/** A dropdown of checkboxes, one per job type, with Show / Hide for the checked ones. */
+function TypeFilter({
+  options,
+  filter,
+  onChange,
+}: {
+  options: Array<[string, number]>;
+  filter: JobFilter;
+  onChange: (patch: Partial<JobFilter>) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const box = useRef<HTMLDivElement>(null);
+  const button = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDown = (e: MouseEvent) => {
+      if (box.current && !box.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [open]);
+  const toggle = (c: string, on: boolean) =>
+    onChange({
+      types: on
+        ? [...filter.types.filter((t) => t !== c), c]
+        : filter.types.filter((t) => t !== c),
+    });
+  return (
+    <div
+      className="jq-types"
+      ref={box}
+      onKeyDown={(e) => {
+        if (e.key === 'Escape' && open) {
+          e.preventDefault();
+          e.stopPropagation();
+          setOpen(false);
+          button.current?.focus();
+        }
+      }}
+    >
+      <button
+        type="button"
+        ref={button}
+        className="jq-types-btn"
+        aria-haspopup="true"
+        aria-expanded={open}
+        title={
+          filter.types.length
+            ? `${filter.typeMode === 'hide' ? 'Hiding' : 'Showing'}: ${filter.types.join(', ')}`
+            : 'Filter by job type'
+        }
+        onClick={() => setOpen((v) => !v)}
+      >
+        {typesLabel(filter)} ▾
+      </button>
+      {open && (
+        <div className="jq-types-pop" role="group" aria-label="Job types">
+          <div className="jq-types-mode">
+            {(['show', 'hide'] as const).map((m) => (
+              <button
+                key={m}
+                type="button"
+                aria-pressed={filter.typeMode === m}
+                title={m === 'show' ? 'Show only the checked types' : 'Show every type but the checked ones'}
+                onClick={() => onChange({ typeMode: m })}
+              >
+                {m === 'show' ? 'Show' : 'Hide'}
+              </button>
+            ))}
+          </div>
+          {options.map(([c, n]) => (
+            <label key={c} className="jq-types-item">
+              <input
+                type="checkbox"
+                checked={filter.types.includes(c)}
+                onChange={(e) => toggle(c, e.target.checked)}
+              />
+              <span className="jq-types-name">{c}</span>
+              <span className="jq-types-n">{n}</span>
+            </label>
+          ))}
+          <button
+            type="button"
+            className="jq-types-none"
+            onClick={() => onChange({ types: [] })}
+          >
+            All types
+          </button>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function timeAgo(iso: string): string {
@@ -329,17 +438,19 @@ export default function JobQueue() {
     [headers, libraryService, refetch]
   );
 
-  // every type in the list, with its count, plus the selected one even when no job has it
+  // every type in the list, with its count, plus checked ones no job has any more
   const typeOptions = useMemo(() => {
     const counts = new Map<string, number>();
     jobs.forEach((j) => {
       if (j.command) counts.set(j.command, (counts.get(j.command) || 0) + 1);
     });
-    if (filter.type && !counts.has(filter.type)) counts.set(filter.type, 0);
+    filter.types.forEach((t) => {
+      if (!counts.has(t)) counts.set(t, 0);
+    });
     return [...counts.entries()].sort((a, b) => a[0].localeCompare(b[0]));
-  }, [jobs, filter.type]);
+  }, [jobs, filter.types]);
 
-  const filtering = !!(filter.q || filter.type || filter.state);
+  const filtering = !!(filter.q || filter.types.length || filter.state);
   const shownJobs = useMemo(
     () =>
       filtering
@@ -504,18 +615,7 @@ export default function JobQueue() {
               }
             }}
           />
-          <select
-            aria-label="Job type"
-            value={filter.type}
-            onChange={(e) => setFilter({ type: e.target.value })}
-          >
-            <option value="">All types</option>
-            {typeOptions.map(([c, n]) => (
-              <option key={c} value={c}>
-                {c} ({n})
-              </option>
-            ))}
-          </select>
+          <TypeFilter options={typeOptions} filter={filter} onChange={setFilter} />
           <select
             aria-label="Job state"
             value={filter.state}
