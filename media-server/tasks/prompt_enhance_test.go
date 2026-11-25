@@ -76,16 +76,16 @@ func TestEnhanceLongVideoSegments(t *testing.T) {
 		t.Errorf("without shared part = %q %q", shared, got)
 	}
 
-	if got := ComposeChunkPrompt("defs\n{chunk}\nsound", "action"); got != "defs\naction\nsound" {
+	if got := ComposeChunkPrompt("defs\n{chunk}\nsound", "action", 0); got != "defs\naction\nsound" {
 		t.Errorf("compose in slot = %q", got)
 	}
-	if got := ComposeChunkPrompt("defs\n  {chunk}  \nsound", ""); got != "defs\nsound" {
+	if got := ComposeChunkPrompt("defs\n  {chunk}  \nsound", "", 1); got != "defs\nsound" {
 		t.Errorf("compose empty slot = %q", got)
 	}
-	if got := ComposeChunkPrompt("a woman in a red coat", "she waves"); got != "a woman in a red coat\n\nshe waves" {
+	if got := ComposeChunkPrompt("a woman in a red coat", "she waves", 1); got != "a woman in a red coat\n\nshe waves" {
 		t.Errorf("compose without slot = %q", got)
 	}
-	if got := ComposeChunkPrompt("", "she waves"); got != "she waves" {
+	if got := ComposeChunkPrompt("", "she waves", 0); got != "she waves" {
 		t.Errorf("compose without shared = %q", got)
 	}
 

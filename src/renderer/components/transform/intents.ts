@@ -729,22 +729,171 @@ export function chunkSpans(chunks: number[]): Array<[number, number]> {
 /** The line of a shared part where each chunk's own part goes (else it follows the shared part). */
 export const CHUNK_SLOT = '{chunk}';
 
-/** The prompt one chunk runs with: `shared` with the chunk's part in its {chunk} line, or after it (the server's ComposeChunkPrompt). */
-export function composeChunkPrompt(shared: string, part: string): string {
-  const seg = part.trim();
+// The H3 video format (the server's prompt_guides/h3-video.md): six sections, each a name and a colon. Its summary and
+// detailed_description are the time-dependent ones and belong to the chunk; the server's tasks/prompt_chunks.go is the
+// same rule (pinned on both sides by the same cases).
+const H3_HEADER = /^\s*(subject_definitions|summary|retention_analysis|detailed_description|overall_soundscape|non_diegetic_music)\s*:/;
+const isTimeSection = (name: string) => name === 'summary' || name === 'detailed_description';
+
+interface PromptSection {
+  /** '' = the text before the first header */
+  name: string;
+  lines: string[];
+}
+
+function promptSections(s: string): PromptSection[] {
+  const out: PromptSection[] = [];
+  s.replace(/\r\n/g, '\n')
+    .split('\n')
+    .forEach((l) => {
+      const m = l.match(H3_HEADER);
+      if (m) {
+        out.push({ name: m[1], lines: [l] });
+        return;
+      }
+      if (!out.length) out.push({ name: '', lines: [] });
+      out[out.length - 1].lines.push(l);
+    });
+  return out;
+}
+
+function sectionBody(p: PromptSection): string {
+  const lines = [...p.lines];
+  if (p.name && lines.length) lines[0] = lines[0].slice(lines[0].indexOf(':') + 1);
+  return lines.join('\n').trim();
+}
+
+/** The prompt is in the H3 video format's sections. */
+export const isStructured = (s: string) => s.split('\n').some((l) => H3_HEADER.test(l));
+const hasSection = (s: string, name: string) => promptSections(s).some((p) => p.name === name);
+const hasSlot = (s: string) => s.split('\n').some((l) => l.trim() === CHUNK_SLOT);
+const SUMMARY_TAG = /^\s*\[([^\]]+)\]/;
+/** a summary line's task type, also on the header line itself */
+const SUMMARY_TAG_LINE = /^((?:\s*summary\s*:)?\s*\[)([^\]]+)\]/;
+/** a shared-part line that pins a reference picture to the video's start */
+const FIRST_FRAME_LINE = /^\s*[-*]?\s*<Picture \d+>.*\b(first frame|opening|begins|starts)\b/i;
+
+/** The gist of a chunk's part for its summary: its first sentence without dialogue or shot markers. */
+function leadSentence(part: string): string {
+  let s = part
+    .replace(/<d>[\s\S]*?<\/d>/g, '')
+    .replace(/\[Shot \d+\]\s*/g, '')
+    .split(/\s+/)
+    .filter(Boolean)
+    .join(' ');
+  const end = s.search(/[.!?](\s|$)/);
+  if (end >= 0) s = s.slice(0, end + 1);
+  if (s.length > 240) {
+    const cut = s.slice(0, 240).lastIndexOf(' ');
+    s = `${s.slice(0, cut < 0 ? 240 : cut)}…`;
+  }
+  return s;
+}
+
+/** A chunk's part as the time-dependent sections of the structured shared part (a part with headers is kept). */
+function chunkTimeSections(secs: PromptSection[], part: string): string {
+  if (isStructured(part)) return part;
+  let tag = '';
+  let lead = '';
+  let hadSummary = false;
+  secs.forEach((p) => {
+    if (p.name === 'summary') {
+      hadSummary = true;
+      const m = sectionBody(p).match(SUMMARY_TAG);
+      if (m) tag = `[${m[1].trim()}] `;
+    } else if (p.name === 'detailed_description') {
+      lead = sectionBody(p);
+      const i = lead.indexOf('[Shot');
+      if (i >= 0) lead = lead.slice(0, i);
+      lead = lead.trim();
+    }
+  });
+  let out = hadSummary ? `summary:\n${tag}${leadSentence(part)}\n\n` : '';
+  out += 'detailed_description:\n';
+  if (lead && !part.startsWith(lead)) out += `${lead}\n`;
+  return out + part;
+}
+
+/** The shared part with a {chunk} line and the chunk's part to put there (the server's slotChunk). */
+function slotChunk(shared: string, rawPart: string): [string, string] {
+  const part = rawPart.trim();
+  if (!part || !isStructured(shared)) return [shared, part];
+  if (hasSlot(shared)) {
+    return [shared, !isStructured(part) && !hasSection(shared, 'detailed_description') ? `detailed_description:\n${part}` : part];
+  }
+  if (!hasSection(shared, 'detailed_description') && !hasSection(shared, 'summary')) return [shared, part];
+  const secs = promptSections(shared);
+  const lines: string[] = [];
+  let slotted = false;
+  secs.forEach((p) => {
+    if (!isTimeSection(p.name)) {
+      lines.push(...p.lines);
+    } else if (!slotted) {
+      lines.push(CHUNK_SLOT, '');
+      slotted = true;
+    }
+  });
+  return [lines.join('\n').trim(), chunkTimeSections(secs, part)];
+}
+
+/** A later chunk continues the one before: no first-frame anchoring, no keyframe completion task type. */
+function continuationOnly(s: string): string {
+  if (!isStructured(s)) return s;
+  let section = '';
+  const out: string[] = [];
+  s.split('\n').forEach((line) => {
+    let l = line;
+    const m = l.match(H3_HEADER);
+    if (m) [, section] = m;
+    if ((section === 'subject_definitions' || section === 'retention_analysis') && FIRST_FRAME_LINE.test(l)) return;
+    if (section === 'summary') {
+      l = l.replace(SUMMARY_TAG_LINE, (_all, head: string, types: string) => {
+        const keep = types
+          .split('+')
+          .map((t) => t.trim())
+          .filter((t) => t && t.toLowerCase() !== 'keyframe completion');
+        return `${head}${(keep.length ? keep : ['reference generation']).join(' + ')}]`;
+      });
+    }
+    out.push(l);
+  });
+  return out.join('\n');
+}
+
+/**
+ * The prompt chunk `chunk` (0-based) runs with: `shared` with the chunk's part in its {chunk} line, or in place of a
+ * structured shared part's summary / detailed_description (else every chunk replays the whole story), or after it.
+ * The server's ComposeChunkPrompt.
+ */
+export function composeChunkPrompt(rawShared: string, rawPart: string, chunk = 0): string {
+  const [shared, seg] = slotChunk(rawShared, rawPart);
   const lines = shared.replace(/\r\n/g, '\n').split('\n');
   const slot = lines.findIndex((l) => l.trim() === CHUNK_SLOT);
-  if (slot >= 0) {
-    const out = [...lines.slice(0, slot), ...(seg ? [seg] : []), ...lines.slice(slot + 1)];
-    return out.join('\n').trim();
-  }
-  return [shared.trim(), seg].filter(Boolean).join('\n\n');
+  const out =
+    slot >= 0
+      ? [...lines.slice(0, slot), ...(seg ? [seg] : []), ...lines.slice(slot + 1)].join('\n').trim()
+      : [shared.trim(), seg].filter(Boolean).join('\n\n');
+  return h3Order(chunk > 0 ? continuationOnly(out) : out);
+}
+
+const H3_SECTIONS = ['subject_definitions', 'summary', 'retention_analysis', 'detailed_description', 'overall_soundscape', 'non_diegetic_music'];
+
+/** A structured prompt's sections in the guide's order (one {chunk} slot holds both time-dependent sections). */
+function h3Order(s: string): string {
+  if (!isStructured(s)) return s;
+  const rank = (name: string) => H3_SECTIONS.indexOf(name) + 1;
+  return promptSections(s)
+    .map((p, i) => ({ p, i }))
+    .sort((a, b) => rank(a.p.name) - rank(b.p.name) || a.i - b.i)
+    .map(({ p }) => p.lines.join('\n').trim())
+    .filter(Boolean)
+    .join('\n\n');
 }
 
 /** Each of `n` chunks' whole prompt (one with nothing at all repeats the one before, as the engine would). */
 export function chunkedPrompts(shared: string, parts: string[], n: number): string[] {
   const out: string[] = [];
-  for (let i = 0; i < n; i += 1) out.push(composeChunkPrompt(shared, parts[i] || '') || out[i - 1] || '');
+  for (let i = 0; i < n; i += 1) out.push(composeChunkPrompt(shared, parts[i] || '', i) || out[i - 1] || '');
   return out;
 }
 

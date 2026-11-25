@@ -164,7 +164,7 @@ func enhancedArgs(args []string, res EnhanceResult) []string {
 	}
 	prompts := make([]string, len(res.Segments))
 	for i, sg := range res.Segments {
-		prompts[i] = ComposeChunkPrompt(res.Prompt, sg)
+		prompts[i] = ComposeChunkPrompt(res.Prompt, sg, i)
 	}
 	args = withPrompt(args, prompts[0])
 	return withArg(args, "--chunkprompts", strings.Join(prompts[1:], "\n---\n"))

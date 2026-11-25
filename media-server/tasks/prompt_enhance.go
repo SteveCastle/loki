@@ -211,8 +211,10 @@ func enhanceSystemPrompt(req EnhanceRequest, guide string) string {
 		}
 		b.WriteString("Each segment continues seamlessly from the last moment of the one before (same shot, no cut). The model sees one segment at a time: the SHARED part with that segment's own part put in place of the line {chunk}. Write the prompt in that form:\n")
 		fmt.Fprintf(&b, "- First the SHARED part: everything that holds for the whole video, in the guide's section order (who or what is in it with their reference tokens, appearance, clothing and voice; the setting; the style and light; the ongoing soundscape and the music). Where the time-dependent sections go (for this guide: summary and detailed_description), write a line containing only {chunk}.\n")
-		fmt.Fprintf(&b, "- Then a line containing only ===, then the %d segment parts in order, separated by lines containing only ---. A segment part holds only the time-dependent sections, for that segment's time span. No headings, numbers or labels of your own.\n", len(spans))
+		fmt.Fprintf(&b, "- Then a line containing only ===, then the %d segment parts in order, separated by lines containing only ---. A segment part holds only the time-dependent sections (for this guide: summary and detailed_description, each starting with its name and a colon as in the guide), for that segment's time span and nothing else. No segment numbers or labels of your own.\n", len(spans))
 		b.WriteString("- Never repeat the shared descriptions inside the segment parts; refer to people and things by the same labels.\n")
+		b.WriteString("- The SHARED part never tells the story: no actions, no events and no dialogue lines (a speaker's voice may be described there, but every spoken line goes in a segment part).\n")
+		b.WriteString("- Only segment 1 may begin from a reference picture. The SHARED part never says that a picture is a first frame, an opening or a keyframe, and from segment 2 on the summary never names keyframe completion: those segments begin where the one before ended.\n")
 		b.WriteString("- Divide the user's action, dialogue and sound events over the segments in story order, about as much as fits each segment's length: each happens in exactly one segment and is never repeated. Each spoken line goes whole into one segment.\n")
 		b.WriteString("- Segment 2 onwards picks up mid-scene where the previous segment ended: say where people are and what they are doing at that moment, then what happens next. Never describe an opening, an establishing shot, an introduction, a cut or an ending before the last segment.\n")
 		b.WriteString("- If the user already wrote text for some segments, keep its content in those segments.\n")
@@ -247,34 +249,6 @@ func chunkSpans(chunks []int) [][2]float64 {
 }
 
 func secs(s float64) string { return fmt.Sprintf("%.1f s", s) }
-
-// ChunkSlot is the line of a chunked prompt's shared part where each chunk's
-// own part goes; without it the chunk's part follows the shared one.
-const ChunkSlot = "{chunk}"
-
-// ComposeChunkPrompt is the prompt one chunk of a long video runs with: the
-// shared part with the chunk's own part in its {chunk} line (or after it).
-// The renderer's composeChunkPrompt (intents.ts) is the same rule.
-func ComposeChunkPrompt(shared, segment string) string {
-	segment = strings.TrimSpace(segment)
-	lines := strings.Split(strings.ReplaceAll(shared, "\r\n", "\n"), "\n")
-	for i, l := range lines {
-		if strings.TrimSpace(l) == ChunkSlot {
-			out := append(append(append([]string{}, lines[:i]...), segment), lines[i+1:]...)
-			if segment == "" {
-				out = append(append([]string{}, lines[:i]...), lines[i+1:]...)
-			}
-			return strings.TrimSpace(strings.Join(out, "\n"))
-		}
-	}
-	var parts []string
-	for _, p := range []string{strings.TrimSpace(shared), segment} {
-		if p != "" {
-			parts = append(parts, p)
-		}
-	}
-	return strings.Join(parts, "\n\n")
-}
 
 // enhanceSegmentLabel is a heading a model puts above a part anyway.
 var enhanceSegmentLabel = regexp.MustCompile(`(?i)^[#*\s]*(?:(?:segment|chunk|part|clip)\s*\d+\b|shared(?: part)?\b)[^\n]{0,60}\n`)
@@ -417,7 +391,7 @@ func enhancePrompt(ctx context.Context, req EnhanceRequest, logf func(string)) (
 		return out, err
 	}
 	if segments > 1 {
-		out.Prompt, out.Segments = splitEnhancedChunks(answer, segments)
+		out.Prompt, out.Segments = structureChunks(splitEnhancedChunks(answer, segments))
 		written := 0
 		for _, sg := range out.Segments {
 			if sg != "" {

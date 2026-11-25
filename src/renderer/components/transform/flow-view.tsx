@@ -39,6 +39,7 @@ import {
   reshootChunks,
   chunkSpans,
   chunkedPrompts,
+  isStructured,
   CHUNK_SLOT,
   runSummary,
   SAME_VIEW,
@@ -825,6 +826,11 @@ function ChunkParts({
           {slotted ? (
             <>
               Each chunk&apos;s text goes in the <code>{CHUNK_SLOT}</code> line above.
+            </>
+          ) : isStructured(shared) ? (
+            <>
+              Each chunk&apos;s text takes the place of the summary and detailed_description above, so the whole story is not repeated in
+              every chunk.
             </>
           ) : (
             <>

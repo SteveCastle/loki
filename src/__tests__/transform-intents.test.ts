@@ -212,6 +212,65 @@ describe('buildJobs: reshoot', () => {
     expect(chunkedPrompts('', ['a', ''], 3)).toEqual(['a', 'a', 'a']);
   });
 
+  // the same cases as media-server/tasks/prompt_chunks_test.go
+  const wholeStoryShared = [
+    'subject_definitions:',
+    '<Subject 1> is the woman in <Picture 1>, with short grey hair and a green raincoat.',
+    '<Picture 1> is the first frame of [Shot 1].',
+    '',
+    'summary:',
+    '[keyframe completion + audio reference] The video begins from <Picture 1> and shows <Subject 1> crossing the harbour and calling out to a boat.',
+    '',
+    'retention_analysis:',
+    '<Subject 1> (appears in [Shot 1]): fully_preserved - her face, hair and raincoat are retained.',
+    '<Picture 1> ([Shot 1] first frame): fully_preserved - the composition is retained at the opening.',
+    '',
+    'detailed_description:',
+    'The target video is a live-action, naturalistic film in soft overcast light.',
+    '[Shot 1] The shot begins from <Picture 1>. <Subject 1> (S1) walks along the quay and says, <d>[English] Wait for me!</d> She waves.',
+    '',
+    'overall_soundscape:',
+    'Gulls, lapping water and her footsteps on wet stone.',
+    '',
+    'non_diegetic_music:',
+    'N/A',
+  ].join('\n');
+
+  it('gives a structured shared part’s story sections to each chunk', () => {
+    const parts = [
+      '[Shot 1] The shot begins from <Picture 1>. <Subject 1> (S1) walks along the quay. She says, <d>[English] Wait for me!</d>',
+      '<Subject 1> reaches the end of the quay, still waving, and the boat slows.',
+    ];
+    const [first, later] = chunkedPrompts(wholeStoryShared, parts, 2);
+    [first, later].forEach((p, i) => {
+      expect(p).not.toContain('crossing the harbour');
+      expect(p.split('Wait for me!').length - 1).toBe(1 - i);
+      expect(p.trim().endsWith('N/A')).toBe(true);
+      expect(p.split('detailed_description:').length - 1).toBe(1);
+      expect(p.split('summary:').length - 1).toBe(1);
+      expect(p).toContain('detailed_description:\nThe target video is a live-action, naturalistic film in soft overcast light.\n');
+      expect(p).toContain('short grey hair');
+      expect(p).toContain('Gulls, lapping water');
+      expect(p.match(/^[a-z_]+(?=:)/gm)).toEqual([
+        'subject_definitions',
+        'summary',
+        'retention_analysis',
+        'detailed_description',
+        'overall_soundscape',
+        'non_diegetic_music',
+      ]);
+    });
+    expect(first).toContain('summary:\n[keyframe completion + audio reference] The shot begins from <Picture 1>.');
+    expect(first).toContain('is the first frame of [Shot 1]');
+    expect(later).not.toMatch(/keyframe completion|first frame|opening/);
+    expect(later).toContain('summary:\n[audio reference] <Subject 1> reaches the end of the quay, still waving, and the boat slows.');
+    expect(later).toContain('<Subject 1> (appears in [Shot 1]): fully_preserved');
+    expect(composeChunkPrompt(wholeStoryShared, '', 0)).toBe(wholeStoryShared);
+    // a compliant slot keeps headed parts; a bare part there becomes the description
+    const good = 'subject_definitions:\nS1.\n\n{chunk}\n\noverall_soundscape:\nRain.';
+    expect(composeChunkPrompt(good, 'She walks.')).toBe('subject_definitions:\nS1.\n\ndetailed_description:\nShe walks.\n\noverall_soundscape:\nRain.');
+  });
+
   it('asks the enhancer for a chunked rewrite of a long video', () => {
     const s = { ...settingsFor('direct'), prompt: 'the whole story', chunkParts: ['first', '', 'third'], duration: 30 };
     const body = withChunks({ prompt: 'x', model: 'h3-video', task: 'video', references: [] }, 'direct', s);
