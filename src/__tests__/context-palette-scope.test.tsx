@@ -83,6 +83,7 @@ jest.mock('../renderer/platform', () => ({
   isElectron: false,
   invoke: jest.fn(),
   send: jest.fn(),
+  store: { get: (_k: string, d: unknown) => d, set: jest.fn() },
 }));
 
 jest.mock('../renderer/stream-bus', () => ({
@@ -123,7 +124,9 @@ jest.mock('../renderer/onboarding/api', () => ({
 
 jest.mock('../renderer/onboarding/requirements', () => ({
   __esModule: true,
-  TASK_REQUIREMENTS: {},
+  TASK_REQUIREMENTS: {
+    Transcripts: { depId: 'faster-whisper', feature: 'Transcription', kind: 'downloadable' },
+  },
   depsApiBase: 'http://server/api/deps',
   fmtSize: (n: number) => String(n),
 }));

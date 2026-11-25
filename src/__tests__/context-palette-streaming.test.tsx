@@ -68,6 +68,7 @@ jest.mock('../renderer/platform', () => ({
   __esModule: true,
   capabilities: {},
   mediaServerBase: 'http://server',
+  store: { get: (_k: string, d: unknown) => d, set: jest.fn() },
 }));
 
 jest.mock('../renderer/stream-bus', () => ({

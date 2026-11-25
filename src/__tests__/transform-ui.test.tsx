@@ -214,7 +214,7 @@ describe('TransformFlowView', () => {
     expect(empty.onPhase).toHaveBeenCalledWith('review');
   });
 
-  it('shape (edit): the prompt expands over the panel and collapses with Esc, keeping its text', () => {
+  it('shape (edit): the prompt expands over the panel and collapses with its button, keeping its text', () => {
     const props = baseProps({ intent: 'edit', phase: 'shape', settings: { ...settingsFor('edit'), prompt: 'make it night and rainy' } });
     const { container } = render(<TransformFlowView {...props} />);
     expect(container.ownerDocument.querySelector('.ts-xprompt')).toBeNull();
@@ -231,7 +231,10 @@ describe('TransformFlowView', () => {
     expect(props.onPhase).not.toHaveBeenCalled();
     fireEvent.keyDown(area, { key: 'Enter', ctrlKey: true });
     expect(props.onPhase).toHaveBeenCalledWith('review');
+    // Esc belongs to the app (it minimizes), so it leaves the editor open
     fireEvent.keyDown(area, { key: 'Escape' });
+    expect(container.ownerDocument.querySelector('.ts-xprompt')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse the prompt editor' }));
     expect(container.ownerDocument.querySelector('.ts-xprompt')).toBeNull();
     expect(props.onClose).not.toHaveBeenCalled();
     expect((screen.getByRole('textbox', { name: 'What should change?' }) as HTMLTextAreaElement).value).toBe('make it night and rainy');
@@ -585,10 +588,12 @@ describe('TransformFlowView: saved prompts', () => {
     expect(loadTemplates('edit')).toEqual([]);
   });
 
-  it('Esc in the name field cancels naming only', () => {
+  it('Cancel ends naming only; Esc (the app minimize) keeps the name field', () => {
     render(<Harness intent="edit" initial="make it night" />);
     fireEvent.click(screen.getByText(/Save prompt/));
     fireEvent.keyDown(screen.getByLabelText('Saved prompt name'), { key: 'Escape' });
+    expect(screen.getByLabelText('Saved prompt name')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(screen.queryByLabelText('Saved prompt name')).toBeNull();
     expect(screen.getByText(/Save prompt/)).toBeTruthy();
   });

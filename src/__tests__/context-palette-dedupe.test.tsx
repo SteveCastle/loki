@@ -80,6 +80,7 @@ jest.mock('../renderer/platform', () => ({
   isElectron: false,
   invoke: jest.fn(),
   send: jest.fn(),
+  store: { get: (_k: string, d: unknown) => d, set: jest.fn() },
 }));
 
 jest.mock('../renderer/stream-bus', () => ({

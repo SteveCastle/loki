@@ -13,6 +13,7 @@ let mockJobServer: boolean | null = null;
 
 const IMAGE = 'C:/media/a.jpg';
 const VIDEO = 'C:/media/b.mp4';
+const AUDIO = 'C:/media/c.mp3';
 
 function setItem(path: string | null) {
   Object.assign(mockContext, {
@@ -57,6 +58,7 @@ jest.mock('../renderer/components/metadata/file-metadata', () => ({ __esModule: 
 jest.mock('../renderer/components/metadata/duplicates', () => ({ __esModule: true, default: function Stub() { return <div>duplicates-body</div>; } }));
 jest.mock('../renderer/components/metadata/thumbnails', () => ({ __esModule: true, default: function Stub() { return <div>thumbnails-body</div>; } }));
 jest.mock('../renderer/components/metadata/transcript', () => ({ __esModule: true, default: function Stub() { return <div>transcript-body</div>; } }));
+jest.mock('../renderer/components/metadata/image-transcript', () => ({ __esModule: true, default: function Stub() { return <div>image-transcript-body</div>; } }));
 jest.mock('../renderer/components/metadata/transformations', () => ({ __esModule: true, default: function Stub() { return <div>transformations-body</div>; } }));
 jest.mock('../renderer/components/metadata/job-queue', () => ({ __esModule: true, default: function Stub() { return <div>jobs-body</div>; } }));
 jest.mock('../renderer/components/metadata/metadata.css', () => ({}));
@@ -107,16 +109,16 @@ test('Jobs survives a remount while the job-server check is still pending', () =
 
 test('a tab that does not fit the item comes back on the next item it fits', () => {
   const { rerender } = render(<Metadata />);
-  fireEvent.click(screen.getByText('Transcript'));
+  fireEvent.click(screen.getByText('Thumbnails'));
 
-  setItem(IMAGE);
+  setItem(AUDIO);
   rerender(<Metadata />);
-  expect(screen.queryByText('Transcript')).toBeNull();
-  expect(mockStore['metadata.activeTabKey']).toBe('transcript');
+  expect(screen.queryByText('Thumbnails')).toBeNull();
+  expect(mockStore['metadata.activeTabKey']).toBe('thumbnails');
 
   setItem(VIDEO);
   rerender(<Metadata />);
-  expect(screen.getByText('transcript-body')).toBeTruthy();
+  expect(screen.getByText('thumbnails-body')).toBeTruthy();
 });
 
 test('no item loaded yet does not reset the choice', () => {
