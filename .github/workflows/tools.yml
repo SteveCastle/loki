@@ -31,17 +31,18 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # Linux on ubuntu-24.04: ubuntu-latest is 26.04, whose NVIDIA repo has no CUDA 12.6.
         include:
           - { tool: loki-retouch, os: windows-2022, target: windows-amd64 }
-          - { tool: loki-retouch, os: ubuntu-latest, target: linux-amd64 }
+          - { tool: loki-retouch, os: ubuntu-24.04, target: linux-amd64 }
           - { tool: loki-reshoot, os: windows-2022, target: windows-amd64 }
-          - { tool: loki-reshoot, os: ubuntu-latest, target: linux-amd64 }
+          - { tool: loki-reshoot, os: ubuntu-24.04, target: linux-amd64 }
           - { tool: loki-segment, os: windows-2022, target: windows-amd64 }
-          - { tool: loki-segment, os: ubuntu-latest, target: linux-amd64 }
+          - { tool: loki-segment, os: ubuntu-24.04, target: linux-amd64 }
           - { tool: loki-dream, os: windows-2022, target: windows-amd64 }
-          - { tool: loki-dream, os: ubuntu-latest, target: linux-amd64 }
+          - { tool: loki-dream, os: ubuntu-24.04, target: linux-amd64 }
           - { tool: loki-scribe, os: windows-2022, target: windows-amd64 }
-          - { tool: loki-scribe, os: ubuntu-latest, target: linux-amd64 }
+          - { tool: loki-scribe, os: ubuntu-24.04, target: linux-amd64 }
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout code

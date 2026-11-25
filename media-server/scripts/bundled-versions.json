@@ -153,31 +153,31 @@
     "onnxruntime": {
       "windows-amd64": {
         "version": "1.22.0",
-        "url": "https://github.com/microsoft/onnxruntime/releases/download/v1.22.0/onnxruntime-win-x64-1.22.0.zip",
-        "sha256": "174c616efc0271194488642a72f1a514e01487da4dfe84c49296d66e40ebe0da",
+        "url": "https://api.nuget.org/v3-flatcontainer/microsoft.ml.onnxruntime/1.22.0/microsoft.ml.onnxruntime.1.22.0.nupkg",
+        "sha256": "d571e63a2329baacb713f441e65ad75284de354db6e1ac435fe4bebbb417986a",
         "archive": "zip",
-        "extract": [{"from": "onnxruntime-win-x64-1.22.0/lib/onnxruntime.dll", "to": "onnxruntime.dll"}]
+        "extract": [{"from": "runtimes/win-x64/native/onnxruntime.dll", "to": "onnxruntime.dll"}]
       },
       "linux-amd64": {
         "version": "1.22.0",
-        "url": "https://github.com/microsoft/onnxruntime/releases/download/v1.22.0/onnxruntime-linux-x64-1.22.0.tgz",
-        "sha256": "8344d55f93d5bc5021ce342db50f62079daf39aaafb5d311a451846228be49b3",
-        "archive": "tar.gz",
-        "extract": [{"from": "onnxruntime-linux-x64-1.22.0/lib/libonnxruntime.so*", "to": "onnxruntime.so", "match": "newest"}]
+        "url": "https://api.nuget.org/v3-flatcontainer/microsoft.ml.onnxruntime/1.22.0/microsoft.ml.onnxruntime.1.22.0.nupkg",
+        "sha256": "d571e63a2329baacb713f441e65ad75284de354db6e1ac435fe4bebbb417986a",
+        "archive": "zip",
+        "extract": [{"from": "runtimes/linux-x64/native/libonnxruntime.so", "to": "onnxruntime.so"}]
       },
       "darwin-arm64": {
         "version": "1.22.0",
-        "url": "https://github.com/microsoft/onnxruntime/releases/download/v1.22.0/onnxruntime-osx-arm64-1.22.0.tgz",
-        "sha256": "cab6dcbd77e7ec775390e7b73a8939d45fec3379b017c7cb74f5b204c1a1cc07",
-        "archive": "tar.gz",
-        "extract": [{"from": "onnxruntime-osx-arm64-1.22.0/lib/libonnxruntime.*.dylib", "to": "onnxruntime.dylib", "match": "newest"}]
+        "url": "https://api.nuget.org/v3-flatcontainer/microsoft.ml.onnxruntime/1.22.0/microsoft.ml.onnxruntime.1.22.0.nupkg",
+        "sha256": "d571e63a2329baacb713f441e65ad75284de354db6e1ac435fe4bebbb417986a",
+        "archive": "zip",
+        "extract": [{"from": "runtimes/osx-arm64/native/libonnxruntime.dylib", "to": "onnxruntime.dylib"}]
       },
       "darwin-amd64": {
         "version": "1.22.0",
-        "url": "https://github.com/microsoft/onnxruntime/releases/download/v1.22.0/onnxruntime-osx-x86_64-1.22.0.tgz",
-        "sha256": "e4ec94a7696de74fb1b12846569aa94e499958af6ffa186022cfde16c9d617f0",
-        "archive": "tar.gz",
-        "extract": [{"from": "onnxruntime-osx-x86_64-1.22.0/lib/libonnxruntime.*.dylib", "to": "onnxruntime.dylib", "match": "newest"}]
+        "url": "https://api.nuget.org/v3-flatcontainer/microsoft.ml.onnxruntime/1.22.0/microsoft.ml.onnxruntime.1.22.0.nupkg",
+        "sha256": "d571e63a2329baacb713f441e65ad75284de354db6e1ac435fe4bebbb417986a",
+        "archive": "zip",
+        "extract": [{"from": "runtimes/osx-x64/native/libonnxruntime.dylib", "to": "onnxruntime.dylib"}]
       }
     }
   }

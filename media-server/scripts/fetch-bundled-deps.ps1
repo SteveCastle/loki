@@ -102,7 +102,9 @@ try {
     foreach ($ex in $entry.extract) {
       $type = if ($ex.type) { $ex.type } else { "file" }
       # $matches is an automatic variable in PowerShell — avoid shadowing it.
-      $found = Get-ChildItem -Path $extractDir -Recurse -Filter ([IO.Path]::GetFileName($ex.from)) -ErrorAction SilentlyContinue
+      # The whole path (wildcards allowed), as the .sh does: a file name alone can match several
+      # copies (the onnxruntime NuGet package has one onnxruntime.dll per architecture).
+      $found = @(Get-Item -Path (Join-Path $extractDir $ex.from) -ErrorAction SilentlyContinue)
       if (-not $found) { Write-Error "no match for $($ex.from) in $bin" }
       $src = $found[0].FullName
       $dst = Join-Path $outDir $ex.to

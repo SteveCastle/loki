@@ -87,15 +87,16 @@ FROM debian:bookworm-slim AS ort-fetcher
 
 ARG ONNXRUNTIME_VERSION=1.22.0
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        curl ca-certificates xz-utils && \
+        curl ca-certificates xz-utils unzip && \
     rm -rf /var/lib/apt/lists/*
 
+# The NuGet package: the GitHub release downloads are gone, same binaries.
 WORKDIR /tmp
-RUN curl -fsSL -o ort.tgz \
-      "https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-linux-x64-${ONNXRUNTIME_VERSION}.tgz" && \
-    tar -xzf ort.tgz && \
+RUN curl -fsSL -o ort.nupkg \
+      "https://api.nuget.org/v3-flatcontainer/microsoft.ml.onnxruntime/${ONNXRUNTIME_VERSION}/microsoft.ml.onnxruntime.${ONNXRUNTIME_VERSION}.nupkg" && \
+    unzip -q ort.nupkg runtimes/linux-x64/native/libonnxruntime.so && \
     mkdir -p /out && \
-    cp -L "onnxruntime-linux-x64-${ONNXRUNTIME_VERSION}/lib/libonnxruntime.so.${ONNXRUNTIME_VERSION}" /out/onnxruntime.so
+    cp -L runtimes/linux-x64/native/libonnxruntime.so /out/onnxruntime.so
 
 # -----------------------------------------------------------------------------
 # Stage 4 — runtime image

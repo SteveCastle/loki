@@ -496,7 +496,7 @@ Most settings can also be set via environment variables (see the Docker section 
    - `selected_tags.csv` — tag labels
    - `config.json` — model configuration (optional)
 
-2. Download [ONNX Runtime](https://github.com/microsoft/onnxruntime/releases):
+2. Download [ONNX Runtime](https://www.nuget.org/packages/Microsoft.ML.OnnxRuntime) (the `.nupkg` is a zip; the library is under `runtimes/<os>-<arch>/native/`):
    - Windows: `onnxruntime-win-x64-*.zip` → extract `onnxruntime.dll` from `lib/`
    - macOS: `onnxruntime-osx-arm64-*.tgz` → extract `libonnxruntime.dylib`
    - Linux: `onnxruntime-linux-x64-*.tgz` → extract `libonnxruntime.so`
